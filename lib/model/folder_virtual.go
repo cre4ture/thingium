@@ -185,6 +185,7 @@ func (f *virtualFolderSyncthingService) Serve(ctx context.Context) error {
 			ino_mu:      sync.NewMutex(),
 			next_ino_nr: 1,
 			ino_mapping: make(map[string]uint64),
+			directories: make(map[string]*TreeEntry),
 		}
 		mount, err := NewVirtualFolderMount(f.mountPath, f.ID, f.Label, stVF)
 		if err != nil {

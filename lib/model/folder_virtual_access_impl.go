@@ -10,6 +10,7 @@ import (
 	"bytes"
 	"context"
 	"path"
+	"strings"
 	"syscall"
 	"time"
 
@@ -21,6 +22,7 @@ import (
 	"github.com/syncthing/syncthing/lib/scanner"
 	"github.com/syncthing/syncthing/lib/sync"
 	"golang.org/x/exp/constraints"
+	"golang.org/x/exp/maps"
 )
 
 type syncthingVirtualFolderFuseAdapter struct {
@@ -33,6 +35,9 @@ type syncthingVirtualFolderFuseAdapter struct {
 	ino_mu      sync.Mutex
 	next_ino_nr uint64
 	ino_mapping map[string]uint64
+
+	// encoded directories
+	directories map[string]*TreeEntry
 }
 
 var _ = (SyncthingVirtualFolderAccessI)((*syncthingVirtualFolderFuseAdapter)(nil))
@@ -59,6 +64,17 @@ func (stf *syncthingVirtualFolderFuseAdapter) lookupFile(path string) (info *db.
 
 	fi, ok := snap.GetGlobalTruncated(path)
 	if !ok {
+		if stf.vFSS.Type.IsReceiveEncrypted() {
+			logger.DefaultLogger.Infof("ENC VIRT lookup %s - %+v", path, stf.directories)
+			entry, exists := stf.directories[path]
+			if exists {
+				return &db.FileInfoTruncated{
+					Name: entry.Name,
+					Type: protocol.FileInfoTypeDirectory,
+				}, 0
+			}
+		}
+
 		return nil, syscall.ENOENT
 	}
 
@@ -405,9 +421,60 @@ func (s *VirtualFolderDirStream) Close() {}
 
 func (f *syncthingVirtualFolderFuseAdapter) readDir(path string) (stream ffs.DirStream, eno syscall.Errno) {
 
-	children, err := f.model.GlobalDirectoryTree(f.folderID, path, 0, false)
-	if err != nil {
-		return nil, syscall.EFAULT
+	var err error = nil
+	children := []*TreeEntry{}
+	levels := 0
+	if f.vFSS.Type.IsReceiveEncrypted() {
+
+		if path != "" && !strings.HasSuffix(path, "/") {
+			path = path + "/"
+		}
+
+		snap, err := f.fset.Snapshot()
+		if err != nil {
+			return nil, syscall.EFAULT
+		}
+		defer snap.Release()
+
+		fileMap := make(map[string]*TreeEntry)
+		snap.WithPrefixedGlobalTruncated(path, func(child protocol.FileIntf) bool {
+			childPath := child.FileName()
+			childPath = strings.TrimPrefix(childPath, path)
+			logger.DefaultLogger.Infof("ENC VIRT path - %s, full: %v", childPath, child.FileName())
+			parts := strings.Split(childPath, "/")
+			logger.DefaultLogger.Infof("ENC VIRT ls - %s, parts: %v", childPath, parts)
+			if len(parts) == 1 {
+				logger.DefaultLogger.Infof("ENC VIRT ADD CHILD-FILE - %s", parts[0])
+				fileMap[parts[0]] = &TreeEntry{
+					Name:    parts[0],
+					Type:    child.FileType(),
+					ModTime: child.ModTime(),
+					Size:    child.FileSize(),
+				}
+			} else {
+				_, exists := fileMap[parts[0]]
+				if !exists {
+					logger.DefaultLogger.Infof("ENC VIRT ADD CHILD-DIR - %s", parts[0])
+					entry := &TreeEntry{
+						Name: parts[0],
+						Type: protocol.FileInfoTypeDirectory,
+					}
+					f.directories[path+parts[0]] = entry
+					fileMap[parts[0]] = entry
+				}
+			}
+			return true
+		})
+
+		newChildren := maps.Values(fileMap)
+		logger.DefaultLogger.Infof("ENC VIRT before, after - %+v [->] %+v", children, newChildren)
+		children = newChildren
+	} else {
+		children, err = f.model.GlobalDirectoryTree(f.folderID, path, levels, false)
+		if err != nil {
+			logger.DefaultLogger.Infof("ENC VIRT err -> %v", err)
+			return nil, syscall.EFAULT
+		}
 	}
 
 	return &VirtualFolderDirStream{
