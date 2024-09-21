@@ -55,6 +55,7 @@ func (stf *syncthingVirtualFolderFuseAdapter) lookupFile(path string) (info *db.
 		//stf..log()
 		return nil, syscall.EFAULT
 	}
+	defer snap.Release()
 
 	fi, ok := snap.GetGlobalTruncated(path)
 	if !ok {
@@ -107,6 +108,7 @@ func (stf *syncthingVirtualFolderFuseAdapter) createFile(
 	if err != nil {
 		return nil, syscall.EAGAIN
 	}
+	defer snap.Release()
 
 	db_fi, ok := snap.GetGlobalTruncated(name)
 	if !ok {
@@ -137,6 +139,7 @@ func (stf *syncthingVirtualFolderFuseAdapter) writeFile(
 		//stf..log()
 		return syscall.EFAULT
 	}
+	defer snap.Release()
 
 	fi, ok := snap.GetGlobal(name)
 	if !ok {
@@ -220,6 +223,7 @@ func (stf *syncthingVirtualFolderFuseAdapter) deleteFile(ctx context.Context, pa
 		//stf..log()
 		return syscall.EFAULT
 	}
+	defer snap.Release()
 
 	fi, ok := snap.GetGlobal(path)
 	if !ok {
@@ -257,6 +261,7 @@ func (stf *syncthingVirtualFolderFuseAdapter) deleteDir(ctx context.Context, pat
 		//stf..log()
 		return syscall.EFAULT
 	}
+	defer snap.Release()
 
 	fi, ok := snap.GetGlobal(path)
 	if !ok {
@@ -285,6 +290,7 @@ func (stf *syncthingVirtualFolderFuseAdapter) renameFileOrDir(
 		//stf..log()
 		return syscall.EFAULT
 	}
+	defer snap.Release()
 
 	fi, ok := snap.GetGlobal(existingPath)
 	if !ok {
@@ -312,6 +318,7 @@ func (stf *syncthingVirtualFolderFuseAdapter) renameExchangeFileOrDir(
 		//stf..log()
 		return syscall.EFAULT
 	}
+	defer snap.Release()
 
 	fi1, ok := snap.GetGlobal(path1)
 	if !ok {
@@ -522,6 +529,7 @@ func (f *syncthingVirtualFolderFuseAdapter) readFile(
 		//stf..log()
 		return nil, syscall.EFAULT
 	}
+	defer snap.Release()
 
 	fi, ok := snap.GetGlobal(path)
 	if !ok {
