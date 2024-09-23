@@ -182,14 +182,15 @@ func (f *virtualFolderSyncthingService) Serve(ctx context.Context) error {
 
 	if f.mountService == nil {
 		stVF := &syncthingVirtualFolderFuseAdapter{
-			vFSS:        f,
-			folderID:    f.ID,
-			model:       f.model,
-			fset:        f.fset,
-			ino_mu:      sync.NewMutex(),
-			next_ino_nr: 1,
-			ino_mapping: make(map[string]uint64),
-			directories: make(map[string]*TreeEntry),
+			vFSS:           f,
+			folderID:       f.ID,
+			model:          f.model,
+			fset:           f.fset,
+			ino_mu:         sync.NewMutex(),
+			next_ino_nr:    1,
+			ino_mapping:    make(map[string]uint64),
+			directories_mu: sync.NewMutex(),
+			directories:    make(map[string]*TreeEntry),
 		}
 		mount, err := NewVirtualFolderMount(f.mountPath, f.ID, f.Label, stVF)
 		if err != nil {

@@ -36,8 +36,9 @@ type syncthingVirtualFolderFuseAdapter struct {
 	next_ino_nr uint64
 	ino_mapping map[string]uint64
 
-	// encoded directories
-	directories map[string]*TreeEntry
+	// encrypted directories
+	directories_mu sync.Mutex
+	directories    map[string]*TreeEntry
 }
 
 var _ = (SyncthingVirtualFolderAccessI)((*syncthingVirtualFolderFuseAdapter)(nil))
@@ -65,6 +66,8 @@ func (stf *syncthingVirtualFolderFuseAdapter) lookupFile(path string) (info *db.
 	fi, ok := snap.GetGlobalTruncated(path)
 	if !ok {
 		if stf.vFSS.Type.IsReceiveEncrypted() {
+			stf.directories_mu.Lock()
+			defer stf.directories_mu.Unlock()
 			logger.DefaultLogger.Infof("ENC VIRT lookup %s - %+v", path, stf.directories)
 			entry, exists := stf.directories[path]
 			if exists {
@@ -459,7 +462,9 @@ func (f *syncthingVirtualFolderFuseAdapter) readDir(path string) (stream ffs.Dir
 						Name: parts[0],
 						Type: protocol.FileInfoTypeDirectory,
 					}
+					f.directories_mu.Lock()
 					f.directories[path+parts[0]] = entry
+					f.directories_mu.Unlock()
 					fileMap[parts[0]] = entry
 				}
 			}
