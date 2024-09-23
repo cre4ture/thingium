@@ -6,7 +6,11 @@
 
 package blockstorage
 
+import "io"
+
 type HashBlockStorageI interface {
+	io.Closer
+
 	Get(hash []byte) (data []byte, ok bool)
 	Set(hash []byte, data []byte)
 	Delete(hash []byte)

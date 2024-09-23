@@ -118,6 +118,6 @@ func (hm *GoCloudUrlStorage) DeleteMeta(name string) {
 	hm.bucket.Delete(hm.ctx, getMetadataStringKey(name))
 }
 
-func (hm *GoCloudUrlStorage) Close() {
-	hm.bucket.Close()
+func (hm *GoCloudUrlStorage) Close() error {
+	return hm.bucket.Close()
 }

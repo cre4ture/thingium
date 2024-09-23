@@ -180,7 +180,7 @@ func (f *virtualFolderSyncthingService) Serve(ctx context.Context) error {
 		f.blockCache = blockstorage.NewGoCloudUrlStorage(ctx, blobUrl)
 	}
 
-	if f.mountService == nil {
+	if (f.mountService == nil) && (f.mountPath != "") {
 		stVF := &syncthingVirtualFolderFuseAdapter{
 			vFSS:           f,
 			folderID:       f.ID,
@@ -208,7 +208,14 @@ func (f *virtualFolderSyncthingService) Serve(ctx context.Context) error {
 	for {
 		select {
 		case <-ctx.Done():
-			f.mountService.Close()
+			if f.mountService != nil {
+				f.mountService.Close()
+				f.mountService = nil
+			}
+			if f.blockCache != nil {
+				f.blockCache.Close()
+				f.blockCache = nil
+			}
 			return nil
 
 		case <-f.pullScheduled:
