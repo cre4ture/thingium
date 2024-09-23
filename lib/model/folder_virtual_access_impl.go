@@ -591,7 +591,12 @@ func (vf *VirtualFileReadResult) Bytes(outBuf []byte) ([]byte, fuse.Status) {
 func (vf *VirtualFileReadResult) Size() int {
 	return clamp(vf.maxToBeRead, 0, int(vf.fi.Size-int64(vf.offset)))
 }
-func (vf *VirtualFileReadResult) Done() {}
+func (vf *VirtualFileReadResult) Done() {
+	if vf.snap != nil {
+		vf.snap.Release()
+		vf.snap = nil
+	}
+}
 
 func (f *syncthingVirtualFolderFuseAdapter) readFile(
 	path string, buf []byte, off int64,
@@ -601,13 +606,19 @@ func (f *syncthingVirtualFolderFuseAdapter) readFile(
 		//stf..log()
 		return nil, syscall.EFAULT
 	}
-	defer snap.Release()
+	cancelDefer := false
+	defer func() {
+		if !cancelDefer {
+			snap.Release()
+		}
+	}()
 
 	fi, ok := snap.GetGlobal(path)
 	if !ok {
 		return nil, syscall.ENOENT
 	}
 
+	cancelDefer = true
 	return &VirtualFileReadResult{
 		f:           f,
 		snap:        snap,
