@@ -211,8 +211,8 @@ func (f *virtualFolderSyncthingService) Serve(ctx context.Context) error {
 			return nil
 
 		case <-f.pullScheduled:
+			f.PullAll()
 			continue
-
 		}
 	}
 }
@@ -231,6 +231,10 @@ func (f *virtualFolderSyncthingService) BringToFront(filename string) {
 }
 
 func (vf *virtualFolderSyncthingService) Scan(subs []string) error {
+	return vf.PullAll()
+}
+
+func (vf *virtualFolderSyncthingService) PullAll() error {
 	snap, err := vf.fset.Snapshot()
 	if err != nil {
 		return err
