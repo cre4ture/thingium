@@ -11,6 +11,7 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"io/fs"
 	"log"
 	"os"
 	"strings"
@@ -287,7 +288,7 @@ func (vf *virtualFolderSyncthingService) GetHashBlockData(hash []byte, response_
 func (f *virtualFolderSyncthingService) ReadEncryptionToken() ([]byte, error) {
 	data, ok := f.blockCache.GetMeta(config.EncryptionTokenName)
 	if !ok {
-		return nil, protocol.ErrNoSuchFile
+		return nil, fs.ErrNotExist
 	}
 	dataBuf := bytes.NewBuffer(data)
 	var stored storedEncryptionToken
