@@ -10,7 +10,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"io"
 	"log"
 	"os"
@@ -78,12 +77,37 @@ func newVirtualFolder(
 	evLogger events.Logger,
 	ioLimiter *semaphore.Semaphore,
 ) service {
-	return &virtualFolderSyncthingService{
+
+	f := &virtualFolderSyncthingService{
 		folderBase:                newFolderBase(cfg, evLogger, model, fset),
 		blockCache:                nil,
 		backgroundDownloadPending: make(chan struct{}, 1),
 		backgroundDownloadQueue:   *newJobQueue(),
 	}
+
+	blobUrl := ""
+	virtual_descriptor, hasVirtualDescriptor := strings.CutPrefix(f.Path, ":virtual:")
+	if hasVirtualDescriptor {
+		parts := strings.Split(virtual_descriptor, ":mount_at:")
+		if len(parts) != 2 {
+			logger.DefaultLogger.Warnf("missing \":mount_at:\" in virtual descriptor")
+			return nil
+		}
+		//url := "s3://bucket-syncthing-uli-virtual-folder-test1/" + myDir
+		blobUrl = parts[0]
+		f.mountPath = parts[1]
+	} else {
+		myDir := f.Path + "_BlobStorage"
+		if err := os.MkdirAll(myDir, 0o777); err != nil {
+			log.Fatal(err)
+		}
+		blobUrl = "file://" + myDir + "?no_tmp_dir=yes"
+		f.mountPath = f.Path + "R"
+	}
+
+	f.blockCache = blockstorage.NewGoCloudUrlStorage(context.TODO(), blobUrl)
+
+	return f
 }
 
 func (f *virtualFolderSyncthingService) RequestBackgroundDownload(filename string, size int64, modified time.Time) {
@@ -154,31 +178,6 @@ func (f *virtualFolderSyncthingService) Serve(ctx context.Context) error {
 	defer f.model.foldersRunning.Add(-1)
 
 	f.ctx = ctx
-
-	if f.blockCache == nil {
-		//f.blockCache = blockstorage.NewGoCloudUrlStorage(ctx, "mem://")
-
-		blobUrl := ""
-		virtual_descriptor, hasVirtualDescriptor := strings.CutPrefix(f.Path, ":virtual:")
-		if hasVirtualDescriptor {
-			parts := strings.Split(virtual_descriptor, ":mount_at:")
-			if len(parts) != 2 {
-				return errors.New("missing \":mount_at:\" in virtual descriptor")
-			}
-			//url := "s3://bucket-syncthing-uli-virtual-folder-test1/" + myDir
-			blobUrl = parts[0]
-			f.mountPath = parts[1]
-		} else {
-			myDir := f.Path + "_BlobStorage"
-			if err := os.MkdirAll(myDir, 0o777); err != nil {
-				log.Fatal(err)
-			}
-			blobUrl = "file://" + myDir + "?no_tmp_dir=yes"
-			f.mountPath = f.Path + "R"
-		}
-
-		f.blockCache = blockstorage.NewGoCloudUrlStorage(ctx, blobUrl)
-	}
 
 	if (f.mountService == nil) && (f.mountPath != "") {
 		stVF := &syncthingVirtualFolderFuseAdapter{
