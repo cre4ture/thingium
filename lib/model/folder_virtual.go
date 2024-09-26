@@ -10,6 +10,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"io/fs"
 	"log"
@@ -21,6 +22,7 @@ import (
 	"github.com/syncthing/syncthing/lib/config"
 	"github.com/syncthing/syncthing/lib/db"
 	"github.com/syncthing/syncthing/lib/events"
+	"github.com/syncthing/syncthing/lib/hashutil"
 	"github.com/syncthing/syncthing/lib/ignore"
 	"github.com/syncthing/syncthing/lib/logger"
 	"github.com/syncthing/syncthing/lib/protocol"
@@ -156,6 +158,7 @@ func (f *virtualFolderSyncthingService) Serve_backgroundDownloadTask() {
 				}
 
 				if !all_ok {
+					f.evLogger.Log(events.Failure, fmt.Sprintf("failed to pull all blocks for: %v", job))
 					return
 				}
 
@@ -219,7 +222,7 @@ func (f *virtualFolderSyncthingService) Serve(ctx context.Context) error {
 			return nil
 
 		case <-f.pullScheduled:
-			f.PullAll()
+			f.PullAllMissing()
 			continue
 		}
 	}
@@ -242,6 +245,24 @@ func (vf *virtualFolderSyncthingService) Scan(subs []string) error {
 	return vf.PullAll()
 }
 
+func (vf *virtualFolderSyncthingService) PullAllMissing() error {
+	snap, err := vf.fset.Snapshot()
+	if err != nil {
+		return err
+	}
+	defer snap.Release()
+
+	vf.setState(FolderScanning)
+	defer vf.setState(FolderIdle)
+
+	snap.WithNeedTruncated(protocol.LocalDeviceID, func(f protocol.FileIntf) bool /* true to continue */ {
+		vf.PullOne(snap, f, true)
+		return true
+	})
+
+	return nil
+}
+
 func (vf *virtualFolderSyncthingService) PullAll() error {
 	snap, err := vf.fset.Snapshot()
 	if err != nil {
@@ -249,21 +270,55 @@ func (vf *virtualFolderSyncthingService) PullAll() error {
 	}
 	defer snap.Release()
 
-	snap.WithNeedTruncated(protocol.LocalDeviceID, func(f protocol.FileIntf) bool /* true to continue */ {
-		if f.IsDirectory() {
-			// no work to do for directories. directly take over:
-			fi, ok := snap.GetGlobal(f.FileName())
-			if ok {
-				vf.fset.UpdateOne(protocol.LocalDeviceID, &fi)
-			}
-		} else {
-			vf.RequestBackgroundDownload(f.FileName(), f.FileSize(), f.ModTime())
-		}
+	vf.setState(FolderScanning)
+	defer vf.setState(FolderIdle)
+
+	logger.DefaultLogger.Infof("pull all START")
+
+	snap.WithGlobalTruncated(func(f protocol.FileIntf) bool /* true to continue */ {
+		vf.PullOne(snap, f, true)
 		return true
 	})
 
+	logger.DefaultLogger.Infof("pull all END")
+
 	return nil
 }
+
+func (vf *virtualFolderSyncthingService) PullOne(snap *db.Snapshot, f protocol.FileIntf, synchronous bool) {
+	if f.IsDirectory() {
+		// no work to do for directories. directly take over:
+		fi, ok := snap.GetGlobal(f.FileName())
+		if ok {
+			vf.fset.UpdateOne(protocol.LocalDeviceID, &fi)
+		}
+	} else {
+		if !synchronous {
+			vf.RequestBackgroundDownload(f.FileName(), f.FileSize(), f.ModTime())
+		} else {
+			fi, ok := snap.GetGlobal(f.FileName())
+			if ok {
+				all_ok := true
+				for i, bi := range fi.Blocks {
+					logger.DefaultLogger.Infof("synchronous check block info #%v: %+v", i, bi, hashutil.HashToStringMapKey(bi.Hash))
+					_, ok := vf.GetBlockDataFromCacheOrDownload(snap, fi, bi)
+					all_ok = all_ok && ok
+					if !ok {
+						logger.DefaultLogger.Warnf("synchronous check block info FAILED. NOT OK: #%v: %+v", i, bi, hashutil.HashToStringMapKey(bi.Hash))
+					}
+				}
+
+				if all_ok {
+					logger.DefaultLogger.Infof("synchronous check block info (%v blocks, %v size) SUCCEEDED. ALL OK, file: %s", fi.Blocks, fi.Size, fi.Name)
+					vf.fset.UpdateOne(protocol.LocalDeviceID, &fi)
+				} else {
+					logger.DefaultLogger.Warnf("synchronous check block info FAILED. NOT ALL OK, file: %s", fi.Name)
+				}
+			}
+		}
+	}
+}
+
 func (f *virtualFolderSyncthingService) Errors() []FileError             { return []FileError{} }
 func (f *virtualFolderSyncthingService) WatchError() error               { return nil }
 func (f *virtualFolderSyncthingService) ScheduleForceRescan(path string) {}

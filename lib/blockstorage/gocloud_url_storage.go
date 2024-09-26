@@ -12,6 +12,7 @@ import (
 	"io"
 	"log"
 
+	"github.com/syncthing/syncthing/lib/hashutil"
 	"gocloud.dev/blob"
 	"gocloud.dev/gcerrors"
 
@@ -54,7 +55,7 @@ func NewGoCloudUrlStorage(ctx context.Context, url string) *GoCloudUrlStorage {
 }
 
 func getBlockStringKey(hash []byte) string {
-	return BlockDataSubFolder + "/" + hashToStringMapKey(hash)
+	return BlockDataSubFolder + "/" + hashutil.HashToStringMapKey(hash)
 }
 
 func getMetadataStringKey(name string) string {

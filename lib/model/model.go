@@ -32,7 +32,9 @@ import (
 	"github.com/syncthing/syncthing/lib/db"
 	"github.com/syncthing/syncthing/lib/events"
 	"github.com/syncthing/syncthing/lib/fs"
+	"github.com/syncthing/syncthing/lib/hashutil"
 	"github.com/syncthing/syncthing/lib/ignore"
+	"github.com/syncthing/syncthing/lib/logger"
 	"github.com/syncthing/syncthing/lib/osutil"
 	"github.com/syncthing/syncthing/lib/protocol"
 	"github.com/syncthing/syncthing/lib/rand"
@@ -1579,10 +1581,13 @@ func (m *model) ccCheckEncryption(fcfg config.FolderConfiguration, folderDevice 
 		// hasTokenRemote == true
 		ccToken = ccDeviceInfos.remote.EncryptionPasswordToken
 	}
+
+	logger.DefaultLogger.Infof("ccCheckEncryption() - check if token is already known. token: %v, folder-ID: %v", ccToken, fcfg.ID)
 	m.mut.RLock()
 	token, ok := m.folderEncryptionPasswordTokens[fcfg.ID]
 	m.mut.RUnlock()
 	if !ok {
+		logger.DefaultLogger.Infof("ccCheckEncryption() - token not yet set - try to read it from folder storage")
 		runner, ok := m.folderRunners.Get(fcfg.ID)
 		if !ok {
 			return errEncryptionPassword
@@ -1590,6 +1595,7 @@ func (m *model) ccCheckEncryption(fcfg config.FolderConfiguration, folderDevice 
 		var err error
 		token, err = runner.ReadEncryptionToken()
 		if err != nil && !fs.IsNotExist(err) {
+			logger.DefaultLogger.Infof("ccCheckEncryption() - Failure reading token. Abort")
 			if rerr, ok := redactPathError(err); ok {
 				return rerr
 			}
@@ -1598,12 +1604,16 @@ func (m *model) ccCheckEncryption(fcfg config.FolderConfiguration, folderDevice 
 				redacted: errEncryptionTokenRead,
 			}
 		}
+
 		if err == nil {
+			logger.DefaultLogger.Infof("ccCheckEncryption() - read token successful")
 			m.mut.Lock()
 			m.folderEncryptionPasswordTokens[fcfg.ID] = token
 			m.mut.Unlock()
 		} else {
+			logger.DefaultLogger.Infof("ccCheckEncryption() - couldn't read token - will write it, assuming its first time")
 			if err := runner.WriteEncryptionToken(ccToken); err != nil {
+				logger.DefaultLogger.Infof("ccCheckEncryption() - write token failed! err: %v", err)
 				if rerr, ok := redactPathError(err); ok {
 					return rerr
 				} else {
@@ -1613,6 +1623,7 @@ func (m *model) ccCheckEncryption(fcfg config.FolderConfiguration, folderDevice 
 					}
 				}
 			}
+			logger.DefaultLogger.Infof("ccCheckEncryption() - write token succeeded.")
 			m.mut.Lock()
 			m.folderEncryptionPasswordTokens[fcfg.ID] = ccToken
 			m.mut.Unlock()
@@ -2035,9 +2046,9 @@ func (m *model) Request(conn protocol.Connection, req *protocol.Request) (out pr
 	n := 0
 	virtualFolder, ok := folderRunner.(virtualFolderServiceI)
 	if ok {
-		if len(req.Hash) == 0 { // this happens for virtual encrypted folders
+		if true { // len(req.Hash) == 0 { // this happens for virtual encrypted folders, sometimes there is even a hash, but its invalid
 			l.Infof("%v REQ(in) get hash of req. block from virtual folder: %s - %s: %q / %q o=%d s=%d, blockNo=%v, hash=%v",
-				m, err, deviceID.Short(), req.Folder, req.Name, req.Offset, req.Size, req.BlockNo, req.Hash)
+				m, err, deviceID.Short(), req.Folder, req.Name, req.Offset, req.Size, req.BlockNo, hashutil.HashToStringMapKey(req.Hash))
 			// lookup hash:
 			folderFiles := m.folderFiles[req.Folder]
 			if folderFiles == nil {
@@ -2060,16 +2071,21 @@ func (m *model) Request(conn protocol.Connection, req *protocol.Request) (out pr
 		}
 		n, err = virtualFolder.GetHashBlockData(req.Hash, res.data)
 		l.Infof("%v REQ(in) get block from virtual folder: %s - %s: %q / %q o=%d s=%d, blockNo=%v, hash=%v",
-			m, err, deviceID.Short(), req.Folder, req.Name, req.Offset, req.Size, req.BlockNo, req.Hash)
+			m, err, deviceID.Short(), req.Folder, req.Name, req.Offset, req.Size, req.BlockNo, hashutil.HashToStringMapKey(req.Hash))
 	} else {
 		filesystemFolder, ok := folderRunner.(filesystemFolderServiceI)
 		if !ok {
 			l.Debugf("%v REQ(in) get block FAILED - unknown folder type. %s - %s: %q / %q o=%d s=%d, blockNo=%v, hash=%v",
-				m, err, deviceID.Short(), req.Folder, req.Name, req.Offset, req.Size, req.BlockNo, req.Hash)
+				m, err, deviceID.Short(), req.Folder, req.Name, req.Offset, req.Size, req.BlockNo, hashutil.HashToStringMapKey(req.Hash))
 			return nil, protocol.ErrGeneric
 		}
 
 		n, err = filesystemFolder.GetFileData(deviceID, req, res.data)
+	}
+	if err != nil {
+		l.Warnf("%v REQ(in) get block FAILED: %s - %s: %q / %q o=%d s=%d, blockNo=%v, hash=%v",
+			m, err, deviceID.Short(), req.Folder, req.Name, req.Offset, req.Size, req.BlockNo, hashutil.HashToStringMapKey(req.Hash))
+		return nil, err
 	}
 
 	if !folderCfg.Type.IsReceiveEncrypted() && len(req.Hash) > 0 && !scanner.Validate(res.data[:n], req.Hash, req.WeakHash) {
