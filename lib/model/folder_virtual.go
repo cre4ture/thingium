@@ -33,8 +33,6 @@ import (
 )
 
 func init() {
-	folderFactories[config.FolderTypeVirtual] = newVirtualFolder
-	folderFactories[config.FolderTypeVirtualEncrypted] = newVirtualFolder
 	log.SetFlags(log.Lmicroseconds)
 	log.Default().SetOutput(os.Stdout)
 	log.Default().SetPrefix("TESTLOG ")
@@ -90,22 +88,15 @@ func newVirtualFolder(
 
 	blobUrl := ""
 	virtual_descriptor, hasVirtualDescriptor := strings.CutPrefix(f.Path, ":virtual:")
-	if hasVirtualDescriptor {
-		parts := strings.Split(virtual_descriptor, ":mount_at:")
-		if len(parts) != 2 {
-			logger.DefaultLogger.Warnf("missing \":mount_at:\" in virtual descriptor")
-			return nil
-		}
+	if !hasVirtualDescriptor {
+		panic("missing :virtual:")
+	}
+
+	parts := strings.Split(virtual_descriptor, ":mount_at:")
+	blobUrl = parts[0]
+	if len(parts) >= 2 {
 		//url := "s3://bucket-syncthing-uli-virtual-folder-test1/" + myDir
-		blobUrl = parts[0]
 		f.mountPath = parts[1]
-	} else {
-		myDir := f.Path + "_BlobStorage"
-		if err := os.MkdirAll(myDir, 0o777); err != nil {
-			log.Fatal(err)
-		}
-		blobUrl = "file://" + myDir + "?no_tmp_dir=yes"
-		f.mountPath = f.Path + "R"
 	}
 
 	f.blockCache = blockstorage.NewGoCloudUrlStorage(context.TODO(), blobUrl)
