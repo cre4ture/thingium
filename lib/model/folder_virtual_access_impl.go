@@ -120,6 +120,10 @@ func (stf *syncthingVirtualFolderFuseAdapter) createFile(
 	Permissions *uint32, name string,
 ) (info *db.FileInfoTruncated, eno syscall.Errno) {
 
+	if stf.vFSS.Type.IsReceiveOnly() {
+		return nil, syscall.EACCES
+	}
+
 	fi := createNewVirtualFileInfo(stf.model.shortID, Permissions, name)
 	stf.fset.UpdateOne(protocol.LocalDeviceID, &fi)
 
@@ -153,6 +157,11 @@ func calculateHashForBlock(ctx context.Context, blockData []byte,
 func (stf *syncthingVirtualFolderFuseAdapter) writeFile(
 	ctx context.Context, name string, offset uint64, inputData []byte,
 ) syscall.Errno {
+
+	if stf.vFSS.Type.IsReceiveOnly() {
+		return syscall.EACCES
+	}
+
 	snap, err := stf.fset.Snapshot()
 	if err != nil {
 		//stf..log()
@@ -237,6 +246,10 @@ func (stf *syncthingVirtualFolderFuseAdapter) writeFile(
 
 func (stf *syncthingVirtualFolderFuseAdapter) deleteFile(ctx context.Context, path string) syscall.Errno {
 
+	if stf.vFSS.Type.IsReceiveOnly() {
+		return syscall.EACCES
+	}
+
 	snap, err := stf.fset.Snapshot()
 	if err != nil {
 		//stf..log()
@@ -261,6 +274,10 @@ func (stf *syncthingVirtualFolderFuseAdapter) deleteFile(ctx context.Context, pa
 
 func (stf *syncthingVirtualFolderFuseAdapter) createDir(ctx context.Context, path string) syscall.Errno {
 
+	if stf.vFSS.Type.IsReceiveOnly() {
+		return syscall.EACCES
+	}
+
 	_, eno := stf.lookupFile(path)
 	if eno == 0 {
 		return syscall.EEXIST
@@ -274,6 +291,10 @@ func (stf *syncthingVirtualFolderFuseAdapter) createDir(ctx context.Context, pat
 }
 
 func (stf *syncthingVirtualFolderFuseAdapter) deleteDir(ctx context.Context, path string) syscall.Errno {
+
+	if stf.vFSS.Type.IsReceiveOnly() {
+		return syscall.EACCES
+	}
 
 	snap, err := stf.fset.Snapshot()
 	if err != nil {
@@ -304,6 +325,11 @@ func (stf *syncthingVirtualFolderFuseAdapter) deleteDir(ctx context.Context, pat
 func (stf *syncthingVirtualFolderFuseAdapter) renameFileOrDir(
 	ctx context.Context, existingPath string, newPath string,
 ) syscall.Errno {
+
+	if stf.vFSS.Type.IsReceiveOnly() {
+		return syscall.EACCES
+	}
+
 	snap, err := stf.fset.Snapshot()
 	if err != nil {
 		//stf..log()
@@ -332,6 +358,11 @@ func (stf *syncthingVirtualFolderFuseAdapter) renameFileOrDir(
 func (stf *syncthingVirtualFolderFuseAdapter) renameExchangeFileOrDir(
 	ctx context.Context, path1 string, path2 string,
 ) syscall.Errno {
+
+	if stf.vFSS.Type.IsReceiveOnly() {
+		return syscall.EACCES
+	}
+
 	snap, err := stf.fset.Snapshot()
 	if err != nil {
 		//stf..log()
@@ -370,6 +401,10 @@ func (stf *syncthingVirtualFolderFuseAdapter) renameExchangeFileOrDir(
 func (stf *syncthingVirtualFolderFuseAdapter) createSymlink(
 	ctx context.Context, path, target string,
 ) syscall.Errno {
+
+	if stf.vFSS.Type.IsReceiveOnly() {
+		return syscall.EACCES
+	}
 
 	_, eno := stf.lookupFile(path)
 	if eno == 0 {

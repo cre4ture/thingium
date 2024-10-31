@@ -107,6 +107,17 @@ func (ft FolderType) IsReceiveEncrypted() bool {
 	}
 }
 
+func (ft FolderType) IsReceiveOnly() bool {
+	switch ft {
+	case FolderTypeReceiveEncrypted:
+		return true
+	case FolderTypeReceiveOnly:
+		return true
+	default:
+		return false
+	}
+}
+
 func New(myID protocol.DeviceID) Configuration {
 	var cfg Configuration
 	cfg.Version = CurrentVersion
