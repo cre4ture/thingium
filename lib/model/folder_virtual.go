@@ -215,7 +215,7 @@ func (f *virtualFolderSyncthingService) Serve(ctx context.Context) error {
 			return nil
 
 		case <-f.pullScheduled:
-			f.PullAllMissing()
+			f.PullAllMissing(true)
 			continue
 		}
 	}
@@ -235,18 +235,18 @@ func (f *virtualFolderSyncthingService) BringToFront(filename string) {
 }
 
 func (vf *virtualFolderSyncthingService) Scan(subs []string) error {
-	return vf.PullAll()
+	return vf.PullAll(true)
 }
 
-func (vf *virtualFolderSyncthingService) PullAllMissing() error {
-	return vf.Pull_x(true)
+func (vf *virtualFolderSyncthingService) PullAllMissing(onlyCheck bool) error {
+	return vf.Pull_x(true, onlyCheck)
 }
 
-func (vf *virtualFolderSyncthingService) PullAll() error {
-	return vf.Pull_x(false)
+func (vf *virtualFolderSyncthingService) PullAll(onlyCheck bool) error {
+	return vf.Pull_x(false, onlyCheck)
 }
 
-func (vf *virtualFolderSyncthingService) Pull_x(onlyMissing bool) error {
+func (vf *virtualFolderSyncthingService) Pull_x(onlyMissing bool, onlyCheck bool) error {
 	snap, err := vf.fset.Snapshot()
 	if err != nil {
 		return err
@@ -288,7 +288,7 @@ func (vf *virtualFolderSyncthingService) Pull_x(onlyMissing bool) error {
 		myFileSize := f.FileSize()
 		go func() {
 			logger.DefaultLogger.Infof("pull ONE with leaseNR: %v", leaseNR)
-			vf.PullOne(snap, f, false, func() {
+			vf.PullOne(snap, f, false, onlyCheck, func() {
 				asyncNotifier.Progress.Update(myFileSize)
 				inProgress <- leaseNR
 				logger.DefaultLogger.Infof("pull ONE with leaseNR: %v - DONE, size: %v", leaseNR, myFileSize)
@@ -313,7 +313,7 @@ func (vf *virtualFolderSyncthingService) Pull_x(onlyMissing bool) error {
 	return nil
 }
 
-func (vf *virtualFolderSyncthingService) PullOne(snap *db.Snapshot, f protocol.FileIntf, synchronous bool, fn func()) {
+func (vf *virtualFolderSyncthingService) PullOne(snap *db.Snapshot, f protocol.FileIntf, synchronous bool, onlyCheck bool, fn func()) {
 	if f.IsDirectory() {
 		// no work to do for directories. directly take over:
 		fi, ok := snap.GetGlobal(f.FileName())
@@ -321,29 +321,36 @@ func (vf *virtualFolderSyncthingService) PullOne(snap *db.Snapshot, f protocol.F
 			vf.fset.UpdateOne(protocol.LocalDeviceID, &fi)
 		}
 	} else {
-		if !synchronous {
+		if !synchronous && !onlyCheck {
 			vf.RequestBackgroundDownload(f.FileName(), f.FileSize(), f.ModTime(), fn)
 		} else {
-			defer fn()
-			fi, ok := snap.GetGlobal(f.FileName())
-			if ok {
-				all_ok := true
-				for i, bi := range fi.Blocks {
-					logger.DefaultLogger.Infof("synchronous NEW check block info #%v: %+v", i, bi, hashutil.HashToStringMapKey(bi.Hash))
-					_, ok := vf.GetBlockDataFromCacheOrDownload(snap, fi, bi)
-					all_ok = all_ok && ok
-					if !ok {
-						logger.DefaultLogger.Warnf("synchronous check block info FAILED. NOT OK: #%v: %+v", i, bi, hashutil.HashToStringMapKey(bi.Hash))
+			func() {
+				defer fn()
+				fi, ok := snap.GetGlobal(f.FileName())
+				if ok {
+					all_ok := true
+					for i, bi := range fi.Blocks {
+						logger.DefaultLogger.Infof("synchronous NEW check(%v) block info #%v: %+v", onlyCheck, i, bi, hashutil.HashToStringMapKey(bi.Hash))
+						ok := false
+						if !onlyCheck {
+							_, ok = vf.GetBlockDataFromCacheOrDownload(snap, fi, bi)
+						} else {
+							ok = vf.blockCache.Has(bi.Hash)
+						}
+						all_ok = all_ok && ok
+						if !ok && !onlyCheck {
+							logger.DefaultLogger.Warnf("synchronous check block info FAILED. NOT OK: #%v: %+v", i, bi, hashutil.HashToStringMapKey(bi.Hash))
+						}
+					}
+
+					if all_ok {
+						logger.DefaultLogger.Infof("synchronous check block info (%v blocks, %v size) SUCCEEDED. ALL OK, file: %s", fi.Blocks, fi.Size, fi.Name)
+						vf.fset.UpdateOne(protocol.LocalDeviceID, &fi)
+					} else {
+						logger.DefaultLogger.Infof("synchronous check block info result: incomplete, file: %s", fi.Name)
 					}
 				}
-
-				if all_ok {
-					logger.DefaultLogger.Infof("synchronous check block info (%v blocks, %v size) SUCCEEDED. ALL OK, file: %s", fi.Blocks, fi.Size, fi.Name)
-					vf.fset.UpdateOne(protocol.LocalDeviceID, &fi)
-				} else {
-					logger.DefaultLogger.Warnf("synchronous check block info FAILED. NOT ALL OK, file: %s", fi.Name)
-				}
-			}
+			}()
 		}
 	}
 }

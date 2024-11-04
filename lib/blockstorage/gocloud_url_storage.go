@@ -38,7 +38,6 @@ func NewGoCloudUrlStorage(ctx context.Context, url string) *GoCloudUrlStorage {
 		log.Fatal(err)
 	}
 
-
 	return &GoCloudUrlStorage{
 		ctx:    ctx,
 		bucket: bucket,
@@ -51,6 +50,24 @@ func getBlockStringKey(hash []byte) string {
 
 func getMetadataStringKey(name string) string {
 	return MetaDataSubFolder + "/" + name
+}
+func (hm *GoCloudUrlStorage) Has(hash []byte) (ok bool) {
+	if len(hash) == 0 {
+		return false
+	}
+
+	stringKey := getBlockStringKey(hash)
+	exists, err := hm.bucket.Exists(hm.ctx, stringKey)
+	if gcerrors.Code(err) == gcerrors.NotFound || !exists {
+		return false
+	}
+
+	if err != nil {
+		log.Fatal(err)
+		panic("failed to get block from block storage")
+	}
+
+	return true
 }
 func (hm *GoCloudUrlStorage) Get(hash []byte) (data []byte, ok bool) {
 	if len(hash) == 0 {

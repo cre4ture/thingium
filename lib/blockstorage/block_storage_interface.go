@@ -11,6 +11,7 @@ import "io"
 type HashBlockStorageI interface {
 	io.Closer
 
+	Has(hash []byte) (ok bool)
 	Get(hash []byte) (data []byte, ok bool)
 	Set(hash []byte, data []byte)
 	Delete(hash []byte)
