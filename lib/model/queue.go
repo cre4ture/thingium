@@ -10,21 +10,23 @@ import (
 	"sort"
 	"time"
 
+	"github.com/samber/lo"
 	"github.com/syncthing/syncthing/lib/config"
 	"github.com/syncthing/syncthing/lib/rand"
 	"github.com/syncthing/syncthing/lib/sync"
 )
 
 type jobQueue struct {
-	progress []string
+	progress []jobQueueEntry
 	queued   []jobQueueEntry
 	mut      sync.Mutex
 }
 
 type jobQueueEntry struct {
-	name     string
-	size     int64
-	modified int64
+	name               string
+	size               int64
+	modified           int64
+	completionCallback func()
 }
 
 func newJobQueue() *jobQueue {
@@ -33,7 +35,7 @@ func newJobQueue() *jobQueue {
 	}
 }
 
-func (q *jobQueue) PushIfNew(file string, size int64, modified time.Time) bool {
+func (q *jobQueue) PushIfNew(file string, size int64, modified time.Time, fn func()) bool {
 	q.mut.Lock()
 	defer q.mut.Unlock()
 	for i := range q.queued {
@@ -42,7 +44,7 @@ func (q *jobQueue) PushIfNew(file string, size int64, modified time.Time) bool {
 		}
 	}
 	// The range of UnixNano covers a range of reasonable timestamps.
-	q.queued = append(q.queued, jobQueueEntry{file, size, modified.UnixNano()})
+	q.queued = append(q.queued, jobQueueEntry{file, size, modified.UnixNano(), fn})
 	return true
 }
 
@@ -50,7 +52,7 @@ func (q *jobQueue) Push(file string, size int64, modified time.Time) {
 	q.mut.Lock()
 	defer q.mut.Unlock()
 	// The range of UnixNano covers a range of reasonable timestamps.
-	q.queued = append(q.queued, jobQueueEntry{file, size, modified.UnixNano()})
+	q.queued = append(q.queued, jobQueueEntry{file, size, modified.UnixNano(), func() {}})
 }
 
 func (q *jobQueue) Pop() (string, bool) {
@@ -61,11 +63,11 @@ func (q *jobQueue) Pop() (string, bool) {
 		return "", false
 	}
 
-	f := q.queued[0].name
+	f := q.queued[0]
 	q.queued = q.queued[1:]
 	q.progress = append(q.progress, f)
 
-	return f, true
+	return f.name, true
 }
 
 func (q *jobQueue) BringToFront(filename string) {
@@ -91,7 +93,9 @@ func (q *jobQueue) Done(file string) {
 	defer q.mut.Unlock()
 
 	for i := range q.progress {
-		if q.progress[i] == file {
+		toCheck := &q.progress[i]
+		if toCheck.name == file {
+			toCheck.completionCallback()
 			copy(q.progress[i:], q.progress[i+1:])
 			q.progress = q.progress[:len(q.progress)-1]
 			return
@@ -114,15 +118,13 @@ func (q *jobQueue) Jobs(page, perpage int) ([]string, []string, int) {
 	}
 
 	if plen >= toSkip+perpage {
-		progress := make([]string, perpage)
-		copy(progress, q.progress[toSkip:toSkip+perpage])
+		progress := lo.Map(q.progress, func(j jobQueueEntry, i int) string { return j.name })
 		return progress, nil, toSkip
 	}
 
 	var progress []string
 	if plen > toSkip {
-		progress = make([]string, plen-toSkip)
-		copy(progress, q.progress[toSkip:plen])
+		progress = lo.Map(q.progress[toSkip:plen], func(j jobQueueEntry, i int) string { return j.name })
 		toSkip = 0
 	} else {
 		toSkip -= plen

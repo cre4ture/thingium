@@ -29,6 +29,7 @@ import (
 	"github.com/syncthing/syncthing/lib/semaphore"
 	"github.com/syncthing/syncthing/lib/stats"
 	"github.com/syncthing/syncthing/lib/sync"
+	"github.com/syncthing/syncthing/lib/utils"
 	"github.com/syncthing/syncthing/lib/versioner"
 )
 
@@ -104,9 +105,10 @@ func newVirtualFolder(
 	return f
 }
 
-func (f *virtualFolderSyncthingService) RequestBackgroundDownload(filename string, size int64, modified time.Time) {
-	wasNew := f.backgroundDownloadQueue.PushIfNew(filename, size, modified)
+func (f *virtualFolderSyncthingService) RequestBackgroundDownload(filename string, size int64, modified time.Time, fn func()) {
+	wasNew := f.backgroundDownloadQueue.PushIfNew(filename, size, modified, fn)
 	if !wasNew {
+		fn()
 		return
 	}
 
@@ -194,7 +196,7 @@ func (f *virtualFolderSyncthingService) Serve(ctx context.Context) error {
 		f.mountService = mount
 	}
 
-	backgroundDownloadTasks := 4
+	backgroundDownloadTasks := 40
 	for i := 0; i < backgroundDownloadTasks; i++ {
 		go f.Serve_backgroundDownloadTask()
 	}
@@ -237,24 +239,14 @@ func (vf *virtualFolderSyncthingService) Scan(subs []string) error {
 }
 
 func (vf *virtualFolderSyncthingService) PullAllMissing() error {
-	snap, err := vf.fset.Snapshot()
-	if err != nil {
-		return err
-	}
-	defer snap.Release()
-
-	vf.setState(FolderScanning)
-	defer vf.setState(FolderIdle)
-
-	snap.WithNeedTruncated(protocol.LocalDeviceID, func(f protocol.FileIntf) bool /* true to continue */ {
-		vf.PullOne(snap, f, true)
-		return true
-	})
-
-	return nil
+	return vf.Pull_x(true)
 }
 
 func (vf *virtualFolderSyncthingService) PullAll() error {
+	return vf.Pull_x(false)
+}
+
+func (vf *virtualFolderSyncthingService) Pull_x(onlyMissing bool) error {
 	snap, err := vf.fset.Snapshot()
 	if err != nil {
 		return err
@@ -266,17 +258,62 @@ func (vf *virtualFolderSyncthingService) PullAll() error {
 
 	logger.DefaultLogger.Infof("pull all START")
 
-	snap.WithGlobalTruncated(func(f protocol.FileIntf) bool /* true to continue */ {
-		vf.PullOne(snap, f, true)
+	count := 60
+	inProgress := make(chan int, count)
+	for i := 0; i < count; i++ {
+		inProgress <- 100 + i
+	}
+
+	total := uint64(0)
+
+	if onlyMissing {
+		snap.WithNeedTruncated(protocol.LocalDeviceID, func(f protocol.FileIntf) bool {
+			total += uint64(f.FileSize())
+			return true
+		})
+	} else {
+		snap.WithGlobalTruncated(func(f protocol.FileIntf) bool {
+			total += uint64(f.FileSize())
+			return true
+		})
+	}
+
+	asyncNotifier := utils.NewAsyncProgressNotifier(vf.ctx)
+	defer asyncNotifier.Progress.Close()
+	asyncNotifier.StartAsyncProgressNotification(
+		logger.DefaultLogger, total, uint(1), vf.evLogger, vf.folderID, make([]string, 0), nil)
+
+	pullF := func(f protocol.FileIntf) bool /* true to continue */ {
+		leaseNR := <-inProgress
+		myFileSize := f.FileSize()
+		go func() {
+			logger.DefaultLogger.Infof("pull ONE with leaseNR: %v", leaseNR)
+			vf.PullOne(snap, f, false, func() {
+				asyncNotifier.Progress.Update(myFileSize)
+				inProgress <- leaseNR
+				logger.DefaultLogger.Infof("pull ONE with leaseNR: %v - DONE, size: %v", leaseNR, myFileSize)
+			})
+		}()
 		return true
-	})
+	}
+
+	if onlyMissing {
+		snap.WithNeedTruncated(protocol.LocalDeviceID, pullF)
+	} else {
+		snap.WithGlobalTruncated(pullF)
+	}
+
+	// wait for async operations to complete
+	for i := 0; i < count; i++ {
+		<-inProgress
+	}
 
 	logger.DefaultLogger.Infof("pull all END")
 
 	return nil
 }
 
-func (vf *virtualFolderSyncthingService) PullOne(snap *db.Snapshot, f protocol.FileIntf, synchronous bool) {
+func (vf *virtualFolderSyncthingService) PullOne(snap *db.Snapshot, f protocol.FileIntf, synchronous bool, fn func()) {
 	if f.IsDirectory() {
 		// no work to do for directories. directly take over:
 		fi, ok := snap.GetGlobal(f.FileName())
@@ -285,13 +322,14 @@ func (vf *virtualFolderSyncthingService) PullOne(snap *db.Snapshot, f protocol.F
 		}
 	} else {
 		if !synchronous {
-			vf.RequestBackgroundDownload(f.FileName(), f.FileSize(), f.ModTime())
+			vf.RequestBackgroundDownload(f.FileName(), f.FileSize(), f.ModTime(), fn)
 		} else {
+			defer fn()
 			fi, ok := snap.GetGlobal(f.FileName())
 			if ok {
 				all_ok := true
 				for i, bi := range fi.Blocks {
-					logger.DefaultLogger.Infof("synchronous check block info #%v: %+v", i, bi, hashutil.HashToStringMapKey(bi.Hash))
+					logger.DefaultLogger.Infof("synchronous NEW check block info #%v: %+v", i, bi, hashutil.HashToStringMapKey(bi.Hash))
 					_, ok := vf.GetBlockDataFromCacheOrDownload(snap, fi, bi)
 					all_ok = all_ok && ok
 					if !ok {

@@ -617,7 +617,7 @@ func (vf *VirtualFileReadResult) Bytes(outBuf []byte) ([]byte, fuse.Status) {
 	}
 
 	if nextOutBufWriteBegin != 0 {
-		vf.f.vFSS.RequestBackgroundDownload(vf.fi.Name, vf.fi.Size, vf.fi.ModTime())
+		vf.f.vFSS.RequestBackgroundDownload(vf.fi.Name, vf.fi.Size, vf.fi.ModTime(), func() {})
 		return outBuf[:nextOutBufWriteBegin], 0
 	} else {
 		return nil, 0
