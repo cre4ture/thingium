@@ -47,6 +47,7 @@ type virtualFolderSyncthingService struct {
 
 	backgroundDownloadPending chan struct{}
 	backgroundDownloadQueue   jobQueue
+	backgroundDownloadCtx     context.Context
 }
 
 func (vFSS *virtualFolderSyncthingService) GetBlockDataFromCacheOrDownload(
@@ -123,9 +124,9 @@ func (f *virtualFolderSyncthingService) Serve_backgroundDownloadTask() {
 	defer l.Infof("vf.Serve_backgroundDownloadTask exits")
 	for {
 		select {
-		case <-f.ctx.Done():
-			return
 		case <-f.backgroundDownloadPending:
+		case <-f.backgroundDownloadCtx.Done():
+			return
 		}
 
 		for job, ok := f.backgroundDownloadQueue.Pop(); ok; job, ok = f.backgroundDownloadQueue.Pop() {
@@ -144,8 +145,8 @@ func (f *virtualFolderSyncthingService) Serve_backgroundDownloadTask() {
 				}
 
 				all_ok := true
-				for i, bi := range fi.Blocks {
-					logger.DefaultLogger.Debugf("check block info #%v: %+v", i, bi)
+				for _, bi := range fi.Blocks {
+					//logger.DefaultLogger.Debugf("check block info #%v: %+v", i, bi)
 					_, ok := f.GetBlockDataFromCacheOrDownload(snap, fi, bi)
 					all_ok = all_ok && ok
 
@@ -203,10 +204,13 @@ func (f *virtualFolderSyncthingService) Serve(ctx context.Context) error {
 		f.mountService = mount
 	}
 
+	backgroundDownloadCtx, cancel := context.WithCancel(context.Background())
+	f.backgroundDownloadCtx = backgroundDownloadCtx
 	backgroundDownloadTasks := 40
 	for i := 0; i < backgroundDownloadTasks; i++ {
 		go f.Serve_backgroundDownloadTask()
 	}
+	defer cancel()
 
 	for {
 		select {
@@ -249,12 +253,12 @@ func (f *virtualFolderSyncthingService) BringToFront(filename string) {
 
 func (vf *virtualFolderSyncthingService) Scan(subs []string) error {
 	logger.DefaultLogger.Infof("Scan - pull_x")
-	return vf.PullAll(true)
+	return vf.Pull_x(true, false)
 }
 
 func (vf *virtualFolderSyncthingService) PullAllMissing(onlyCheck bool) error {
-	logger.DefaultLogger.Infof("PullAllMissing - pull_x")
-	return vf.Pull_x(true, onlyCheck)
+	logger.DefaultLogger.Infof("PullAllMissing - pull_x - %v", onlyCheck)
+	return vf.Pull_x(false, true)
 }
 
 func (vf *virtualFolderSyncthingService) PullAll(onlyCheck bool) error {
@@ -310,8 +314,8 @@ func (vf *virtualFolderSyncthingService) Pull_x(onlyMissing bool, onlyCheck bool
 	defer logger.DefaultLogger.Infof("pull_x END b")
 
 	pullF := func(f protocol.FileIntf) bool /* true to continue */ {
-		leaseNR := <-inProgress
 		myFileSize := f.FileSize()
+		leaseNR := <-inProgress
 		go func() {
 			logger.DefaultLogger.Infof("pull ONE with leaseNR: %v", leaseNR)
 			vf.PullOne(snap, f, false, onlyCheck, func() {
@@ -320,8 +324,10 @@ func (vf *virtualFolderSyncthingService) Pull_x(onlyMissing bool, onlyCheck bool
 				logger.DefaultLogger.Infof("pull ONE with leaseNR: %v - DONE, size: %v", leaseNR, myFileSize)
 			})
 		}()
+
 		select {
 		case <-vf.ctx.Done():
+			logger.DefaultLogger.Infof("pull ONE - stop continue")
 			return false
 		default:
 			return true
@@ -335,9 +341,12 @@ func (vf *virtualFolderSyncthingService) Pull_x(onlyMissing bool, onlyCheck bool
 	}
 
 	// wait for async operations to complete
+	logger.DefaultLogger.Infof("PULL_X: wait for async operations to complete ...")
 	for i := 0; i < count; i++ {
 		<-inProgress
+		logger.DefaultLogger.Infof("PULL_X: wait for async operations to complete ... %v/%v", (i + 1), count)
 	}
+	logger.DefaultLogger.Infof("PULL_X: wait for async operations to complete - DONE")
 
 	return nil
 }
@@ -349,6 +358,7 @@ func (vf *virtualFolderSyncthingService) PullOne(snap *db.Snapshot, f protocol.F
 		if ok {
 			vf.fset.UpdateOne(protocol.LocalDeviceID, &fi)
 		}
+		fn()
 	} else {
 		if !synchronous && !onlyCheck {
 			vf.RequestBackgroundDownload(f.FileName(), f.FileSize(), f.ModTime(), fn)
@@ -359,7 +369,7 @@ func (vf *virtualFolderSyncthingService) PullOne(snap *db.Snapshot, f protocol.F
 				if ok {
 					all_ok := true
 					for i, bi := range fi.Blocks {
-						logger.DefaultLogger.Debugf("synchronous NEW check(%v) block info #%v: %+v", onlyCheck, i, bi, hashutil.HashToStringMapKey(bi.Hash))
+						//logger.DefaultLogger.Debugf("synchronous NEW check(%v) block info #%v: %+v", onlyCheck, i, bi, hashutil.HashToStringMapKey(bi.Hash))
 						ok := false
 						if !onlyCheck {
 							_, ok = vf.GetBlockDataFromCacheOrDownload(snap, fi, bi)
@@ -379,10 +389,10 @@ func (vf *virtualFolderSyncthingService) PullOne(snap *db.Snapshot, f protocol.F
 					}
 
 					if all_ok {
-						logger.DefaultLogger.Debugf("synchronous check block info (%v blocks, %v size) SUCCEEDED. ALL OK, file: %s", fi.Blocks, fi.Size, fi.Name)
+						//logger.DefaultLogger.Debugf("synchronous check block info (%v blocks, %v size) SUCCEEDED. ALL OK, file: %s", fi.Blocks, fi.Size, fi.Name)
 						vf.fset.UpdateOne(protocol.LocalDeviceID, &fi)
 					} else {
-						logger.DefaultLogger.Debugf("synchronous check block info result: incomplete, file: %s", fi.Name)
+						//logger.DefaultLogger.Debugf("synchronous check block info result: incomplete, file: %s", fi.Name)
 					}
 				}
 			}()
