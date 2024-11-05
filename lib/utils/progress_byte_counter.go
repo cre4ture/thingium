@@ -68,6 +68,10 @@ func NewAsyncProgressNotifier(ctx context.Context) *AsyncProgressNotifier {
 	}
 }
 
+func (apn *AsyncProgressNotifier) Stop() {
+	close(apn.Done)
+}
+
 func (apn *AsyncProgressNotifier) StartAsyncProgressNotification(
 	l logger.Logger,
 	total uint64,

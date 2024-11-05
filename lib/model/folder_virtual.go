@@ -120,8 +120,8 @@ func (f *virtualFolderSyncthingService) RequestBackgroundDownload(filename strin
 }
 
 func (f *virtualFolderSyncthingService) Serve_backgroundDownloadTask() {
+	defer l.Infof("vf.Serve_backgroundDownloadTask exits")
 	for {
-
 		select {
 		case <-f.ctx.Done():
 			return
@@ -145,9 +145,15 @@ func (f *virtualFolderSyncthingService) Serve_backgroundDownloadTask() {
 
 				all_ok := true
 				for i, bi := range fi.Blocks {
-					logger.DefaultLogger.Infof("check block info #%v: %+v", i, bi)
+					logger.DefaultLogger.Debugf("check block info #%v: %+v", i, bi)
 					_, ok := f.GetBlockDataFromCacheOrDownload(snap, fi, bi)
 					all_ok = all_ok && ok
+
+					select {
+					case <-f.ctx.Done():
+						return
+					default:
+					}
 				}
 
 				if !all_ok {
@@ -173,6 +179,7 @@ func (f *virtualFolderSyncthingService) Serve_backgroundDownloadTask() {
 func (f *virtualFolderSyncthingService) Serve(ctx context.Context) error {
 	f.model.foldersRunning.Add(1)
 	defer f.model.foldersRunning.Add(-1)
+	defer l.Infof("vf.Serve exits")
 
 	f.ctx = ctx
 
@@ -203,19 +210,24 @@ func (f *virtualFolderSyncthingService) Serve(ctx context.Context) error {
 
 	for {
 		select {
-		case <-ctx.Done():
+		case <-f.ctx.Done():
+			l.Debugf("Serve: case <-ctx.Done():")
 			if f.mountService != nil {
 				f.mountService.Close()
 				f.mountService = nil
 			}
+			l.Debugf("Serve: case <-ctx.Done(): 1")
 			if f.blockCache != nil {
 				f.blockCache.Close()
 				f.blockCache = nil
 			}
+			l.Debugf("Serve: case <-ctx.Done(): 2")
 			return nil
 
 		case <-f.pullScheduled:
-			f.PullAllMissing(true)
+			l.Debugf("Serve: f.PullAllMissing(false) - START")
+			f.PullAllMissing(false)
+			l.Debugf("Serve: f.PullAllMissing(false) - DONE")
 			continue
 		}
 	}
@@ -225,7 +237,8 @@ func (f *virtualFolderSyncthingService) Override()                 {}
 func (f *virtualFolderSyncthingService) Revert()                   {}
 func (f *virtualFolderSyncthingService) DelayScan(d time.Duration) {}
 func (vf *virtualFolderSyncthingService) ScheduleScan() {
-	vf.Scan([]string{})
+	logger.DefaultLogger.Infof("ScheduleScan - pull_x")
+	vf.Pull_x(false, false)
 }
 func (f *virtualFolderSyncthingService) Jobs(page, per_page int) ([]string, []string, int) {
 	return f.backgroundDownloadQueue.Jobs(page, per_page)
@@ -235,28 +248,39 @@ func (f *virtualFolderSyncthingService) BringToFront(filename string) {
 }
 
 func (vf *virtualFolderSyncthingService) Scan(subs []string) error {
+	logger.DefaultLogger.Infof("Scan - pull_x")
 	return vf.PullAll(true)
 }
 
 func (vf *virtualFolderSyncthingService) PullAllMissing(onlyCheck bool) error {
+	logger.DefaultLogger.Infof("PullAllMissing - pull_x")
 	return vf.Pull_x(true, onlyCheck)
 }
 
 func (vf *virtualFolderSyncthingService) PullAll(onlyCheck bool) error {
+	logger.DefaultLogger.Infof("PullAll - pull_x")
 	return vf.Pull_x(false, onlyCheck)
 }
 
 func (vf *virtualFolderSyncthingService) Pull_x(onlyMissing bool, onlyCheck bool) error {
+	defer logger.DefaultLogger.Infof("pull_x END z")
 	snap, err := vf.fset.Snapshot()
 	if err != nil {
 		return err
 	}
+	defer logger.DefaultLogger.Infof("pull_x END snap")
 	defer snap.Release()
 
-	vf.setState(FolderScanning)
+	if onlyCheck {
+		vf.setState(FolderScanning)
+	} else {
+		vf.setState(FolderSyncing)
+	}
+	defer logger.DefaultLogger.Infof("pull_x END setState")
 	defer vf.setState(FolderIdle)
 
-	logger.DefaultLogger.Infof("pull all START")
+	logger.DefaultLogger.Infof("pull_x START")
+	defer logger.DefaultLogger.Infof("pull_x END a")
 
 	count := 60
 	inProgress := make(chan int, count)
@@ -279,9 +303,11 @@ func (vf *virtualFolderSyncthingService) Pull_x(onlyMissing bool, onlyCheck bool
 	}
 
 	asyncNotifier := utils.NewAsyncProgressNotifier(vf.ctx)
-	defer asyncNotifier.Progress.Close()
 	asyncNotifier.StartAsyncProgressNotification(
 		logger.DefaultLogger, total, uint(1), vf.evLogger, vf.folderID, make([]string, 0), nil)
+	defer logger.DefaultLogger.Infof("pull_x END asyncNotifier.Stop()")
+	defer asyncNotifier.Stop()
+	defer logger.DefaultLogger.Infof("pull_x END b")
 
 	pullF := func(f protocol.FileIntf) bool /* true to continue */ {
 		leaseNR := <-inProgress
@@ -294,7 +320,12 @@ func (vf *virtualFolderSyncthingService) Pull_x(onlyMissing bool, onlyCheck bool
 				logger.DefaultLogger.Infof("pull ONE with leaseNR: %v - DONE, size: %v", leaseNR, myFileSize)
 			})
 		}()
-		return true
+		select {
+		case <-vf.ctx.Done():
+			return false
+		default:
+			return true
+		}
 	}
 
 	if onlyMissing {
@@ -307,8 +338,6 @@ func (vf *virtualFolderSyncthingService) Pull_x(onlyMissing bool, onlyCheck bool
 	for i := 0; i < count; i++ {
 		<-inProgress
 	}
-
-	logger.DefaultLogger.Infof("pull all END")
 
 	return nil
 }
@@ -330,7 +359,7 @@ func (vf *virtualFolderSyncthingService) PullOne(snap *db.Snapshot, f protocol.F
 				if ok {
 					all_ok := true
 					for i, bi := range fi.Blocks {
-						logger.DefaultLogger.Infof("synchronous NEW check(%v) block info #%v: %+v", onlyCheck, i, bi, hashutil.HashToStringMapKey(bi.Hash))
+						logger.DefaultLogger.Debugf("synchronous NEW check(%v) block info #%v: %+v", onlyCheck, i, bi, hashutil.HashToStringMapKey(bi.Hash))
 						ok := false
 						if !onlyCheck {
 							_, ok = vf.GetBlockDataFromCacheOrDownload(snap, fi, bi)
@@ -341,13 +370,19 @@ func (vf *virtualFolderSyncthingService) PullOne(snap *db.Snapshot, f protocol.F
 						if !ok && !onlyCheck {
 							logger.DefaultLogger.Warnf("synchronous check block info FAILED. NOT OK: #%v: %+v", i, bi, hashutil.HashToStringMapKey(bi.Hash))
 						}
+
+						select {
+						case <-vf.ctx.Done():
+							return
+						default:
+						}
 					}
 
 					if all_ok {
-						logger.DefaultLogger.Infof("synchronous check block info (%v blocks, %v size) SUCCEEDED. ALL OK, file: %s", fi.Blocks, fi.Size, fi.Name)
+						logger.DefaultLogger.Debugf("synchronous check block info (%v blocks, %v size) SUCCEEDED. ALL OK, file: %s", fi.Blocks, fi.Size, fi.Name)
 						vf.fset.UpdateOne(protocol.LocalDeviceID, &fi)
 					} else {
-						logger.DefaultLogger.Infof("synchronous check block info result: incomplete, file: %s", fi.Name)
+						logger.DefaultLogger.Debugf("synchronous check block info result: incomplete, file: %s", fi.Name)
 					}
 				}
 			}()
