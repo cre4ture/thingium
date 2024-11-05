@@ -120,6 +120,91 @@ func (f *virtualFolderSyncthingService) RequestBackgroundDownload(filename strin
 	}
 }
 
+type VirtualFolderPuller struct {
+	sharedPullerStateBase
+	job                     string
+	snap                    *db.Snapshot
+	folderService           *virtualFolderSyncthingService
+	backgroundDownloadQueue *jobQueue
+	fset                    *db.FileSet
+	ctx                     context.Context
+}
+
+func NewVirtualFolderPuller(f *virtualFolderSyncthingService, job string) {
+	defer f.backgroundDownloadQueue.Done(job)
+
+	now := time.Now()
+
+	snap, err := f.fset.Snapshot()
+	if err != nil {
+		return
+	}
+	defer snap.Release()
+
+	fi, ok := snap.GetGlobal(job)
+	if !ok {
+		return
+	}
+
+	instance := &VirtualFolderPuller{
+		sharedPullerStateBase: sharedPullerStateBase{
+			created:          now,
+			file:             fi,
+			folder:           f.folderID,
+			reused:           0,
+			copyTotal:        len(fi.Blocks),
+			copyNeeded:       len(fi.Blocks),
+			updated:          now,
+			available:        make([]int, 0),
+			availableUpdated: now,
+			mut:              sync.NewRWMutex(),
+		},
+		job:                     job,
+		snap:                    snap,
+		folderService:           f,
+		backgroundDownloadQueue: &f.backgroundDownloadQueue,
+		fset:                    f.fset,
+		ctx:                     f.ctx,
+	}
+
+	f.model.progressEmitter.Register(instance)
+	defer f.model.progressEmitter.Deregister(instance)
+
+	instance.PullOne()
+}
+
+func (f *VirtualFolderPuller) PullOne() {
+
+	all_ok := true
+	for _, bi := range f.file.Blocks {
+		//logger.DefaultLogger.Debugf("check block info #%v: %+v", i, bi)
+		_, ok := f.folderService.GetBlockDataFromCacheOrDownload(f.snap, f.file, bi)
+		all_ok = all_ok && ok
+
+		select {
+		case <-f.ctx.Done():
+			return
+		default:
+		}
+	}
+
+	if !all_ok {
+		f.folderService.evLogger.Log(events.Failure, fmt.Sprintf("failed to pull all blocks for: %v", f.job))
+		return
+	}
+
+	f.fset.UpdateOne(protocol.LocalDeviceID, &f.file)
+
+	seq := f.fset.Sequence(protocol.LocalDeviceID)
+	f.folderService.evLogger.Log(events.LocalIndexUpdated, map[string]interface{}{
+		"folder":    f.folderService.ID,
+		"items":     1,
+		"filenames": append([]string(nil), f.file.Name),
+		"sequence":  seq,
+		"version":   seq, // legacy for sequence
+	})
+}
+
 func (f *virtualFolderSyncthingService) Serve_backgroundDownloadTask() {
 	defer l.Infof("vf.Serve_backgroundDownloadTask exits")
 	for {
@@ -131,47 +216,7 @@ func (f *virtualFolderSyncthingService) Serve_backgroundDownloadTask() {
 
 		for job, ok := f.backgroundDownloadQueue.Pop(); ok; job, ok = f.backgroundDownloadQueue.Pop() {
 			func() {
-				defer f.backgroundDownloadQueue.Done(job)
-
-				snap, err := f.fset.Snapshot()
-				if err != nil {
-					return
-				}
-				defer snap.Release()
-
-				fi, ok := snap.GetGlobal(job)
-				if !ok {
-					return
-				}
-
-				all_ok := true
-				for _, bi := range fi.Blocks {
-					//logger.DefaultLogger.Debugf("check block info #%v: %+v", i, bi)
-					_, ok := f.GetBlockDataFromCacheOrDownload(snap, fi, bi)
-					all_ok = all_ok && ok
-
-					select {
-					case <-f.ctx.Done():
-						return
-					default:
-					}
-				}
-
-				if !all_ok {
-					f.evLogger.Log(events.Failure, fmt.Sprintf("failed to pull all blocks for: %v", job))
-					return
-				}
-
-				f.fset.UpdateOne(protocol.LocalDeviceID, &fi)
-
-				seq := f.fset.Sequence(protocol.LocalDeviceID)
-				f.evLogger.Log(events.LocalIndexUpdated, map[string]interface{}{
-					"folder":    f.ID,
-					"items":     1,
-					"filenames": append([]string(nil), fi.Name),
-					"sequence":  seq,
-					"version":   seq, // legacy for sequence
-				})
+				NewVirtualFolderPuller(f, job)
 			}()
 		}
 	}
@@ -352,19 +397,40 @@ func (vf *virtualFolderSyncthingService) Pull_x(onlyMissing bool, onlyCheck bool
 }
 
 func (vf *virtualFolderSyncthingService) PullOne(snap *db.Snapshot, f protocol.FileIntf, synchronous bool, onlyCheck bool, fn func()) {
+
+	vf.evLogger.Log(events.ItemStarted, map[string]string{
+		"folder": vf.folderID,
+		"item":   f.FileName(),
+		"type":   "file",
+		"action": "update",
+	})
+
+	err := error(nil)
+
+	fn2 := func() {
+		fn()
+		vf.evLogger.Log(events.ItemFinished, map[string]interface{}{
+			"folder": vf.folderID,
+			"item":   f.FileName(),
+			"error":  events.Error(err),
+			"type":   "dir",
+			"action": "update",
+		})
+	}
+
 	if f.IsDirectory() {
 		// no work to do for directories. directly take over:
 		fi, ok := snap.GetGlobal(f.FileName())
 		if ok {
 			vf.fset.UpdateOne(protocol.LocalDeviceID, &fi)
 		}
-		fn()
+		fn2()
 	} else {
 		if !synchronous && !onlyCheck {
-			vf.RequestBackgroundDownload(f.FileName(), f.FileSize(), f.ModTime(), fn)
+			vf.RequestBackgroundDownload(f.FileName(), f.FileSize(), f.ModTime(), fn2)
 		} else {
 			func() {
-				defer fn()
+				defer fn2()
 				fi, ok := snap.GetGlobal(f.FileName())
 				if ok {
 					all_ok := true
