@@ -168,11 +168,15 @@ func (hm *GoCloudUrlStorage) Close() error {
 
 func (hm *GoCloudUrlStorage) IterateBlocks(fn func(hash []byte) bool) error {
 
+	perPageCount := 1024 * 4
 	opts := &blob.ListOptions{}
 	opts.Prefix = BlockDataSubFolder + "/"
 	pageToken := blob.FirstPageToken
+	i := 0
 	for {
-		page, nextPageToken, err := hm.bucket.ListPage(hm.ctx, pageToken, 512, opts)
+		logger.DefaultLogger.Infof("loading page #%v ... ", i)
+		i += 1
+		page, nextPageToken, err := hm.bucket.ListPage(hm.ctx, pageToken, perPageCount, opts)
 		if err != nil {
 			return err
 		}
