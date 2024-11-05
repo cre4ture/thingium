@@ -12,6 +12,7 @@ import (
 	"log"
 
 	"github.com/syncthing/syncthing/lib/hashutil"
+	"github.com/syncthing/syncthing/lib/logger"
 	"gocloud.dev/blob"
 	"gocloud.dev/gcerrors"
 
@@ -30,6 +31,8 @@ type GoCloudUrlStorage struct {
 
 	ctx    context.Context
 	bucket *blob.Bucket
+
+	existenceCache map[string]struct{}
 }
 
 func NewGoCloudUrlStorage(ctx context.Context, url string) *GoCloudUrlStorage {
@@ -38,10 +41,14 @@ func NewGoCloudUrlStorage(ctx context.Context, url string) *GoCloudUrlStorage {
 		log.Fatal(err)
 	}
 
-	return &GoCloudUrlStorage{
+	instance := &GoCloudUrlStorage{
 		ctx:    ctx,
 		bucket: bucket,
 	}
+
+	instance.fillCache()
+
+	return instance
 }
 
 func getBlockStringKey(hash []byte) string {
@@ -51,12 +58,40 @@ func getBlockStringKey(hash []byte) string {
 func getMetadataStringKey(name string) string {
 	return MetaDataSubFolder + "/" + name
 }
+
+func (hm *GoCloudUrlStorage) fillCache() {
+	dummyValue := struct{}{}
+	hashSet := make(map[string]struct{})
+	err := hm.IterateBlocks(func(hash []byte) bool {
+		hashSet[hashutil.HashToStringMapKey(hash)] = dummyValue
+		select {
+		case <-hm.ctx.Done():
+			return false
+		default:
+			return true
+		}
+	})
+
+	if err != nil {
+		logger.DefaultLogger.Warnf("IterateBlocks returned error: %v", err)
+		return
+	}
+
+	hm.existenceCache = hashSet
+}
+
 func (hm *GoCloudUrlStorage) Has(hash []byte) (ok bool) {
 	if len(hash) == 0 {
 		return false
 	}
 
 	stringKey := getBlockStringKey(hash)
+
+	if hm.existenceCache != nil {
+		_, ok := hm.existenceCache[stringKey]
+		return ok
+	}
+
 	exists, err := hm.bucket.Exists(hm.ctx, stringKey)
 	if gcerrors.Code(err) == gcerrors.NotFound || !exists {
 		return false
@@ -129,4 +164,34 @@ func (hm *GoCloudUrlStorage) DeleteMeta(name string) {
 
 func (hm *GoCloudUrlStorage) Close() error {
 	return hm.bucket.Close()
+}
+
+func (hm *GoCloudUrlStorage) IterateBlocks(fn func(hash []byte) bool) error {
+
+	opts := &blob.ListOptions{}
+	opts.Prefix = BlockDataSubFolder + "/"
+	pageToken := blob.FirstPageToken
+	for {
+		page, nextPageToken, err := hm.bucket.ListPage(hm.ctx, pageToken, 512, opts)
+		if err != nil {
+			return err
+		}
+		if len(nextPageToken) == 0 {
+			// DONE
+			return nil
+		}
+
+		for _, obj := range page {
+			hash, err := hashutil.StringMapKeyToHash(obj.Key)
+			if err != nil {
+				continue
+			}
+			wantNext := fn(hash)
+			if !wantNext {
+				return nil
+			}
+		}
+
+		pageToken = nextPageToken
+	}
 }

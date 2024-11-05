@@ -18,4 +18,6 @@ type HashBlockStorageI interface {
 	GetMeta(name string) (data []byte, ok bool)
 	SetMeta(name string, data []byte)
 	DeleteMeta(name string)
+
+	IterateBlocks(fn func(hash []byte) bool) error
 }
