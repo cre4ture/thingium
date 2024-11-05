@@ -565,7 +565,7 @@ func (vf *VirtualFileReadResult) readOneBlock(offset uint64, remainingToRead int
 		return nil, 0
 	}
 
-	inputData, ok := vf.f.vFSS.GetBlockDataFromCacheOrDownload(vf.snap, *vf.fi, block)
+	inputData, ok, _ := vf.f.vFSS.GetBlockDataFromCacheOrDownload(vf.snap, *vf.fi, block)
 	if !ok {
 		return nil, fuse.Status(syscall.EAGAIN)
 	}

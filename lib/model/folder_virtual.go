@@ -50,25 +50,35 @@ type virtualFolderSyncthingService struct {
 	backgroundDownloadCtx     context.Context
 }
 
+type GetBlockDataResult int
+
+const (
+	GET_BLOCK_FAILED   GetBlockDataResult = iota
+	GET_BLOCK_CACHED   GetBlockDataResult = iota
+	GET_BLOCK_DOWNLOAD GetBlockDataResult = iota
+)
+
 func (vFSS *virtualFolderSyncthingService) GetBlockDataFromCacheOrDownload(
 	snap *db.Snapshot,
 	file protocol.FileInfo,
 	block protocol.BlockInfo,
-) ([]byte, bool) {
+) ([]byte, bool, GetBlockDataResult) {
 	data, ok := vFSS.blockCache.Get(block.Hash)
-	if !ok {
-		err := vFSS.pullBlockBase(func(blockData []byte) {
-			data = blockData
-		}, snap, file, block)
-
-		if err != nil {
-			return nil, false
-		}
-
-		vFSS.blockCache.Set(block.Hash, data)
+	if ok {
+		return data, true, GET_BLOCK_CACHED
 	}
 
-	return data, true
+	err := vFSS.pullBlockBase(func(blockData []byte) {
+		data = blockData
+	}, snap, file, block)
+
+	if err != nil {
+		return nil, false, GET_BLOCK_FAILED
+	}
+
+	vFSS.blockCache.Set(block.Hash, data)
+
+	return data, true, GET_BLOCK_DOWNLOAD
 }
 
 func newVirtualFolder(
@@ -178,8 +188,17 @@ func (f *VirtualFolderPuller) PullOne() {
 	all_ok := true
 	for _, bi := range f.file.Blocks {
 		//logger.DefaultLogger.Debugf("check block info #%v: %+v", i, bi)
-		_, ok := f.folderService.GetBlockDataFromCacheOrDownload(f.snap, f.file, bi)
+		_, ok, variant := f.folderService.GetBlockDataFromCacheOrDownload(f.snap, f.file, bi)
 		all_ok = all_ok && ok
+
+		switch variant {
+		case GET_BLOCK_CACHED:
+			f.copiedFromElsewhere(bi.Size)
+			f.copyDone(bi)
+		case GET_BLOCK_DOWNLOAD:
+			f.pullDone(bi)
+		case GET_BLOCK_FAILED:
+		}
 
 		select {
 		case <-f.ctx.Done():
@@ -438,7 +457,7 @@ func (vf *virtualFolderSyncthingService) PullOne(snap *db.Snapshot, f protocol.F
 						//logger.DefaultLogger.Debugf("synchronous NEW check(%v) block info #%v: %+v", onlyCheck, i, bi, hashutil.HashToStringMapKey(bi.Hash))
 						ok := false
 						if !onlyCheck {
-							_, ok = vf.GetBlockDataFromCacheOrDownload(snap, fi, bi)
+							_, ok, _ = vf.GetBlockDataFromCacheOrDownload(snap, fi, bi)
 						} else {
 							ok = vf.blockCache.Has(bi.Hash)
 						}
