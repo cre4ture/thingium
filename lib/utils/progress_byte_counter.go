@@ -89,6 +89,9 @@ func (apn *AsyncProgressNotifier) StartAsyncProgressNotification(
 		emitProgressEvent := func() {
 			current := apn.Progress.Total()
 			rate := apn.Progress.Rate()
+			if current > total {
+				total = current + (current / 2)
+			}
 			l.Debugf("%v: Walk %s %s current progress %d/%d at %.01f MiB/s (%d%%)", w, folderID, Subs, current, total, rate/1024/1024, current*100/total)
 			w.Log(events.FolderScanProgress, map[string]interface{}{
 				"folder":  folderID,

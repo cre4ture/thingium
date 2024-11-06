@@ -10,6 +10,8 @@ import (
 	"context"
 	"io"
 	"log"
+	"strconv"
+	"strings"
 
 	"github.com/syncthing/syncthing/lib/hashutil"
 	"github.com/syncthing/syncthing/lib/logger"
@@ -31,8 +33,32 @@ type GoCloudUrlStorage struct {
 
 	ctx    context.Context
 	bucket *blob.Bucket
+}
 
-	existenceCache map[string]struct{}
+// GetBlockHashesCountHint implements HashBlockStorageI.
+func (hm *GoCloudUrlStorage) GetBlockHashesCountHint() int {
+
+	minimum := 100
+
+	logger.DefaultLogger.Debugf("GetBlockHashesCountHint() - enter")
+	data, ok := hm.GetMeta("BlockCountHint")
+	if !ok {
+		logger.DefaultLogger.Infof("GetBlockHashesCountHint() - read hint failed - use %v", minimum)
+		return minimum
+	}
+
+	hint, err := strconv.Atoi(string(data[:]))
+	if err != nil {
+		logger.DefaultLogger.Infof("GetBlockHashesCountHint() - parsing of hint failed (%v) - use %v", err, minimum)
+		return minimum
+	}
+
+	if hint < minimum {
+		hint = minimum
+	}
+
+	logger.DefaultLogger.Infof("GetBlockHashesCountHint() - read hint OK: %v", hint)
+	return hint
 }
 
 func NewGoCloudUrlStorage(ctx context.Context, url string) *GoCloudUrlStorage {
@@ -46,8 +72,6 @@ func NewGoCloudUrlStorage(ctx context.Context, url string) *GoCloudUrlStorage {
 		bucket: bucket,
 	}
 
-	instance.fillCache()
-
 	return instance
 }
 
@@ -59,11 +83,16 @@ func getMetadataStringKey(name string) string {
 	return MetaDataSubFolder + "/" + name
 }
 
-func (hm *GoCloudUrlStorage) fillCache() {
+func (hm *GoCloudUrlStorage) GetBlockHashesCache(progressNotifier func(int)) map[string]struct{} {
 	dummyValue := struct{}{}
 	hashSet := make(map[string]struct{})
 	err := hm.IterateBlocks(func(hash []byte) bool {
-		hashSet[hashutil.HashToStringMapKey(hash)] = dummyValue
+
+		hashString := hashutil.HashToStringMapKey(hash)
+		hashSet[hashString] = dummyValue
+		//logger.DefaultLogger.Infof("IterateBlocks hash: %v", hashString)
+		progressNotifier(len(hashSet))
+
 		select {
 		case <-hm.ctx.Done():
 			return false
@@ -74,10 +103,13 @@ func (hm *GoCloudUrlStorage) fillCache() {
 
 	if err != nil {
 		logger.DefaultLogger.Warnf("IterateBlocks returned error: %v", err)
-		return
+		return nil
 	}
 
-	hm.existenceCache = hashSet
+	blockCountHint := strconv.Itoa(len(hashSet))
+	hm.SetMeta("BlockCountHint", []byte(blockCountHint))
+	logger.DefaultLogger.Warnf("SetMeta(BlockCountHint): %v", blockCountHint)
+	return hashSet
 }
 
 func (hm *GoCloudUrlStorage) Has(hash []byte) (ok bool) {
@@ -86,11 +118,6 @@ func (hm *GoCloudUrlStorage) Has(hash []byte) (ok bool) {
 	}
 
 	stringKey := getBlockStringKey(hash)
-
-	if hm.existenceCache != nil {
-		_, ok := hm.existenceCache[stringKey]
-		return ok
-	}
 
 	exists, err := hm.bucket.Exists(hm.ctx, stringKey)
 	if gcerrors.Code(err) == gcerrors.NotFound || !exists {
@@ -186,8 +213,10 @@ func (hm *GoCloudUrlStorage) IterateBlocks(fn func(hash []byte) bool) error {
 		}
 
 		for _, obj := range page {
-			hash, err := hashutil.StringMapKeyToHash(obj.Key)
+			hashString, _ := strings.CutPrefix(obj.Key, opts.Prefix)
+			hash, err := hashutil.StringMapKeyToHash(hashString)
 			if err != nil {
+				logger.DefaultLogger.Warnf("failed to parse hash from string: \"%v\" - err: %v", hashString, err)
 				continue
 			}
 			wantNext := fn(hash)

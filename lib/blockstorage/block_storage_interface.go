@@ -20,4 +20,6 @@ type HashBlockStorageI interface {
 	DeleteMeta(name string)
 
 	IterateBlocks(fn func(hash []byte) bool) error
+	GetBlockHashesCountHint() int
+	GetBlockHashesCache(progressNotifier func(int)) map[string]struct{}
 }

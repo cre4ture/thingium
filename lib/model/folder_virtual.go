@@ -350,10 +350,22 @@ func (vf *virtualFolderSyncthingService) Pull_x(onlyMissing bool, onlyCheck bool
 	logger.DefaultLogger.Infof("pull_x START")
 	defer logger.DefaultLogger.Infof("pull_x END a")
 
-	count := 60
-	inProgress := make(chan int, count)
-	for i := 0; i < count; i++ {
-		inProgress <- 100 + i
+	blockSize := 100000
+	checkMap := map[string]struct{}(nil)
+	if onlyCheck && true {
+		func() {
+			asyncNotifier := utils.NewAsyncProgressNotifier(vf.ctx)
+			asyncNotifier.StartAsyncProgressNotification(
+				logger.DefaultLogger, uint64(vf.blockCache.GetBlockHashesCountHint()*blockSize),
+				uint(1), vf.evLogger, vf.folderID, make([]string, 0), nil)
+			defer logger.DefaultLogger.Infof("pull_x END1 asyncNotifier.Stop()")
+			defer asyncNotifier.Stop()
+
+			checkMap = vf.blockCache.GetBlockHashesCache(func(i int) {
+				//logger.DefaultLogger.Infof("GetBlockHashesCache - progress: %v", i)
+				asyncNotifier.Progress.Update(int64(blockSize))
+			})
+		}()
 	}
 
 	total := uint64(0)
@@ -377,12 +389,18 @@ func (vf *virtualFolderSyncthingService) Pull_x(onlyMissing bool, onlyCheck bool
 	defer asyncNotifier.Stop()
 	defer logger.DefaultLogger.Infof("pull_x END b")
 
+	count := 60
+	inProgress := make(chan int, count)
+	for i := 0; i < count; i++ {
+		inProgress <- 100 + i
+	}
+
 	pullF := func(f protocol.FileIntf) bool /* true to continue */ {
 		myFileSize := f.FileSize()
 		leaseNR := <-inProgress
 		go func() {
 			logger.DefaultLogger.Infof("pull ONE with leaseNR: %v", leaseNR)
-			vf.PullOne(snap, f, false, onlyCheck, func() {
+			vf.PullOne(snap, f, false, checkMap, func() {
 				asyncNotifier.Progress.Update(myFileSize)
 				inProgress <- leaseNR
 				logger.DefaultLogger.Infof("pull ONE with leaseNR: %v - DONE, size: %v", leaseNR, myFileSize)
@@ -415,7 +433,7 @@ func (vf *virtualFolderSyncthingService) Pull_x(onlyMissing bool, onlyCheck bool
 	return nil
 }
 
-func (vf *virtualFolderSyncthingService) PullOne(snap *db.Snapshot, f protocol.FileIntf, synchronous bool, onlyCheck bool, fn func()) {
+func (vf *virtualFolderSyncthingService) PullOne(snap *db.Snapshot, f protocol.FileIntf, synchronous bool, checkMap map[string]struct{}, fn func()) {
 
 	vf.evLogger.Log(events.ItemStarted, map[string]string{
 		"folder": vf.folderID,
@@ -445,7 +463,7 @@ func (vf *virtualFolderSyncthingService) PullOne(snap *db.Snapshot, f protocol.F
 		}
 		fn2()
 	} else {
-		if !synchronous && !onlyCheck {
+		if !synchronous && (checkMap == nil) {
 			vf.RequestBackgroundDownload(f.FileName(), f.FileSize(), f.ModTime(), fn2)
 		} else {
 			func() {
@@ -456,13 +474,13 @@ func (vf *virtualFolderSyncthingService) PullOne(snap *db.Snapshot, f protocol.F
 					for i, bi := range fi.Blocks {
 						//logger.DefaultLogger.Debugf("synchronous NEW check(%v) block info #%v: %+v", onlyCheck, i, bi, hashutil.HashToStringMapKey(bi.Hash))
 						ok := false
-						if !onlyCheck {
+						if checkMap == nil {
 							_, ok, _ = vf.GetBlockDataFromCacheOrDownload(snap, fi, bi)
 						} else {
-							ok = vf.blockCache.Has(bi.Hash)
+							_, ok = checkMap[hashutil.HashToStringMapKey(bi.Hash)]
 						}
 						all_ok = all_ok && ok
-						if !ok && !onlyCheck {
+						if !ok && (checkMap == nil) {
 							logger.DefaultLogger.Warnf("synchronous check block info FAILED. NOT OK: #%v: %+v", i, bi, hashutil.HashToStringMapKey(bi.Hash))
 						}
 
