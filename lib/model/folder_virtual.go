@@ -124,6 +124,7 @@ func (f *virtualFolderSyncthingService) RequestBackgroundDownload(filename strin
 	}
 
 	f.backgroundDownloadQueue.SortAccordingToConfig(f.Order)
+	logger.DefaultLogger.Warnf("f.backgroundDownloadQueue.SortAccordingToConfig(f.Order[%v])", f.Order)
 	select {
 	case f.backgroundDownloadPending <- struct{}{}:
 	default:
@@ -368,23 +369,27 @@ func (vf *virtualFolderSyncthingService) Pull_x(onlyMissing bool, onlyCheck bool
 		}()
 	}
 
-	total := uint64(0)
+	jobs := newJobQueue()
+	totalBytes := uint64(0)
+	{
+		prepareFn := func(f protocol.FileIntf) bool {
+			totalBytes += uint64(f.FileSize())
+			jobs.Push(f.FileName(), f.FileSize(), f.ModTime())
+			return true
+		}
 
-	if onlyMissing {
-		snap.WithNeedTruncated(protocol.LocalDeviceID, func(f protocol.FileIntf) bool {
-			total += uint64(f.FileSize())
-			return true
-		})
-	} else {
-		snap.WithGlobalTruncated(func(f protocol.FileIntf) bool {
-			total += uint64(f.FileSize())
-			return true
-		})
+		if onlyMissing {
+			snap.WithNeedTruncated(protocol.LocalDeviceID, prepareFn)
+		} else {
+			snap.WithGlobalTruncated(prepareFn)
+		}
+
+		jobs.SortAccordingToConfig(vf.Order)
 	}
 
 	asyncNotifier := utils.NewAsyncProgressNotifier(vf.ctx)
 	asyncNotifier.StartAsyncProgressNotification(
-		logger.DefaultLogger, total, uint(1), vf.evLogger, vf.folderID, make([]string, 0), nil)
+		logger.DefaultLogger, totalBytes, uint(1), vf.evLogger, vf.folderID, make([]string, 0), nil)
 	defer logger.DefaultLogger.Infof("pull_x END asyncNotifier.Stop()")
 	defer asyncNotifier.Stop()
 	defer logger.DefaultLogger.Infof("pull_x END b")
@@ -416,10 +421,14 @@ func (vf *virtualFolderSyncthingService) Pull_x(onlyMissing bool, onlyCheck bool
 		}
 	}
 
-	if onlyMissing {
-		snap.WithNeedTruncated(protocol.LocalDeviceID, pullF)
-	} else {
-		snap.WithGlobalTruncated(pullF)
+	for job, ok := jobs.Pop(); ok; job, ok = jobs.Pop() {
+		fi, ok := snap.GetGlobalTruncated(job)
+		if ok {
+			good := pullF(fi)
+			if !good {
+				break
+			}
+		}
 	}
 
 	// wait for async operations to complete
