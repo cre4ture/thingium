@@ -108,7 +108,7 @@ func (hm *GoCloudUrlStorage) GetBlockHashesCache(progressNotifier func(int)) map
 
 	blockCountHint := strconv.Itoa(len(hashSet))
 	hm.SetMeta("BlockCountHint", []byte(blockCountHint))
-	logger.DefaultLogger.Warnf("SetMeta(BlockCountHint): %v", blockCountHint)
+	logger.DefaultLogger.Debugf("SetMeta(BlockCountHint): %v", blockCountHint)
 	return hashSet
 }
 
