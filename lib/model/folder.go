@@ -48,6 +48,9 @@ type folderBase struct {
 	fset     *db.FileSet
 	ctx      context.Context // used internally, only accessible on serve lifetime
 
+	done         chan struct{} // used externally, accessible regardless of serve
+	doInSyncChan chan syncRequest
+
 	pullScheduled chan struct{}
 }
 
@@ -63,7 +66,9 @@ func newFolderBase(
 		evLogger:            evLogger,
 		model:               model,
 		fset:                fset,
-		ctx:                 nil,                    // needs to be set at start of "serve"
+		ctx:                 nil, // needs to be set at start of "serve"
+		done:                make(chan struct{}),
+		doInSyncChan:        make(chan syncRequest),
 		pullScheduled:       make(chan struct{}, 1), // This needs to be 1-buffered so that we queue a pull if we're busy when it comes.
 	}
 }
@@ -160,7 +165,6 @@ type folder struct {
 	ignores       *ignore.Matcher
 	mtimefs       fs.Filesystem
 	modTimeWindow time.Duration
-	done          chan struct{} // used externally, accessible regardless of serve
 
 	scanInterval           time.Duration
 	scanTimer              *time.Timer
@@ -176,8 +180,6 @@ type folder struct {
 	scanErrors []FileError
 	pullErrors []FileError
 	errorsMut  sync.Mutex
-
-	doInSyncChan chan syncRequest
 
 	forcedRescanRequested chan struct{}
 	forcedRescanPaths     map[string]struct{}
@@ -218,7 +220,6 @@ func newFolder(model *model, fset *db.FileSet, ignores *ignore.Matcher, cfg conf
 		ignores:       ignores,
 		mtimefs:       cfg.Filesystem(fset),
 		modTimeWindow: cfg.ModTimeWindow(),
-		done:          make(chan struct{}),
 
 		scanInterval:           time.Duration(cfg.RescanIntervalS) * time.Second,
 		scanTimer:              time.NewTimer(0), // The first scan should be done immediately.
@@ -229,8 +230,6 @@ func newFolder(model *model, fset *db.FileSet, ignores *ignore.Matcher, cfg conf
 		versionCleanupTimer:    time.NewTimer(time.Duration(cfg.Versioning.CleanupIntervalS) * time.Second),
 
 		errorsMut: sync.NewMutex(),
-
-		doInSyncChan: make(chan syncRequest),
 
 		forcedRescanRequested: make(chan struct{}, 1),
 		forcedRescanPaths:     make(map[string]struct{}),
@@ -395,11 +394,18 @@ func (f *folder) Scan(subdirs []string) error {
 
 // doInSync allows to run functions synchronously in folder.serve from exported,
 // asynchronously called methods.
-func (f *folder) doInSync(fn func() error) error {
+func (f *folderBase) requestDoInSync(fn func() error) syncRequest {
 	req := syncRequest{
 		fn:  fn,
 		err: make(chan error, 1),
 	}
+	return req
+}
+
+// doInSync allows to run functions synchronously in folder.serve from exported,
+// asynchronously called methods.
+func (f *folderBase) doInSync(fn func() error) error {
+	req := f.requestDoInSync(fn)
 
 	select {
 	case f.doInSyncChan <- req:

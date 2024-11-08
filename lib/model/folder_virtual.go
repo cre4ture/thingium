@@ -39,6 +39,14 @@ func init() {
 	log.Default().SetPrefix("TESTLOG ")
 }
 
+type InitialScanState int
+
+const (
+	INITIAL_SCAN_IDLE      InitialScanState = iota
+	INITIAL_SCAN_RUNNING   InitialScanState = iota
+	INITIAL_SCAN_COMPLETED InitialScanState = iota
+)
+
 type virtualFolderSyncthingService struct {
 	*folderBase
 	blockCache   blockstorage.HashBlockStorageI
@@ -48,6 +56,9 @@ type virtualFolderSyncthingService struct {
 	backgroundDownloadPending chan struct{}
 	backgroundDownloadQueue   jobQueue
 	backgroundDownloadCtx     context.Context
+
+	initialScanState InitialScanState
+	InitialScanDone  chan struct{}
 }
 
 type GetBlockDataResult int
@@ -96,6 +107,8 @@ func newVirtualFolder(
 		blockCache:                nil,
 		backgroundDownloadPending: make(chan struct{}, 1),
 		backgroundDownloadQueue:   *newJobQueue(),
+		initialScanState:          INITIAL_SCAN_IDLE,
+		InitialScanDone:           make(chan struct{}, 1),
 	}
 
 	blobUrl := ""
@@ -277,9 +290,18 @@ func (f *virtualFolderSyncthingService) Serve(ctx context.Context) error {
 	}
 	defer cancel()
 
+	if f.initialScanState == INITIAL_SCAN_IDLE {
+		f.initialScanState = INITIAL_SCAN_RUNNING
+		f.Pull_x(false, true)
+		f.initialScanState = INITIAL_SCAN_COMPLETED
+		close(f.InitialScanDone)
+		f.Pull_x(true, false)
+	}
+
 	for {
 		select {
 		case <-f.ctx.Done():
+			close(f.done)
 			l.Debugf("Serve: case <-ctx.Done():")
 			if f.mountService != nil {
 				f.mountService.Close()
@@ -293,10 +315,18 @@ func (f *virtualFolderSyncthingService) Serve(ctx context.Context) error {
 			l.Debugf("Serve: case <-ctx.Done(): 2")
 			return nil
 
+		case req := <-f.doInSyncChan:
+			l.Debugln(f, "Running something due to request")
+			err := req.fn()
+			req.err <- err
+
 		case <-f.pullScheduled:
-			l.Debugf("Serve: f.PullAllMissing(false) - START")
-			f.PullAllMissing(false)
-			l.Debugf("Serve: f.PullAllMissing(false) - DONE")
+			f.requestDoInSync(func() error {
+				l.Debugf("Serve: f.PullAllMissing(false) - START")
+				err := f.PullAllMissing(false)
+				l.Debugf("Serve: f.PullAllMissing(false) - DONE. Err: %v", err)
+				return err
+			})
 			continue
 		}
 	}
@@ -305,9 +335,13 @@ func (f *virtualFolderSyncthingService) Serve(ctx context.Context) error {
 func (f *virtualFolderSyncthingService) Override()                 {}
 func (f *virtualFolderSyncthingService) Revert()                   {}
 func (f *virtualFolderSyncthingService) DelayScan(d time.Duration) {}
-func (vf *virtualFolderSyncthingService) ScheduleScan() {
+func (f *virtualFolderSyncthingService) ScheduleScan() {
 	logger.DefaultLogger.Infof("ScheduleScan - pull_x")
-	vf.Pull_x(false, false)
+	f.requestDoInSync(func() error {
+		err := f.Pull_x(false, false)
+		logger.DefaultLogger.Infof("ScheduleScan - pull_x - DONE. Err: %v", err)
+		return err
+	})
 }
 func (f *virtualFolderSyncthingService) Jobs(page, per_page int) ([]string, []string, int) {
 	return f.backgroundDownloadQueue.Jobs(page, per_page)
@@ -318,17 +352,23 @@ func (f *virtualFolderSyncthingService) BringToFront(filename string) {
 
 func (vf *virtualFolderSyncthingService) Scan(subs []string) error {
 	logger.DefaultLogger.Infof("Scan - pull_x")
-	return vf.Pull_x(true, false)
+	return vf.Pull_x_doInSync(true, false)
 }
 
 func (vf *virtualFolderSyncthingService) PullAllMissing(onlyCheck bool) error {
 	logger.DefaultLogger.Infof("PullAllMissing - pull_x - %v", onlyCheck)
-	return vf.Pull_x(false, true)
+	return vf.Pull_x_doInSync(false, true)
 }
 
 func (vf *virtualFolderSyncthingService) PullAll(onlyCheck bool) error {
 	logger.DefaultLogger.Infof("PullAll - pull_x")
-	return vf.Pull_x(false, onlyCheck)
+	return vf.Pull_x_doInSync(false, onlyCheck)
+}
+
+func (f *virtualFolderSyncthingService) Pull_x_doInSync(onlyMissing bool, onlyCheck bool) error {
+	return f.doInSync(func() error {
+		return f.Pull_x(onlyMissing, onlyCheck)
+	})
 }
 
 func (vf *virtualFolderSyncthingService) Pull_x(onlyMissing bool, onlyCheck bool) error {
