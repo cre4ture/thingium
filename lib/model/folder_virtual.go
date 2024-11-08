@@ -381,7 +381,11 @@ func (vf *virtualFolderSyncthingService) Pull_x(onlyMissing bool, onlyCheck bool
 		if onlyMissing {
 			snap.WithNeedTruncated(protocol.LocalDeviceID, prepareFn)
 		} else {
-			snap.WithGlobalTruncated(prepareFn)
+			if onlyCheck {
+				snap.WithHaveTruncated(protocol.LocalDeviceID, prepareFn)
+			} else {
+				snap.WithGlobalTruncated(prepareFn)
+			}
 		}
 
 		jobs.SortAccordingToConfig(vf.Order)
@@ -405,11 +409,16 @@ func (vf *virtualFolderSyncthingService) Pull_x(onlyMissing bool, onlyCheck bool
 		leaseNR := <-inProgress
 		go func() {
 			logger.DefaultLogger.Infof("pull ONE with leaseNR: %v", leaseNR)
-			vf.PullOne(snap, f, false, checkMap, func() {
+			finishFn := func() {
 				asyncNotifier.Progress.Update(myFileSize)
 				inProgress <- leaseNR
 				logger.DefaultLogger.Infof("pull ONE with leaseNR: %v - DONE, size: %v", leaseNR, myFileSize)
-			})
+			}
+			if checkMap != nil {
+				vf.ScanOne(snap, f, checkMap, finishFn)
+			} else {
+				vf.PullOne(snap, f, false, checkMap, finishFn)
+			}
 		}()
 
 		select {
@@ -509,6 +518,51 @@ func (vf *virtualFolderSyncthingService) PullOne(snap *db.Snapshot, f protocol.F
 				}
 			}()
 		}
+	}
+}
+
+func (vf *virtualFolderSyncthingService) ScanOne(snap *db.Snapshot, f protocol.FileIntf, checkMap map[string]struct{}, fn func()) {
+
+	if f.IsDirectory() {
+		// no work to do for directories.
+		fn()
+	} else {
+		func() {
+			defer fn()
+
+			fi, ok := snap.Get(protocol.LocalDeviceID, f.FileName())
+			if !ok {
+				return
+			}
+
+			all_ok := true
+			for i, bi := range fi.Blocks {
+				//logger.DefaultLogger.Debugf("synchronous NEW check(%v) block info #%v: %+v", onlyCheck, i, bi, hashutil.HashToStringMapKey(bi.Hash))
+				_, ok := checkMap[hashutil.HashToStringMapKey(bi.Hash)]
+				all_ok = all_ok && ok
+				if !ok && (checkMap == nil) {
+					logger.DefaultLogger.Warnf("synchronous check block info FAILED. NOT OK: #%v: %+v", i, bi, hashutil.HashToStringMapKey(bi.Hash))
+				}
+
+				select {
+				case <-vf.ctx.Done():
+					return
+				default:
+				}
+			}
+
+			if !all_ok {
+				//logger.DefaultLogger.Debugf("synchronous check block info result: incomplete, file: %s", fi.Name)
+				// Revert means to throw away our local changes. We reset the
+				// version to the empty vector, which is strictly older than any
+				// other existing version. It is not in conflict with anything,
+				// either, so we will not create a conflict copy of our local
+				// changes.
+				fi.Version = protocol.Vector{}
+				vf.fset.UpdateOne(protocol.LocalDeviceID, &fi)
+			}
+
+		}()
 	}
 }
 
