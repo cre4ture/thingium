@@ -59,10 +59,10 @@ func (e *EncryptedHashBlockStorage) GetMeta(name string) (data []byte, ok bool) 
 //	return e.store.Has(hash)
 //}
 
-// IterateBlocks implements HashBlockStorageI.
-func (e *EncryptedHashBlockStorage) IterateBlocks(fn func(hash []byte, state HashBlockState) bool) error {
-	return e.store.IterateBlocks(fn)
-}
+//// IterateBlocks implements HashBlockStorageI.
+//func (e *EncryptedHashBlockStorage) IterateBlocks(fn func(hash []byte, state HashBlockState) bool) error {
+//	return e.store.IterateBlocks(fn)
+//}
 
 // Set implements HashBlockStorageI.
 func (e *EncryptedHashBlockStorage) Set(hash []byte, data []byte) {

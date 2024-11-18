@@ -460,7 +460,7 @@ func (vf *virtualFolderSyncthingService) Pull_x(onlyMissing bool, onlyCheck bool
 			if checkMap != nil {
 				vf.ScanOne(snap, f, checkMap, finishFn)
 			} else {
-				vf.PullOne(snap, f, false, checkMap, finishFn)
+				vf.PullOne(snap, f, false, finishFn)
 			}
 		}()
 
@@ -495,8 +495,7 @@ func (vf *virtualFolderSyncthingService) Pull_x(onlyMissing bool, onlyCheck bool
 }
 
 func (vf *virtualFolderSyncthingService) PullOne(
-	snap *db.Snapshot, f protocol.FileIntf, synchronous bool,
-	checkMap blockstorage.HashBlockStateMap, fn func(),
+	snap *db.Snapshot, f protocol.FileIntf, synchronous bool, fn func(),
 ) {
 
 	vf.evLogger.Log(events.ItemStarted, map[string]string{
@@ -527,7 +526,7 @@ func (vf *virtualFolderSyncthingService) PullOne(
 		}
 		fn2()
 	} else {
-		if !synchronous && (checkMap == nil) {
+		if !synchronous {
 			vf.RequestBackgroundDownload(f.FileName(), f.FileSize(), f.ModTime(), fn2)
 		} else {
 			func() {
@@ -538,13 +537,9 @@ func (vf *virtualFolderSyncthingService) PullOne(
 					for i, bi := range fi.Blocks {
 						//logger.DefaultLogger.Debugf("synchronous NEW check(%v) block info #%v: %+v", onlyCheck, i, bi, hashutil.HashToStringMapKey(bi.Hash))
 						ok := false
-						if checkMap == nil {
-							_, ok, _ = vf.GetBlockDataFromCacheOrDownload(snap, fi, bi)
-						} else {
-							_, ok = checkMap[hashutil.HashToStringMapKey(bi.Hash)]
-						}
+						_, ok, _ = vf.GetBlockDataFromCacheOrDownload(snap, fi, bi)
 						all_ok = all_ok && ok
-						if !ok && (checkMap == nil) {
+						if !ok {
 							logger.DefaultLogger.Warnf("synchronous check block info FAILED. NOT OK: #%v: %+v", i, bi, hashutil.HashToStringMapKey(bi.Hash))
 						}
 

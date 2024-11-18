@@ -29,7 +29,8 @@ type HashBlockStorageI interface {
 	SetMeta(name string, data []byte)
 	DeleteMeta(name string)
 
-	IterateBlocks(fn func(hash []byte, state HashBlockState) bool) error
+	// internal use only - so far
+	//IterateBlocks(fn func(hash []byte, state HashBlockState) bool) error
 	GetBlockHashesCountHint() int
 	GetBlockHashesCache(progressNotifier func(int)) HashBlockStateMap
 }
