@@ -249,6 +249,7 @@ func (hm *GoCloudUrlStorage) Get(hash []byte) (data []byte, ok bool) {
 		if !retry {
 			break
 		}
+		// wait for a relatively long period of time to allow deletion to complete / skip
 		time.Sleep(time.Minute * 1)
 	}
 
@@ -282,7 +283,9 @@ func (hm *GoCloudUrlStorage) Set(hash []byte, data []byte) {
 }
 
 func (hm *GoCloudUrlStorage) Delete(hash []byte) {
-	err := hm.bucket.Delete(hm.ctx, getBlockStringKey(hash))
+	// delete reference to block data for this node
+	// TODO: trigger async immediate checked delete?
+	err := hm.bucket.Delete(hm.ctx, getBlockStringKey(hash)+"."+BLOCK_USE_TAG+"."+hm.myDeviceId)
 	if err != nil {
 		log.Fatal(err)
 		panic("writing to block storage failed!")
