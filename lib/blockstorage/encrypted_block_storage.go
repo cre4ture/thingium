@@ -40,7 +40,7 @@ func (e *EncryptedHashBlockStorage) Get(hash []byte) (data []byte, ok bool) {
 }
 
 // GetBlockHashesCache implements HashBlockStorageI.
-func (e *EncryptedHashBlockStorage) GetBlockHashesCache(progressNotifier func(int)) map[string]struct{} {
+func (e *EncryptedHashBlockStorage) GetBlockHashesCache(progressNotifier func(int)) HashBlockStateMap {
 	return e.store.GetBlockHashesCache(progressNotifier)
 }
 
@@ -54,13 +54,13 @@ func (e *EncryptedHashBlockStorage) GetMeta(name string) (data []byte, ok bool) 
 	return e.store.GetMeta(name)
 }
 
-// Has implements HashBlockStorageI.
-func (e *EncryptedHashBlockStorage) Has(hash []byte) (ok bool) {
-	return e.store.Has(hash)
-}
+//// Has implements HashBlockStorageI.
+//func (e *EncryptedHashBlockStorage) Has(hash []byte) (ok bool) {
+//	return e.store.Has(hash)
+//}
 
 // IterateBlocks implements HashBlockStorageI.
-func (e *EncryptedHashBlockStorage) IterateBlocks(fn func(hash []byte) bool) error {
+func (e *EncryptedHashBlockStorage) IterateBlocks(fn func(hash []byte, state HashBlockState) bool) error {
 	return e.store.IterateBlocks(fn)
 }
 

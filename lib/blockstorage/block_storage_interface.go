@@ -8,10 +8,20 @@ package blockstorage
 
 import "io"
 
+type HashBlockState int
+
+const HBS_NOT_AVAILABLE HashBlockState = iota
+const HBS_AVAILABLE HashBlockState = iota
+const HBS_AVAILABLE_HOLD HashBlockState = iota
+
+type HashBlockStateMap map[string]HashBlockState
+
 type HashBlockStorageI interface {
 	io.Closer
 
-	Has(hash []byte) (ok bool)
+	// just Has() alone is not allowed as this doesn't allow proper reference counting
+	// Has(hash []byte) (ok bool)
+
 	Get(hash []byte) (data []byte, ok bool)
 	Set(hash []byte, data []byte)
 	Delete(hash []byte)
@@ -19,7 +29,7 @@ type HashBlockStorageI interface {
 	SetMeta(name string, data []byte)
 	DeleteMeta(name string)
 
-	IterateBlocks(fn func(hash []byte) bool) error
+	IterateBlocks(fn func(hash []byte, state HashBlockState) bool) error
 	GetBlockHashesCountHint() int
-	GetBlockHashesCache(progressNotifier func(int)) map[string]struct{}
+	GetBlockHashesCache(progressNotifier func(int)) HashBlockStateMap
 }

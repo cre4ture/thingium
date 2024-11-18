@@ -12,11 +12,11 @@ import (
 	"log"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/syncthing/syncthing/lib/hashutil"
 	"github.com/syncthing/syncthing/lib/logger"
 	"gocloud.dev/blob"
-	"gocloud.dev/gcerrors"
 
 	_ "gocloud.dev/blob/azureblob"
 	_ "gocloud.dev/blob/fileblob"
@@ -27,12 +27,67 @@ import (
 
 const BlockDataSubFolder = "blocks"
 const MetaDataSubFolder = "meta"
+const BLOCK_DELETE_TAG = "delete" // delete tags need to be alphabetically before use tags
+const BLOCK_USE_TAG = "uses"
+
+type HashBlockStorageMapBuilder struct {
+	cb           func(hash string, state HashBlockState)
+	currentHash  string
+	currentState HashBlockState
+}
+
+func NewHashBlockStorageMapBuilder(cb func(hash string, state HashBlockState)) *HashBlockStorageMapBuilder {
+	return &HashBlockStorageMapBuilder{
+		cb:           cb,
+		currentHash:  "",
+		currentState: HBS_NOT_AVAILABLE,
+	}
+}
+
+func (b *HashBlockStorageMapBuilder) completeIfNextHash(hash string) bool {
+	complete := hash != b.currentHash
+	if complete {
+		if b.currentState != HBS_NOT_AVAILABLE {
+			b.cb(b.currentHash, b.currentState)
+		}
+		b.currentHash = hash
+	}
+	return false
+}
+
+func (b *HashBlockStorageMapBuilder) addData(hash string) {
+	if b.completeIfNextHash(hash) {
+		return
+	}
+
+	b.currentState = HBS_AVAILABLE
+}
+
+func (b *HashBlockStorageMapBuilder) addUse(hash string) {
+	if b.completeIfNextHash(hash) {
+		return
+	}
+
+	if b.currentState == HBS_AVAILABLE {
+		b.currentState = HBS_AVAILABLE_HOLD
+	}
+}
+
+func (b *HashBlockStorageMapBuilder) addDelete(hash string) {
+	if b.completeIfNextHash(hash) {
+		return
+	}
+
+	// it will be deleted soon
+	b.currentState = HBS_NOT_AVAILABLE
+}
 
 type GoCloudUrlStorage struct {
 	io.Closer
 
-	ctx    context.Context
-	bucket *blob.Bucket
+	ctx        context.Context
+	bucket     *blob.Bucket
+	myDeviceId string
 }
 
 // GetBlockHashesCountHint implements HashBlockStorageI.
@@ -83,14 +138,14 @@ func getMetadataStringKey(name string) string {
 	return MetaDataSubFolder + "/" + name
 }
 
-func (hm *GoCloudUrlStorage) GetBlockHashesCache(progressNotifier func(int)) map[string]struct{} {
-	dummyValue := struct{}{}
-	hashSet := make(map[string]struct{})
-	err := hm.IterateBlocks(func(hash []byte) bool {
+func (hm *GoCloudUrlStorage) GetBlockHashesCache(progressNotifier func(int)) HashBlockStateMap {
+
+	hashSet := make(map[string]HashBlockState)
+	err := hm.IterateBlocks(func(hash []byte, state HashBlockState) bool {
 
 		hashString := hashutil.HashToStringMapKey(hash)
-		hashSet[hashString] = dummyValue
-		//logger.DefaultLogger.Infof("IterateBlocks hash: %v", hashString)
+		hashSet[hashString] = state
+		logger.DefaultLogger.Infof("IterateBlocks hash(hash, state): %v, %v", hashString, state)
 		progressNotifier(len(hashSet))
 
 		select {
@@ -112,42 +167,101 @@ func (hm *GoCloudUrlStorage) GetBlockHashesCache(progressNotifier func(int)) map
 	return hashSet
 }
 
-func (hm *GoCloudUrlStorage) Has(hash []byte) (ok bool) {
-	if len(hash) == 0 {
-		return false
-	}
+//func (hm *GoCloudUrlStorage) Has(hash []byte) (ok bool) {
+//	if len(hash) == 0 {
+//		return false
+//	}
+//
+//	stringKey := getBlockStringKey(hash)
+//
+//	hm.bucket.ListPage(hm.ctx, nil, 3)
+//	exists, err := hm.bucket.Exists(hm.ctx, stringKey)
+//	if gcerrors.Code(err) == gcerrors.NotFound || !exists {
+//		return false
+//	}
+//
+//	if err != nil {
+//		log.Fatal(err)
+//		panic("failed to get block from block storage")
+//	}
+//
+//	return true
+//}
 
-	stringKey := getBlockStringKey(hash)
+func (hm *GoCloudUrlStorage) reserveAndCheckExistence(hash []byte) (ok bool, retry bool) {
+	DELETE_TAG := "." + BLOCK_DELETE_TAG + "." // delete tags need to be alphabetically before use tags
+	USE_TAG := "." + BLOCK_USE_TAG + "."
 
-	exists, err := hm.bucket.Exists(hm.ctx, stringKey)
-	if gcerrors.Code(err) == gcerrors.NotFound || !exists {
-		return false
-	}
-
+	hashKey := getBlockStringKey(hash)
+	hashDeviceUseKey := hashKey + USE_TAG + hm.myDeviceId
+	// force existence of use-tag with our ID
+	err := hm.bucket.WriteAll(hm.ctx, hashDeviceUseKey, []byte{}, nil)
 	if err != nil {
-		log.Fatal(err)
-		panic("failed to get block from block storage")
+		return false, false
 	}
 
-	return true
+	perPageCount := 10 // want to see any "delete" token as well.
+	opts := &blob.ListOptions{}
+	opts.Prefix = BlockDataSubFolder + "/" + hashKey
+	page, _, err := hm.bucket.ListPage(hm.ctx, blob.FirstPageToken, perPageCount, opts)
+	if err != nil {
+		return false, false
+	}
+
+	usesMap := map[string]*blob.ListObject{}
+	deletesMap := map[string]*blob.ListObject{}
+	var dataEntry *blob.ListObject = nil
+	for _, entry := range page {
+		suffix, _ := strings.CutPrefix(entry.Key, opts.Prefix)
+		if len(suffix) == 0 {
+			dataEntry = entry
+		} else if deviceId, ok := strings.CutPrefix(suffix, USE_TAG); ok {
+			usesMap[deviceId] = entry
+		} else if deviceId, ok := strings.CutPrefix(suffix, DELETE_TAG); ok {
+			deletesMap[deviceId] = entry
+		} else {
+			logger.DefaultLogger.Debugf("Object with unknown suffix(key, tag): %v, %v", entry.Key, suffix)
+		}
+	}
+
+	if len(deletesMap) > 0 {
+		// wait until all deletes are processed completely.
+		// This should be very rarely happing, thus a simple retry later should not
+		// influence overall performance
+		return false, true
+	}
+
+	if dataEntry == nil {
+		return false, false
+	}
+
+	return true, false
 }
+
 func (hm *GoCloudUrlStorage) Get(hash []byte) (data []byte, ok bool) {
 	if len(hash) == 0 {
 		return nil, false
 	}
 
-	stringKey := getBlockStringKey(hash)
-	data, err := hm.bucket.ReadAll(hm.ctx, stringKey)
-	if gcerrors.Code(err) == gcerrors.NotFound {
-		return nil, false
+	for {
+		retry := false
+		ok, retry = hm.reserveAndCheckExistence(hash)
+		if !retry {
+			break
+		}
+		time.Sleep(time.Minute * 1)
 	}
 
-	if err != nil {
-		log.Fatal(err)
-		panic("failed to get block from block storage")
+	if ok {
+		var err error = nil
+		data, err = hm.bucket.ReadAll(hm.ctx,
+			BlockDataSubFolder+"/"+hashutil.HashToStringMapKey(hash))
+		if err != nil {
+			panic("failed to read existing block data!")
+		}
 	}
 
-	return data, true
+	return data, ok
 }
 
 func (hm *GoCloudUrlStorage) Set(hash []byte, data []byte) {
@@ -193,7 +307,12 @@ func (hm *GoCloudUrlStorage) Close() error {
 	return hm.bucket.Close()
 }
 
-func (hm *GoCloudUrlStorage) IterateBlocks(fn func(hash []byte) bool) error {
+func (hm *GoCloudUrlStorage) IterateBlocks(fn func(hash []byte, state HashBlockState) bool) error {
+
+	stopRequested := false
+	iterator := NewHashBlockStorageMapBuilder(func(hashStr string, state HashBlockState) {
+		stopRequested = fn(hashutil.StringMapKeyToHashNoError(hashStr), state)
+	})
 
 	perPageCount := 1024 * 4
 	opts := &blob.ListOptions{}
@@ -214,13 +333,21 @@ func (hm *GoCloudUrlStorage) IterateBlocks(fn func(hash []byte) bool) error {
 
 		for _, obj := range page {
 			hashString, _ := strings.CutPrefix(obj.Key, opts.Prefix)
-			hash, err := hashutil.StringMapKeyToHash(hashString)
-			if err != nil {
-				logger.DefaultLogger.Warnf("failed to parse hash from string: \"%v\" - err: %v", hashString, err)
-				continue
+			elements := strings.Split(hashString, ".")
+			if len(elements) <= 1 {
+				iterator.addData(hashString)
+			} else {
+				tp := elements[1]
+				if tp == BLOCK_USE_TAG && len(elements) >= 3 {
+					deviceId := elements[2]
+					if deviceId == hm.myDeviceId {
+						iterator.addUse(hashString)
+					}
+				} else if tp == BLOCK_DELETE_TAG {
+					iterator.addDelete(hashString)
+				}
 			}
-			wantNext := fn(hash)
-			if !wantNext {
+			if stopRequested {
 				return nil
 			}
 		}

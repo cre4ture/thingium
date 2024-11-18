@@ -395,7 +395,7 @@ func (vf *virtualFolderSyncthingService) Pull_x(onlyMissing bool, onlyCheck bool
 	defer logger.DefaultLogger.Infof("pull_x END a")
 
 	blockSize := 100000
-	checkMap := map[string]struct{}(nil)
+	checkMap := blockstorage.HashBlockStateMap(nil)
 	if onlyCheck && true {
 		func() {
 			asyncNotifier := utils.NewAsyncProgressNotifier(vf.ctx)
@@ -494,7 +494,10 @@ func (vf *virtualFolderSyncthingService) Pull_x(onlyMissing bool, onlyCheck bool
 	return nil
 }
 
-func (vf *virtualFolderSyncthingService) PullOne(snap *db.Snapshot, f protocol.FileIntf, synchronous bool, checkMap map[string]struct{}, fn func()) {
+func (vf *virtualFolderSyncthingService) PullOne(
+	snap *db.Snapshot, f protocol.FileIntf, synchronous bool,
+	checkMap blockstorage.HashBlockStateMap, fn func(),
+) {
 
 	vf.evLogger.Log(events.ItemStarted, map[string]string{
 		"folder": vf.folderID,
@@ -564,7 +567,7 @@ func (vf *virtualFolderSyncthingService) PullOne(snap *db.Snapshot, f protocol.F
 	}
 }
 
-func (vf *virtualFolderSyncthingService) ScanOne(snap *db.Snapshot, f protocol.FileIntf, checkMap map[string]struct{}, fn func()) {
+func (vf *virtualFolderSyncthingService) ScanOne(snap *db.Snapshot, f protocol.FileIntf, checkMap blockstorage.HashBlockStateMap, fn func()) {
 
 	if f.IsDirectory() {
 		// no work to do for directories.
