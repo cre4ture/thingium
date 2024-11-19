@@ -10,9 +10,11 @@ import "io"
 
 type HashBlockState int
 
-const HBS_NOT_AVAILABLE HashBlockState = iota // internal use only, will not be propagated to outside
-const HBS_AVAILABLE HashBlockState = iota
-const HBS_AVAILABLE_HOLD HashBlockState = iota
+const (
+	HBS_NOT_AVAILABLE HashBlockState = iota // internal use only, will not be propagated to outside
+	HBS_AVAILABLE
+	HBS_AVAILABLE_HOLD
+)
 
 type HashBlockStateMap map[string]HashBlockState
 

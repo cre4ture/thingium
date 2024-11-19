@@ -124,7 +124,7 @@ func newVirtualFolder(
 		f.mountPath = parts[1]
 	}
 
-	f.blockCache = blockstorage.NewGoCloudUrlStorage(context.TODO(), blobUrl)
+	f.blockCache = blockstorage.NewGoCloudUrlStorage(context.TODO(), blobUrl, model.id.String())
 	if f.Type.IsReceiveEncrypted() {
 		f.blockCache = blockstorage.NewEncryptedHashBlockStorage(f.blockCache)
 	}

@@ -116,15 +116,16 @@ func (hm *GoCloudUrlStorage) GetBlockHashesCountHint() int {
 	return hint
 }
 
-func NewGoCloudUrlStorage(ctx context.Context, url string) *GoCloudUrlStorage {
+func NewGoCloudUrlStorage(ctx context.Context, url string, myDeviceId string) *GoCloudUrlStorage {
 	bucket, err := blob.OpenBucket(context.Background(), url)
 	if err != nil {
 		log.Fatal(err)
 	}
 
 	instance := &GoCloudUrlStorage{
-		ctx:    ctx,
-		bucket: bucket,
+		ctx:        ctx,
+		bucket:     bucket,
+		myDeviceId: myDeviceId,
 	}
 
 	return instance
@@ -192,6 +193,7 @@ func (hm *GoCloudUrlStorage) putReservationTag(hashKey string) error {
 	USE_TAG := "." + BLOCK_USE_TAG + "."
 	hashDeviceUseKey := hashKey + USE_TAG + hm.myDeviceId
 	// force existence of use-tag with our ID
+	logger.DefaultLogger.Debugf("Put reservation tag for: %v", hashDeviceUseKey)
 	return hm.bucket.WriteAll(hm.ctx, hashDeviceUseKey, []byte{}, nil)
 }
 
@@ -327,7 +329,7 @@ func (hm *GoCloudUrlStorage) IterateBlocks(fn func(hash []byte, state HashBlockS
 
 	stopRequested := false
 	iterator := NewHashBlockStorageMapBuilder(func(hashStr string, state HashBlockState) {
-		stopRequested = fn(hashutil.StringMapKeyToHashNoError(hashStr), state)
+		stopRequested = !fn(hashutil.StringMapKeyToHashNoError(hashStr), state)
 	})
 
 	perPageCount := 1024 * 4
@@ -353,6 +355,7 @@ func (hm *GoCloudUrlStorage) IterateBlocks(fn func(hash []byte, state HashBlockS
 			if len(elements) <= 1 {
 				iterator.addData(hashString)
 			} else {
+				hashString = elements[0]
 				tp := elements[1]
 				if tp == BLOCK_USE_TAG && len(elements) >= 3 {
 					deviceId := elements[2]
