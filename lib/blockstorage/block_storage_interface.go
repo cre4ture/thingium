@@ -10,7 +10,7 @@ import "io"
 
 type HashBlockState int
 
-const HBS_NOT_AVAILABLE HashBlockState = iota
+const HBS_NOT_AVAILABLE HashBlockState = iota // internal use only, will not be propagated to outside
 const HBS_AVAILABLE HashBlockState = iota
 const HBS_AVAILABLE_HOLD HashBlockState = iota
 
@@ -22,9 +22,9 @@ type HashBlockStorageI interface {
 	// just Has() alone is not allowed as this doesn't allow proper reference counting
 	// Has(hash []byte) (ok bool)
 
-	Get(hash []byte) (data []byte, ok bool)
-	Set(hash []byte, data []byte)
-	Delete(hash []byte)
+	ReserveAndGet(hash []byte, downloadData bool) (data []byte, ok bool)
+	ReserveAndSet(hash []byte, data []byte)
+	DeleteReservation(hash []byte)
 	GetMeta(name string) (data []byte, ok bool)
 	SetMeta(name string, data []byte)
 	DeleteMeta(name string)

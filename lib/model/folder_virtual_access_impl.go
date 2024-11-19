@@ -198,7 +198,7 @@ func (stf *syncthingVirtualFolderFuseAdapter) writeFile(
 		var blockData = []byte{}
 		if blockIdx < len(fi.Blocks) {
 			bi := fi.Blocks[blockIdx]
-			blockData, ok = stf.vFSS.blockCache.Get(bi.Hash)
+			blockData, ok = stf.vFSS.blockCache.ReserveAndGet(bi.Hash, true)
 		}
 		if !ok {
 			// allocate new block:
@@ -231,7 +231,7 @@ func (stf *syncthingVirtualFolderFuseAdapter) writeFile(
 		fi.InodeChangeNs = changeTime.UnixNano()
 		fi.Version = fi.Version.Update(fi.ModifiedBy)
 
-		stf.vFSS.blockCache.Set(biNew.Hash, blockData)
+		stf.vFSS.blockCache.ReserveAndSet(biNew.Hash, blockData)
 		stf.fset.UpdateOne(protocol.LocalDeviceID, &fi)
 
 		blockIdx += 1

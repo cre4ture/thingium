@@ -74,7 +74,7 @@ func (vFSS *virtualFolderSyncthingService) GetBlockDataFromCacheOrDownload(
 	file protocol.FileInfo,
 	block protocol.BlockInfo,
 ) ([]byte, bool, GetBlockDataResult) {
-	data, ok := vFSS.blockCache.Get(block.Hash)
+	data, ok := vFSS.blockCache.ReserveAndGet(block.Hash, true)
 	if ok {
 		return data, true, GET_BLOCK_CACHED
 	}
@@ -87,7 +87,7 @@ func (vFSS *virtualFolderSyncthingService) GetBlockDataFromCacheOrDownload(
 		return nil, false, GET_BLOCK_FAILED
 	}
 
-	vFSS.blockCache.Set(block.Hash, data)
+	vFSS.blockCache.ReserveAndSet(block.Hash, data)
 
 	return data, true, GET_BLOCK_DOWNLOAD
 }
@@ -577,13 +577,15 @@ func (vf *virtualFolderSyncthingService) ScanOne(snap *db.Snapshot, f protocol.F
 			}
 
 			all_ok := true
-			for i, bi := range fi.Blocks {
+			for _, bi := range fi.Blocks {
 				//logger.DefaultLogger.Debugf("synchronous NEW check(%v) block info #%v: %+v", onlyCheck, i, bi, hashutil.HashToStringMapKey(bi.Hash))
-				_, ok := checkMap[hashutil.HashToStringMapKey(bi.Hash)]
-				all_ok = all_ok && ok
-				if !ok && (checkMap == nil) {
-					logger.DefaultLogger.Warnf("synchronous check block info FAILED. NOT OK: #%v: %+v", i, bi, hashutil.HashToStringMapKey(bi.Hash))
+				blockState, ok := checkMap[hashutil.HashToStringMapKey(bi.Hash)]
+				if ok && (blockState != blockstorage.HBS_AVAILABLE_HOLD) {
+					// add missing hold - checking again for existence as in unhold state it could have been removed meanwhile
+					_, reservationOk := vf.blockCache.ReserveAndGet(bi.Hash, false)
+					ok = ok && reservationOk
 				}
+				all_ok = all_ok && ok
 
 				select {
 				case <-vf.ctx.Done():
@@ -620,7 +622,7 @@ func (vf *virtualFolderSyncthingService) GetHashBlockData(hash []byte, response_
 	if vf.blockCache == nil {
 		return 0, protocol.ErrGeneric
 	}
-	data, ok := vf.blockCache.Get(hash)
+	data, ok := vf.blockCache.ReserveAndGet(hash, true)
 	if !ok {
 		return 0, protocol.ErrNoSuchFile
 	}

@@ -24,9 +24,10 @@ func (e *EncryptedHashBlockStorage) Close() error {
 }
 
 // Delete implements HashBlockStorageI.
-func (e *EncryptedHashBlockStorage) Delete(hash []byte) {
-	e.store.Delete(hash)
-	e.store.DeleteMeta(e.genRealHashKey(hash))
+func (e *EncryptedHashBlockStorage) DeleteReservation(hash []byte) {
+	e.store.DeleteReservation(hash)
+	// TODO: how to cleanup related metadata?
+	//e.store.DeleteMeta(e.genRealHashKey(hash))
 }
 
 // DeleteMeta implements HashBlockStorageI.
@@ -35,8 +36,8 @@ func (e *EncryptedHashBlockStorage) DeleteMeta(name string) {
 }
 
 // Get implements HashBlockStorageI.
-func (e *EncryptedHashBlockStorage) Get(hash []byte) (data []byte, ok bool) {
-	return e.store.Get(hash)
+func (e *EncryptedHashBlockStorage) ReserveAndGet(hash []byte, downloadData bool) (data []byte, ok bool) {
+	return e.store.ReserveAndGet(hash, downloadData)
 }
 
 // GetBlockHashesCache implements HashBlockStorageI.
@@ -65,10 +66,10 @@ func (e *EncryptedHashBlockStorage) GetMeta(name string) (data []byte, ok bool) 
 //}
 
 // Set implements HashBlockStorageI.
-func (e *EncryptedHashBlockStorage) Set(hash []byte, data []byte) {
+func (e *EncryptedHashBlockStorage) ReserveAndSet(hash []byte, data []byte) {
 	real_hash := sha256.Sum256(data)
 	e.store.SetMeta(e.genRealHashKey(hash), real_hash[:])
-	e.store.Set(hash, data)
+	e.store.ReserveAndSet(hash, data)
 }
 
 // SetMeta implements HashBlockStorageI.
