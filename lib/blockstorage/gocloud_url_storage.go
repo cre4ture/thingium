@@ -27,8 +27,8 @@ import (
 
 const BlockDataSubFolder = "blocks"
 const MetaDataSubFolder = "meta"
-const BLOCK_DELETE_TAG = "delete" // delete tags need to be alphabetically before use tags
-const BLOCK_USE_TAG = "uses"
+const BLOCK_DELETE_TAG = "deletion-by" // delete tags need to be alphabetically before use tags
+const BLOCK_USE_TAG = "used-by"
 
 type HashBlockStorageMapBuilder struct {
 	cb           func(hash string, state HashBlockState)
@@ -139,7 +139,7 @@ func getMetadataStringKey(name string) string {
 	return MetaDataSubFolder + "/" + name
 }
 
-func (hm *GoCloudUrlStorage) GetBlockHashesCache(progressNotifier func(int)) HashBlockStateMap {
+func (hm *GoCloudUrlStorage) GetBlockHashesCache(progressNotifier func(count int, currentHash []byte)) HashBlockStateMap {
 
 	hashSet := make(map[string]HashBlockState)
 	err := hm.IterateBlocks(func(hash []byte, state HashBlockState) bool {
@@ -147,7 +147,7 @@ func (hm *GoCloudUrlStorage) GetBlockHashesCache(progressNotifier func(int)) Has
 		hashString := hashutil.HashToStringMapKey(hash)
 		hashSet[hashString] = state
 		logger.DefaultLogger.Infof("IterateBlocks hash(hash, state): %v, %v", hashString, state)
-		progressNotifier(len(hashSet))
+		progressNotifier(len(hashSet), hash)
 
 		select {
 		case <-hm.ctx.Done():

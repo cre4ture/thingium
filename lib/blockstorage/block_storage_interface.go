@@ -34,5 +34,5 @@ type HashBlockStorageI interface {
 	// internal use only - so far
 	//IterateBlocks(fn func(hash []byte, state HashBlockState) bool) error
 	GetBlockHashesCountHint() int
-	GetBlockHashesCache(progressNotifier func(int)) HashBlockStateMap
+	GetBlockHashesCache(progressNotifier func(count int, currentHash []byte)) HashBlockStateMap
 }

@@ -41,7 +41,7 @@ func (e *EncryptedHashBlockStorage) ReserveAndGet(hash []byte, downloadData bool
 }
 
 // GetBlockHashesCache implements HashBlockStorageI.
-func (e *EncryptedHashBlockStorage) GetBlockHashesCache(progressNotifier func(int)) HashBlockStateMap {
+func (e *EncryptedHashBlockStorage) GetBlockHashesCache(progressNotifier func(count int, currentHash []byte)) HashBlockStateMap {
 	return e.store.GetBlockHashesCache(progressNotifier)
 }
 

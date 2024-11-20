@@ -48,6 +48,16 @@ func (c *byteCounter) Update(bytes int64) {
 	c.EWMA.Update(bytes)
 }
 
+func (c *byteCounter) UpdateTotal(newTotal uint64) {
+	currentTotal := c.total.Load()
+	if newTotal > currentTotal {
+		if c.total.CompareAndSwap(currentTotal, newTotal) {
+			delta := newTotal - c.total.Load()
+			c.EWMA.Update(int64(delta))
+		}
+	}
+}
+
 func (c *byteCounter) Total() uint64 { return c.total.Load() }
 
 func (c *byteCounter) Close() {

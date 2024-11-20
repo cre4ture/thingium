@@ -394,20 +394,28 @@ func (vf *virtualFolderSyncthingService) Pull_x(onlyMissing bool, onlyCheck bool
 	logger.DefaultLogger.Infof("pull_x START")
 	defer logger.DefaultLogger.Infof("pull_x END a")
 
-	blockSize := 100000
 	checkMap := blockstorage.HashBlockStateMap(nil)
 	if onlyCheck && true {
 		func() {
 			asyncNotifier := utils.NewAsyncProgressNotifier(vf.ctx)
 			asyncNotifier.StartAsyncProgressNotification(
-				logger.DefaultLogger, uint64(vf.blockCache.GetBlockHashesCountHint()*blockSize),
-				uint(1), vf.evLogger, vf.folderID, make([]string, 0), nil)
+				logger.DefaultLogger,
+				uint64(255), // use first hash byte as progress indicator. This works as storage is sorted.
+				uint(1),
+				vf.evLogger,
+				vf.folderID,
+				make([]string, 0),
+				nil)
 			defer logger.DefaultLogger.Infof("pull_x END1 asyncNotifier.Stop()")
 			defer asyncNotifier.Stop()
 
-			checkMap = vf.blockCache.GetBlockHashesCache(func(i int) {
-				//logger.DefaultLogger.Infof("GetBlockHashesCache - progress: %v", i)
-				asyncNotifier.Progress.Update(int64(blockSize))
+			checkMap = vf.blockCache.GetBlockHashesCache(func(count int, currentHash []byte) {
+				if len(currentHash) < 1 {
+					log.Panicf("Scan progress: Length of currentHash is zero! %v", currentHash)
+				}
+				progressByte := uint64(currentHash[0])
+				logger.DefaultLogger.Infof("GetBlockHashesCache - progress: %v, byte: %v", count, progressByte)
+				asyncNotifier.Progress.UpdateTotal(progressByte)
 			})
 		}()
 	}
