@@ -193,7 +193,7 @@ func (hm *GoCloudUrlStorage) putReservationTag(hashKey string) error {
 	USE_TAG := "." + BLOCK_USE_TAG + "."
 	hashDeviceUseKey := hashKey + USE_TAG + hm.myDeviceId
 	// force existence of use-tag with our ID
-	logger.DefaultLogger.Debugf("Put reservation tag for: %v", hashDeviceUseKey)
+	logger.DefaultLogger.Debugf("Put reservation tag: %v", hashDeviceUseKey)
 	return hm.bucket.WriteAll(hm.ctx, hashDeviceUseKey, []byte{}, nil)
 }
 
