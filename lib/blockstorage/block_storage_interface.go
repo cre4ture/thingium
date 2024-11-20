@@ -36,3 +36,16 @@ type HashBlockStorageI interface {
 	GetBlockHashesCountHint() int
 	GetBlockHashesCache(progressNotifier func(count int, currentHash []byte)) HashBlockStateMap
 }
+
+func (s HashBlockState) String() string {
+	switch s {
+	case HBS_NOT_AVAILABLE:
+		return "not-available"
+	case HBS_AVAILABLE:
+		return "available"
+	case HBS_AVAILABLE_HOLD:
+		return "available-hold"
+	default:
+		return "unknown"
+	}
+}
