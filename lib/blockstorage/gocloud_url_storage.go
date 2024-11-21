@@ -267,8 +267,7 @@ func (hm *GoCloudUrlStorage) ReserveAndGet(hash []byte, downloadData bool) (data
 
 	if ok && downloadData {
 		var err error = nil
-		data, err = hm.bucket.ReadAll(hm.ctx,
-			BlockDataSubFolder+"/"+hashutil.HashToStringMapKey(hash))
+		data, err = hm.bucket.ReadAll(hm.ctx, getBlockStringKey(hash))
 		if err != nil {
 			panic("failed to read existing block data!")
 		}
