@@ -587,11 +587,16 @@ func (vf *virtualFolderSyncthingService) ScanOne(snap *db.Snapshot, f protocol.F
 			all_ok := true
 			for _, bi := range fi.Blocks {
 				//logger.DefaultLogger.Debugf("synchronous NEW check(%v) block info #%v: %+v", onlyCheck, i, bi, hashutil.HashToStringMapKey(bi.Hash))
-				blockState, ok := checkMap[hashutil.HashToStringMapKey(bi.Hash)]
-				if ok && (blockState != blockstorage.HBS_AVAILABLE_HOLD) {
+				blockState, inMap := checkMap[hashutil.HashToStringMapKey(bi.Hash)]
+				ok = inMap
+				if inMap && (blockState != blockstorage.HBS_AVAILABLE_HOLD) {
 					// block is there but not hold, add missing hold - checking again for existence as in unhold state it could have been removed meanwhile
 					_, reservationOk := vf.blockCache.ReserveAndGet(bi.Hash, false)
-					ok = ok && reservationOk
+					ok = reservationOk
+				}
+				if !ok {
+					logger.DefaultLogger.Debugf("synchronous cache-map based check(%v) failed for block info #%v: %+v, inMap: %v",
+						f.FileName(), bi.Offset, hashutil.HashToStringMapKey(bi.Hash), inMap)
 				}
 				all_ok = all_ok && ok
 
