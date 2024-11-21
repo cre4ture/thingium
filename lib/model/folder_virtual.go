@@ -414,7 +414,7 @@ func (vf *virtualFolderSyncthingService) Pull_x(ctx context.Context, onlyMissing
 					log.Panicf("Scan progress: Length of currentHash is zero! %v", currentHash)
 				}
 				progressByte := uint64(currentHash[0])
-				logger.DefaultLogger.Infof("GetBlockHashesCache - progress: %v, byte: 0x%x", count, progressByte)
+				// logger.DefaultLogger.Infof("GetBlockHashesCache - progress: %v, byte: 0x%x", count, progressByte)
 				asyncNotifier.Progress.UpdateTotal(progressByte)
 			})
 		}()

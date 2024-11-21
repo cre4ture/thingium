@@ -149,7 +149,7 @@ func (hm *GoCloudUrlStorage) GetBlockHashesCache(
 
 		hashString := hashutil.HashToStringMapKey(hash)
 		hashSet[hashString] = state
-		logger.DefaultLogger.Infof("IterateBlocks hash(hash, state): %v, %v", hashString, state)
+		// logger.DefaultLogger.Infof("IterateBlocks hash(hash, state): %v, %v", hashString, state)
 		progressNotifier(len(hashSet), hash)
 
 		select {
