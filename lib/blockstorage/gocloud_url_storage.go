@@ -139,7 +139,10 @@ func getMetadataStringKey(name string) string {
 	return MetaDataSubFolder + "/" + name
 }
 
-func (hm *GoCloudUrlStorage) GetBlockHashesCache(progressNotifier func(count int, currentHash []byte)) HashBlockStateMap {
+func (hm *GoCloudUrlStorage) GetBlockHashesCache(
+	ctx context.Context,
+	progressNotifier func(count int, currentHash []byte),
+) HashBlockStateMap {
 
 	hashSet := make(map[string]HashBlockState)
 	err := hm.IterateBlocks(func(hash []byte, state HashBlockState) bool {
@@ -150,6 +153,8 @@ func (hm *GoCloudUrlStorage) GetBlockHashesCache(progressNotifier func(count int
 		progressNotifier(len(hashSet), hash)
 
 		select {
+		case <-ctx.Done():
+			return false
 		case <-hm.ctx.Done():
 			return false
 		default:

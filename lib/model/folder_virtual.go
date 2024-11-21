@@ -295,10 +295,10 @@ func (f *virtualFolderSyncthingService) Serve(ctx context.Context) error {
 
 	if f.initialScanState == INITIAL_SCAN_IDLE {
 		f.initialScanState = INITIAL_SCAN_RUNNING
-		f.Pull_x(false, true)
+		f.Pull_x(ctx, false, true)
 		f.initialScanState = INITIAL_SCAN_COMPLETED
 		close(f.InitialScanDone)
-		f.Pull_x(true, false)
+		f.Pull_x(ctx, true, false)
 	}
 
 	for {
@@ -341,7 +341,7 @@ func (f *virtualFolderSyncthingService) DelayScan(d time.Duration) {}
 func (f *virtualFolderSyncthingService) ScheduleScan() {
 	logger.DefaultLogger.Infof("ScheduleScan - pull_x")
 	f.requestDoInSync(func() error {
-		err := f.Pull_x(false, false)
+		err := f.Pull_x(f.ctx, false, false)
 		logger.DefaultLogger.Infof("ScheduleScan - pull_x - DONE. Err: %v", err)
 		return err
 	})
@@ -355,26 +355,26 @@ func (f *virtualFolderSyncthingService) BringToFront(filename string) {
 
 func (vf *virtualFolderSyncthingService) Scan(subs []string) error {
 	logger.DefaultLogger.Infof("Scan - pull_x")
-	return vf.Pull_x_doInSync(true, false)
+	return vf.Pull_x_doInSync(vf.ctx, true, false)
 }
 
 func (vf *virtualFolderSyncthingService) PullAllMissing(onlyCheck bool) error {
 	logger.DefaultLogger.Infof("PullAllMissing - pull_x - %v", onlyCheck)
-	return vf.Pull_x_doInSync(false, true)
+	return vf.Pull_x_doInSync(vf.ctx, false, true)
 }
 
 func (vf *virtualFolderSyncthingService) PullAll(onlyCheck bool) error {
 	logger.DefaultLogger.Infof("PullAll - pull_x")
-	return vf.Pull_x_doInSync(false, onlyCheck)
+	return vf.Pull_x_doInSync(vf.ctx, false, onlyCheck)
 }
 
-func (f *virtualFolderSyncthingService) Pull_x_doInSync(onlyMissing bool, onlyCheck bool) error {
+func (f *virtualFolderSyncthingService) Pull_x_doInSync(ctx context.Context, onlyMissing bool, onlyCheck bool) error {
 	return f.doInSync(func() error {
-		return f.Pull_x(onlyMissing, onlyCheck)
+		return f.Pull_x(ctx, onlyMissing, onlyCheck)
 	})
 }
 
-func (vf *virtualFolderSyncthingService) Pull_x(onlyMissing bool, onlyCheck bool) error {
+func (vf *virtualFolderSyncthingService) Pull_x(ctx context.Context, onlyMissing bool, onlyCheck bool) error {
 	defer logger.DefaultLogger.Infof("pull_x END z")
 	snap, err := vf.fset.Snapshot()
 	if err != nil {
@@ -409,7 +409,7 @@ func (vf *virtualFolderSyncthingService) Pull_x(onlyMissing bool, onlyCheck bool
 			defer logger.DefaultLogger.Infof("pull_x END1 asyncNotifier.Stop()")
 			defer asyncNotifier.Stop()
 
-			checkMap = vf.blockCache.GetBlockHashesCache(func(count int, currentHash []byte) {
+			checkMap = vf.blockCache.GetBlockHashesCache(ctx, func(count int, currentHash []byte) {
 				if len(currentHash) < 1 {
 					log.Panicf("Scan progress: Length of currentHash is zero! %v", currentHash)
 				}

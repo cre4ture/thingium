@@ -6,7 +6,10 @@
 
 package blockstorage
 
-import "io"
+import (
+	"context"
+	"io"
+)
 
 type HashBlockState int
 
@@ -34,7 +37,7 @@ type HashBlockStorageI interface {
 	// internal use only - so far
 	//IterateBlocks(fn func(hash []byte, state HashBlockState) bool) error
 	GetBlockHashesCountHint() int
-	GetBlockHashesCache(progressNotifier func(count int, currentHash []byte)) HashBlockStateMap
+	GetBlockHashesCache(ctx context.Context, progressNotifier func(count int, currentHash []byte)) HashBlockStateMap
 }
 
 func (s HashBlockState) String() string {

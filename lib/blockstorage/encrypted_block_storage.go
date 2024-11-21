@@ -1,6 +1,7 @@
 package blockstorage
 
 import (
+	"context"
 	"crypto/sha256"
 
 	"github.com/syncthing/syncthing/lib/hashutil"
@@ -41,8 +42,9 @@ func (e *EncryptedHashBlockStorage) ReserveAndGet(hash []byte, downloadData bool
 }
 
 // GetBlockHashesCache implements HashBlockStorageI.
-func (e *EncryptedHashBlockStorage) GetBlockHashesCache(progressNotifier func(count int, currentHash []byte)) HashBlockStateMap {
-	return e.store.GetBlockHashesCache(progressNotifier)
+func (e *EncryptedHashBlockStorage) GetBlockHashesCache(
+	ctx context.Context, progressNotifier func(count int, currentHash []byte)) HashBlockStateMap {
+	return e.store.GetBlockHashesCache(ctx, progressNotifier)
 }
 
 // GetBlockHashesCountHint implements HashBlockStorageI.
