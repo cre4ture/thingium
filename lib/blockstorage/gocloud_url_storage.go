@@ -214,7 +214,7 @@ func (hm *GoCloudUrlStorage) reserveAndCheckExistence(hash []byte) (ok bool, ret
 
 	perPageCount := 10 // want to see any "delete" token as well.
 	opts := &blob.ListOptions{}
-	opts.Prefix = BlockDataSubFolder + "/" + hashKey
+	opts.Prefix = hashKey
 	page, _, err := hm.bucket.ListPage(hm.ctx, blob.FirstPageToken, perPageCount, opts)
 	if err != nil {
 		return false, false
