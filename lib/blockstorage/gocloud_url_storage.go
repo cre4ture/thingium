@@ -202,7 +202,10 @@ func (hm *GoCloudUrlStorage) putReservationTag(hashKey string) error {
 	if err != nil {
 		return err
 	}
-	logger.DefaultLogger.Debugf("Put reservation tag(exists: %v): %v", existsAlready, hashDeviceUseKey)
+	//logger.DefaultLogger.Debugf("Put reservation tag(exists: %v): %v", existsAlready, hashDeviceUseKey)
+	if existsAlready {
+		return nil
+	}
 	return hm.bucket.WriteAll(hm.ctx, hashDeviceUseKey, []byte{}, nil)
 }
 
@@ -237,7 +240,7 @@ func (hm *GoCloudUrlStorage) reserveAndCheckExistence(hash []byte) (ok bool, ret
 		} else if deviceId, ok := strings.CutPrefix(suffix, DELETE_TAG); ok {
 			deletesMap[deviceId] = entry
 		} else {
-			logger.DefaultLogger.Debugf("Object with unknown suffix(key, tag): %v, %v", entry.Key, suffix)
+			//logger.DefaultLogger.Debugf("Object with unknown suffix(key, tag): %v, %v", entry.Key, suffix)
 		}
 	}
 
