@@ -91,6 +91,11 @@ func (apn *AsyncProgressNotifier) StartAsyncProgressNotification(
 	Subs []string,
 	matcher *ignore.Matcher,
 ) {
+	if total == 0 {
+		// avoid crashes (divide by zero) when noting is to be done!
+		total = 1
+	}
+
 	// A routine which actually emits the FolderScanProgress events
 	// every w.ProgressTicker ticks, until the hasher routines terminate.
 	go func() {
