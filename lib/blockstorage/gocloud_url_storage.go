@@ -341,6 +341,19 @@ func (hm *GoCloudUrlStorage) Close() error {
 }
 
 func (hm *GoCloudUrlStorage) IterateBlocks(fn func(hash []byte, state HashBlockState) bool) error {
+	for i := 0; i < 256; i++ {
+		b := byte(i)
+		b_str := hashutil.HashToStringMapKey([]byte{b})
+		err := hm.IterateBlocksInternal(b_str, fn)
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func (hm *GoCloudUrlStorage) IterateBlocksInternal(prefix string, fn func(hash []byte, state HashBlockState) bool) error {
 
 	stopRequested := false
 	iterator := NewHashBlockStorageMapBuilder(func(hashStr string, state HashBlockState) {
@@ -349,11 +362,11 @@ func (hm *GoCloudUrlStorage) IterateBlocks(fn func(hash []byte, state HashBlockS
 
 	perPageCount := 1024 * 4
 	opts := &blob.ListOptions{}
-	opts.Prefix = BlockDataSubFolder + "/"
+	opts.Prefix = BlockDataSubFolder + "/" + prefix
 	pageToken := blob.FirstPageToken
 	i := 0
 	for {
-		logger.DefaultLogger.Infof("loading page #%v ... ", i)
+		logger.DefaultLogger.Infof("prefix %v - loading page #%v ... ", prefix, i)
 		i += 1
 		page, nextPageToken, err := hm.bucket.ListPage(hm.ctx, pageToken, perPageCount, opts)
 		if err != nil {
