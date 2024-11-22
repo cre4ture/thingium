@@ -82,6 +82,10 @@ func (b *HashBlockStorageMapBuilder) addDelete(hash string) {
 	b.currentState = HBS_NOT_AVAILABLE
 }
 
+func (b *HashBlockStorageMapBuilder) close() {
+	b.completeIfNextHash("") // force flush of last element
+}
+
 type GoCloudUrlStorage struct {
 	io.Closer
 
@@ -355,10 +359,6 @@ func (hm *GoCloudUrlStorage) IterateBlocks(fn func(hash []byte, state HashBlockS
 		if err != nil {
 			return err
 		}
-		if len(nextPageToken) == 0 {
-			// DONE
-			return nil
-		}
 
 		for _, obj := range page {
 			hashString, _ := strings.CutPrefix(obj.Key, opts.Prefix)
@@ -380,6 +380,12 @@ func (hm *GoCloudUrlStorage) IterateBlocks(fn func(hash []byte, state HashBlockS
 			if stopRequested {
 				return nil
 			}
+		}
+
+		if len(nextPageToken) == 0 {
+			// DONE
+			iterator.close()
+			return nil
 		}
 
 		pageToken = nextPageToken
