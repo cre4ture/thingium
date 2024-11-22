@@ -360,9 +360,10 @@ func (hm *GoCloudUrlStorage) IterateBlocksInternal(prefix string, fn func(hash [
 		stopRequested = !fn(hashutil.StringMapKeyToHashNoError(hashStr), state)
 	})
 
+	folderPrefix := BlockDataSubFolder + "/"
 	perPageCount := 1024 * 4
 	opts := &blob.ListOptions{}
-	opts.Prefix = BlockDataSubFolder + "/" + prefix
+	opts.Prefix = folderPrefix + prefix
 	pageToken := blob.FirstPageToken
 	i := 0
 	for {
@@ -374,7 +375,7 @@ func (hm *GoCloudUrlStorage) IterateBlocksInternal(prefix string, fn func(hash [
 		}
 
 		for _, obj := range page {
-			hashString, _ := strings.CutPrefix(obj.Key, opts.Prefix)
+			hashString, _ := strings.CutPrefix(obj.Key, folderPrefix)
 			elements := strings.Split(hashString, ".")
 			if len(elements) <= 1 {
 				iterator.addData(hashString)
