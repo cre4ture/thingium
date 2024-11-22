@@ -140,7 +140,7 @@ func (f *virtualFolderSyncthingService) RequestBackgroundDownload(filename strin
 	}
 
 	f.backgroundDownloadQueue.SortAccordingToConfig(f.Order)
-	logger.DefaultLogger.Warnf("f.backgroundDownloadQueue.SortAccordingToConfig(f.Order[%v])", f.Order)
+	//logger.DefaultLogger.Warnf("f.backgroundDownloadQueue.SortAccordingToConfig(f.Order[%v])", f.Order)
 	select {
 	case f.backgroundDownloadPending <- struct{}{}:
 	default:
