@@ -344,8 +344,8 @@ func (hm *GoCloudUrlStorage) IterateBlocks(fn func(hash []byte, state HashBlockS
 	for i := 0; i < 256; i++ {
 		b := byte(i)
 		b_str := hashutil.HashToStringMapKey([]byte{b})
-		err := hm.IterateBlocksInternal(b_str, fn)
-		if err != nil {
+		stopRequested, err := hm.IterateBlocksInternal(b_str, fn)
+		if stopRequested || (err != nil) {
 			return err
 		}
 	}
@@ -353,7 +353,7 @@ func (hm *GoCloudUrlStorage) IterateBlocks(fn func(hash []byte, state HashBlockS
 	return nil
 }
 
-func (hm *GoCloudUrlStorage) IterateBlocksInternal(prefix string, fn func(hash []byte, state HashBlockState) bool) error {
+func (hm *GoCloudUrlStorage) IterateBlocksInternal(prefix string, fn func(hash []byte, state HashBlockState) bool) (bool, error) {
 
 	stopRequested := false
 	iterator := NewHashBlockStorageMapBuilder(func(hashStr string, state HashBlockState) {
@@ -371,7 +371,7 @@ func (hm *GoCloudUrlStorage) IterateBlocksInternal(prefix string, fn func(hash [
 		i += 1
 		page, nextPageToken, err := hm.bucket.ListPage(hm.ctx, pageToken, perPageCount, opts)
 		if err != nil {
-			return err
+			return false, err
 		}
 
 		for _, obj := range page {
@@ -392,14 +392,14 @@ func (hm *GoCloudUrlStorage) IterateBlocksInternal(prefix string, fn func(hash [
 				}
 			}
 			if stopRequested {
-				return nil
+				return stopRequested, nil
 			}
 		}
 
 		if len(nextPageToken) == 0 {
 			// DONE
 			iterator.close()
-			return nil
+			return false, nil
 		}
 
 		pageToken = nextPageToken
