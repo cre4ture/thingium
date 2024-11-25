@@ -315,7 +315,9 @@ func (hm *GoCloudUrlStorage) ReserveAndSet(hash []byte, data []byte) {
 func (hm *GoCloudUrlStorage) DeleteReservation(hash []byte) {
 	// delete reference to block data for this node
 	// TODO: trigger async immediate checked delete?
-	err := hm.bucket.Delete(hm.ctx, getBlockStringKey(hash)+"."+BLOCK_USE_TAG+"."+hm.myDeviceId)
+	reservationKey := getBlockStringKey(hash) + "." + BLOCK_USE_TAG + "." + hm.myDeviceId
+	logger.DefaultLogger.Debugf("removing reservation: %v", reservationKey)
+	err := hm.bucket.Delete(hm.ctx, reservationKey)
 	if err != nil {
 		log.Fatal(err)
 		panic("writing to block storage failed!")
@@ -341,6 +343,8 @@ func (hm *GoCloudUrlStorage) Close() error {
 }
 
 func (hm *GoCloudUrlStorage) IterateBlocks(fn func(hash []byte, state HashBlockState) bool) error {
+
+	// do iterations in chunks for better scalability.
 	for i := 0; i < 256; i++ {
 		b := byte(i)
 		b_str := hashutil.HashToStringMapKey([]byte{b})

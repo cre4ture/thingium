@@ -499,6 +499,43 @@ func (vf *virtualFolderSyncthingService) Pull_x(ctx context.Context, onlyMissing
 	}
 	logger.DefaultLogger.Infof("PULL_X: wait for async operations to complete - DONE")
 
+	if checkMap != nil {
+		vf.cleanupUnneeded(checkMap)
+	}
+
+	return nil
+}
+
+func (vf *virtualFolderSyncthingService) cleanupUnneeded(checkMap blockstorage.HashBlockStateMap) error {
+	snap, err := vf.fset.Snapshot()
+	if err != nil {
+		return err
+	}
+	defer logger.DefaultLogger.Infof("cleanupUnneeded END snap")
+	defer snap.Release()
+
+	dummyValue := struct{}{}
+	usedBlockHashes := map[string]struct{}{}
+	snap.WithHave(protocol.LocalDeviceID, func(f protocol.FileIntf) bool {
+		fi, ok := snap.Get(protocol.LocalDeviceID, f.FileName())
+		if !ok {
+			log.Panicf("cleanupUnneeded: inconsistent snapshot! %v", f.FileName())
+		}
+		for _, bi := range fi.Blocks {
+			usedBlockHashes[hashutil.HashToStringMapKey(bi.Hash)] = dummyValue
+		}
+		return true
+	})
+
+	for hash, state := range checkMap {
+		if state == blockstorage.HBS_AVAILABLE_HOLD {
+			_, stillNeeded := usedBlockHashes[hash]
+			if !stillNeeded {
+				vf.blockCache.DeleteReservation(hashutil.StringMapKeyToHashNoError(hash))
+			}
+		}
+	}
+
 	return nil
 }
 
