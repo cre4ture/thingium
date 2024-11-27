@@ -31,13 +31,15 @@ const BLOCK_DELETE_TAG = "deletion-by" // delete tags need to be alphabetically 
 const BLOCK_USE_TAG = "used-by"
 
 type HashBlockStorageMapBuilder struct {
+	ownName      string
 	cb           func(hash string, state HashBlockState)
 	currentHash  string
 	currentState HashBlockState
 }
 
-func NewHashBlockStorageMapBuilder(cb func(hash string, state HashBlockState)) *HashBlockStorageMapBuilder {
+func NewHashBlockStorageMapBuilder(ownName string, cb func(hash string, state HashBlockState)) *HashBlockStorageMapBuilder {
 	return &HashBlockStorageMapBuilder{
+		ownName:      ownName,
 		cb:           cb,
 		currentHash:  "",
 		currentState: HBS_NOT_AVAILABLE,
@@ -60,16 +62,25 @@ func (b *HashBlockStorageMapBuilder) addData(hash string) {
 		return
 	}
 
-	b.currentState = HBS_AVAILABLE
+	b.currentState = HBS_AVAILABLE_FREE
 }
 
-func (b *HashBlockStorageMapBuilder) addUse(hash string) {
+func (b *HashBlockStorageMapBuilder) addUse(hash string, who string) {
 	if b.completeIfNextHash(hash) {
 		return
 	}
 
-	if b.currentState == HBS_AVAILABLE {
-		b.currentState = HBS_AVAILABLE_HOLD
+	if b.currentState.IsAvailable() {
+		isMe := who == b.ownName
+		if isMe {
+			// HOLD BY ME has priority
+			b.currentState = HBS_AVAILABLE_HOLD_BY_ME
+		} else {
+			// HOLD BY ME has priority
+			if !b.currentState.IsAvailableAndReservedByMe() {
+				b.currentState = HBS_AVAILABLE_HOLD_BY_OTHERS
+			}
+		}
 	}
 }
 
@@ -360,7 +371,7 @@ func (hm *GoCloudUrlStorage) IterateBlocks(fn func(hash []byte, state HashBlockS
 func (hm *GoCloudUrlStorage) IterateBlocksInternal(prefix string, fn func(hash []byte, state HashBlockState) bool) (bool, error) {
 
 	stopRequested := false
-	iterator := NewHashBlockStorageMapBuilder(func(hashStr string, state HashBlockState) {
+	iterator := NewHashBlockStorageMapBuilder(hm.myDeviceId, func(hashStr string, state HashBlockState) {
 		stopRequested = !fn(hashutil.StringMapKeyToHashNoError(hashStr), state)
 	})
 
@@ -388,9 +399,7 @@ func (hm *GoCloudUrlStorage) IterateBlocksInternal(prefix string, fn func(hash [
 				tp := elements[1]
 				if tp == BLOCK_USE_TAG && len(elements) >= 3 {
 					deviceId := elements[2]
-					if deviceId == hm.myDeviceId {
-						iterator.addUse(hashString)
-					}
+					iterator.addUse(hashString, deviceId)
 				} else if tp == BLOCK_DELETE_TAG {
 					iterator.addDelete(hashString)
 				}

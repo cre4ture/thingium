@@ -500,13 +500,13 @@ func (vf *virtualFolderSyncthingService) Pull_x(ctx context.Context, onlyMissing
 	logger.DefaultLogger.Infof("PULL_X: wait for async operations to complete - DONE")
 
 	if checkMap != nil {
-		vf.cleanupUnneeded(checkMap)
+		vf.cleanupUnneededReservations(checkMap)
 	}
 
 	return nil
 }
 
-func (vf *virtualFolderSyncthingService) cleanupUnneeded(checkMap blockstorage.HashBlockStateMap) error {
+func (vf *virtualFolderSyncthingService) cleanupUnneededReservations(checkMap blockstorage.HashBlockStateMap) error {
 	snap, err := vf.fset.Snapshot()
 	if err != nil {
 		return err
@@ -528,7 +528,7 @@ func (vf *virtualFolderSyncthingService) cleanupUnneeded(checkMap blockstorage.H
 	})
 
 	for hash, state := range checkMap {
-		if state == blockstorage.HBS_AVAILABLE_HOLD {
+		if state.IsAvailableAndReservedByMe() {
 			_, stillNeeded := usedBlockHashes[hash]
 			if !stillNeeded {
 				vf.blockCache.DeleteReservation(hashutil.StringMapKeyToHashNoError(hash))
@@ -626,7 +626,7 @@ func (vf *virtualFolderSyncthingService) ScanOne(snap *db.Snapshot, f protocol.F
 				//logger.DefaultLogger.Debugf("synchronous NEW check(%v) block info #%v: %+v", onlyCheck, i, bi, hashutil.HashToStringMapKey(bi.Hash))
 				blockState, inMap := checkMap[hashutil.HashToStringMapKey(bi.Hash)]
 				ok = inMap
-				if inMap && (blockState != blockstorage.HBS_AVAILABLE_HOLD) {
+				if inMap && (!blockState.IsAvailableAndReservedByMe()) {
 					// block is there but not hold, add missing hold - checking again for existence as in unhold state it could have been removed meanwhile
 					_, reservationOk := vf.blockCache.ReserveAndGet(bi.Hash, false)
 					ok = reservationOk

@@ -15,9 +15,32 @@ type HashBlockState int
 
 const (
 	HBS_NOT_AVAILABLE HashBlockState = iota // internal use only, will not be propagated to outside
-	HBS_AVAILABLE
-	HBS_AVAILABLE_HOLD
+	HBS_AVAILABLE_FREE
+	HBS_AVAILABLE_HOLD_BY_OTHERS // not hold by me, but by others
+	HBS_AVAILABLE_HOLD_BY_ME     // hold by me (and potentially others)
 )
+
+func (s HashBlockState) IsAvailable() bool {
+	switch s {
+	case HBS_AVAILABLE_FREE:
+		fallthrough
+	case HBS_AVAILABLE_HOLD_BY_ME:
+		fallthrough
+	case HBS_AVAILABLE_HOLD_BY_OTHERS:
+		return true
+	default:
+		return false
+	}
+}
+
+func (s HashBlockState) IsAvailableAndReservedByMe() bool {
+	switch s {
+	case HBS_AVAILABLE_HOLD_BY_ME:
+		fallthrough
+	default:
+		return false
+	}
+}
 
 type HashBlockStateMap map[string]HashBlockState
 
@@ -44,10 +67,12 @@ func (s HashBlockState) String() string {
 	switch s {
 	case HBS_NOT_AVAILABLE:
 		return "not-available"
-	case HBS_AVAILABLE:
-		return "available"
-	case HBS_AVAILABLE_HOLD:
-		return "available-hold"
+	case HBS_AVAILABLE_FREE:
+		return "available-free"
+	case HBS_AVAILABLE_HOLD_BY_OTHERS:
+		return "available-hold-by-others"
+	case HBS_AVAILABLE_HOLD_BY_ME:
+		return "available-hold-by-me"
 	default:
 		return "unknown"
 	}
