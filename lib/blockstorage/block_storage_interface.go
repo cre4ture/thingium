@@ -36,7 +36,7 @@ func (s HashBlockState) IsAvailable() bool {
 func (s HashBlockState) IsAvailableAndReservedByMe() bool {
 	switch s {
 	case HBS_AVAILABLE_HOLD_BY_ME:
-		fallthrough
+		return true
 	default:
 		return false
 	}
