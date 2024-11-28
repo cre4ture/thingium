@@ -544,7 +544,10 @@ func (vf *virtualFolderSyncthingService) cleanupUnneededReservations(checkMap bl
 	})
 
 	for hash, state := range checkMap {
-		if state.IsAvailableAndReservedByMe() {
+		if state.IsAvailableAndFree() {
+			byteHash := hashutil.StringMapKeyToHashNoError(hash)
+			vf.deleteService.RequestCheckedDelete(byteHash)
+		} else if state.IsAvailableAndReservedByMe() {
 			_, stillNeeded := usedBlockHashes[hash]
 			if !stillNeeded {
 				byteHash := hashutil.StringMapKeyToHashNoError(hash)

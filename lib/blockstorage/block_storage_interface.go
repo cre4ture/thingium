@@ -42,6 +42,15 @@ func (s HashBlockState) IsAvailableAndReservedByMe() bool {
 	}
 }
 
+func (s HashBlockState) IsAvailableAndFree() bool {
+	switch s {
+	case HBS_AVAILABLE_FREE:
+		return true
+	default:
+		return false
+	}
+}
+
 type HashBlockStateMap map[string]HashBlockState
 
 type HashBlockStorageI interface {
