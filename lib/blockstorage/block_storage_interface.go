@@ -8,7 +8,6 @@ package blockstorage
 
 import (
 	"context"
-	"fmt"
 	"io"
 )
 
@@ -58,9 +57,4 @@ type HashBlockStorageI interface {
 	GetBlockHashesCountHint() int
 	GetBlockHashesCache(ctx context.Context, progressNotifier func(count int, currentHash []byte)) HashBlockStateMap
 	GetBlockHashState(hash []byte) HashBlockState
-}
-
-func (s HashBlockState) String() string {
-	return fmt.Sprintf("exists: %v, deletion: %v, hold-me: %v, hold-others: %v",
-		s.dataExists, s.deletionPending, s.reservedByMe, s.reservedByOthers)
 }

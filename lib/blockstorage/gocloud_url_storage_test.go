@@ -12,7 +12,7 @@ const OTHER_NAME_2 = "OTHER-DEVICE-2"
 
 func TestHashBlockStorageMapBuilder_addData(t *testing.T) {
 	calls := 0
-	lastState := HBS_NOT_AVAILABLE
+	lastState := HashBlockState{}
 	builder := NewHashBlockStorageMapBuilder(MY_NAME, func(hash string, state HashBlockState) {
 		calls += 1
 		lastState = state
@@ -22,12 +22,12 @@ func TestHashBlockStorageMapBuilder_addData(t *testing.T) {
 	builder.addData("hash_2")
 
 	assert.Equal(t, 1, calls)
-	assert.Equal(t, HBS_AVAILABLE_FREE, lastState)
+	assert.Equal(t, true, lastState.IsAvailableAndFree())
 }
 
 func TestHashBlockStorageMapBuilder_addUse(t *testing.T) {
 	calls := 0
-	lastState := HBS_NOT_AVAILABLE
+	lastState := HashBlockState{}
 	builder := NewHashBlockStorageMapBuilder(MY_NAME, func(hash string, state HashBlockState) {
 		calls += 1
 		lastState = state
@@ -38,12 +38,12 @@ func TestHashBlockStorageMapBuilder_addUse(t *testing.T) {
 	builder.addData("hash_2")
 
 	assert.Equal(t, 1, calls)
-	assert.Equal(t, HBS_AVAILABLE_HOLD_BY_ME, lastState)
+	assert.Equal(t, true, lastState.IsAvailableAndReservedByMe())
 }
 
 func TestHashBlockStorageMapBuilder_addDelete(t *testing.T) {
 	calls := 0
-	lastState := HBS_NOT_AVAILABLE
+	lastState := HashBlockState{}
 	builder := NewHashBlockStorageMapBuilder(MY_NAME, func(hash string, state HashBlockState) {
 		calls += 1
 		lastState = state
@@ -53,13 +53,13 @@ func TestHashBlockStorageMapBuilder_addDelete(t *testing.T) {
 	builder.addDelete("hash_1")
 	builder.addData("hash_2")
 
-	assert.Equal(t, 0, calls)
-	assert.Equal(t, HBS_NOT_AVAILABLE, lastState)
+	assert.Equal(t, 1, calls)
+	assert.Equal(t, false, lastState.IsAvailable())
 }
 
 func TestHashBlockStorageMapBuilder_addUseOther(t *testing.T) {
 	calls := 0
-	lastState := HBS_NOT_AVAILABLE
+	lastState := HashBlockState{}
 	builder := NewHashBlockStorageMapBuilder(MY_NAME, func(hash string, state HashBlockState) {
 		calls += 1
 		lastState = state
@@ -70,12 +70,14 @@ func TestHashBlockStorageMapBuilder_addUseOther(t *testing.T) {
 	builder.addData("hash_2")
 
 	assert.Equal(t, 1, calls)
-	assert.Equal(t, HBS_AVAILABLE_HOLD_BY_OTHERS, lastState)
+	assert.Equal(t, true, lastState.IsReservedBySomeone())
+	assert.Equal(t, true, lastState.reservedByOthers)
+	assert.Equal(t, false, lastState.reservedByMe)
 }
 
 func TestHashBlockStorageMapBuilder_addUseMeAndOther(t *testing.T) {
 	calls := 0
-	lastState := HBS_NOT_AVAILABLE
+	lastState := HashBlockState{}
 	builder := NewHashBlockStorageMapBuilder(MY_NAME, func(hash string, state HashBlockState) {
 		calls += 1
 		lastState = state
@@ -88,5 +90,5 @@ func TestHashBlockStorageMapBuilder_addUseMeAndOther(t *testing.T) {
 	builder.addData("hash_2")
 
 	assert.Equal(t, 1, calls)
-	assert.Equal(t, HBS_AVAILABLE_HOLD_BY_ME, lastState)
+	assert.Equal(t, true, lastState.IsAvailableAndReservedByMe())
 }

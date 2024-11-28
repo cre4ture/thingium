@@ -67,7 +67,7 @@ func (ds *AsyncCheckedDeleteService) serveTodoList() {
 			// first check again, as the job might have been waiting in TODO list for a while
 			currentState := ds.hbs.GetBlockHashState(currentJob)
 			if currentState.IsAvailableAndFree() {
-				logger.DefaultLogger.Infof("skip delete as still reserved for: %v", hashutil.HashToStringMapKey(currentJob))
+				logger.DefaultLogger.Infof("skip delete as still reserved: %v, state: %v", hashutil.HashToStringMapKey(currentJob))
 				continue
 			}
 
@@ -104,7 +104,7 @@ func (ds *AsyncCheckedDeleteService) servePendingList() {
 				currentState := ds.hbs.GetBlockHashState(currentJob.hash)
 				if currentState.IsReservedBySomeone() {
 					// if state changed in grace period, this needs to be accepted
-					logger.DefaultLogger.Infof("abort delete due to new reservation for: %v",
+					logger.DefaultLogger.Infof("abort delete due to new reservation for: %v, state: %v",
 						hashutil.HashToStringMapKey(currentJob.hash))
 					return
 				}
