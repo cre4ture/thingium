@@ -42,17 +42,18 @@ func NewHashBlockStorageMapBuilder(ownName string, cb func(hash string, state Ha
 		ownName:      ownName,
 		cb:           cb,
 		currentHash:  "",
-		currentState: HBS_NOT_AVAILABLE,
+		currentState: HashBlockState{},
 	}
 }
 
 func (b *HashBlockStorageMapBuilder) completeIfNextHash(hash string) bool {
 	complete := hash != b.currentHash
 	if complete {
-		if b.currentState != HBS_NOT_AVAILABLE {
+		if b.currentState.dataExists {
 			b.cb(b.currentHash, b.currentState)
 		}
 		b.currentHash = hash
+		b.currentState = HashBlockState{}
 	}
 	return false
 }
@@ -62,7 +63,7 @@ func (b *HashBlockStorageMapBuilder) addData(hash string) {
 		return
 	}
 
-	b.currentState = HBS_AVAILABLE_FREE
+	b.currentState.dataExists = true
 }
 
 func (b *HashBlockStorageMapBuilder) addUse(hash string, who string) {
@@ -73,13 +74,9 @@ func (b *HashBlockStorageMapBuilder) addUse(hash string, who string) {
 	if b.currentState.IsAvailable() {
 		isMe := who == b.ownName
 		if isMe {
-			// HOLD BY ME has priority
-			b.currentState = HBS_AVAILABLE_HOLD_BY_ME
+			b.currentState.reservedByMe = true
 		} else {
-			// HOLD BY ME has priority
-			if !b.currentState.IsAvailableAndReservedByMe() {
-				b.currentState = HBS_AVAILABLE_HOLD_BY_OTHERS
-			}
+			b.currentState.reservedByOthers = true
 		}
 	}
 }
@@ -90,7 +87,7 @@ func (b *HashBlockStorageMapBuilder) addDelete(hash string) {
 	}
 
 	// it will be deleted soon
-	b.currentState = HBS_NOT_AVAILABLE
+	b.currentState.deletionPending = true
 }
 
 func (b *HashBlockStorageMapBuilder) close() {
@@ -232,7 +229,7 @@ func (hm *GoCloudUrlStorage) GetBlockHashesCache(
 }
 
 func (hm *GoCloudUrlStorage) GetBlockHashState(hash []byte) HashBlockState {
-	blockState := HBS_NOT_AVAILABLE
+	blockState := HashBlockState{}
 	hm.IterateBlocksInternal(hashutil.HashToStringMapKey(hash), func(hash []byte, state HashBlockState) bool {
 		blockState = state
 		return true

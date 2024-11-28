@@ -8,47 +8,31 @@ package blockstorage
 
 import (
 	"context"
+	"fmt"
 	"io"
 )
 
-type HashBlockState int
-
-const (
-	HBS_NOT_AVAILABLE HashBlockState = iota // internal use only, will not be propagated to outside
-	HBS_AVAILABLE_FREE
-	HBS_AVAILABLE_HOLD_BY_OTHERS // not hold by me, but by others
-	HBS_AVAILABLE_HOLD_BY_ME     // hold by me (and potentially others)
-)
+type HashBlockState struct {
+	dataExists       bool
+	reservedByMe     bool
+	reservedByOthers bool
+	deletionPending  bool
+}
 
 func (s HashBlockState) IsAvailable() bool {
-	switch s {
-	case HBS_AVAILABLE_FREE:
-		fallthrough
-	case HBS_AVAILABLE_HOLD_BY_ME:
-		fallthrough
-	case HBS_AVAILABLE_HOLD_BY_OTHERS:
-		return true
-	default:
-		return false
-	}
+	return s.dataExists && (!s.deletionPending)
 }
 
 func (s HashBlockState) IsAvailableAndReservedByMe() bool {
-	switch s {
-	case HBS_AVAILABLE_HOLD_BY_ME:
-		return true
-	default:
-		return false
-	}
+	return s.dataExists && s.reservedByMe
 }
 
 func (s HashBlockState) IsAvailableAndFree() bool {
-	switch s {
-	case HBS_AVAILABLE_FREE:
-		return true
-	default:
-		return false
-	}
+	return s.dataExists && (!s.reservedByMe) && (!s.reservedByOthers)
+}
+
+func (s HashBlockState) IsReservedBySomeone() bool {
+	return s.dataExists && (s.reservedByMe || s.reservedByOthers)
 }
 
 type HashBlockStateMap map[string]HashBlockState
@@ -77,16 +61,6 @@ type HashBlockStorageI interface {
 }
 
 func (s HashBlockState) String() string {
-	switch s {
-	case HBS_NOT_AVAILABLE:
-		return "not-available"
-	case HBS_AVAILABLE_FREE:
-		return "available-free"
-	case HBS_AVAILABLE_HOLD_BY_OTHERS:
-		return "available-hold-by-others"
-	case HBS_AVAILABLE_HOLD_BY_ME:
-		return "available-hold-by-me"
-	default:
-		return "unknown"
-	}
+	return fmt.Sprintf("exists: %v, deletion: %v, hold-me: %v, hold-others: %v",
+		s.dataExists, s.deletionPending, s.reservedByMe, s.reservedByOthers)
 }
