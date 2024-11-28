@@ -49,9 +49,12 @@ const (
 
 type virtualFolderSyncthingService struct {
 	*folderBase
-	blockCache   blockstorage.HashBlockStorageI
-	mountPath    string
-	mountService io.Closer
+	lifetimeCtx   context.Context
+	cancel        context.CancelFunc
+	blockCache    blockstorage.HashBlockStorageI
+	deleteService *blockstorage.AsyncCheckedDeleteService
+	mountPath     string
+	mountService  io.Closer
 
 	backgroundDownloadPending chan struct{}
 	backgroundDownloadQueue   jobQueue
@@ -102,31 +105,42 @@ func newVirtualFolder(
 	ioLimiter *semaphore.Semaphore,
 ) service {
 
-	f := &virtualFolderSyncthingService{
-		folderBase:                newFolderBase(cfg, evLogger, model, fset),
-		blockCache:                nil,
-		backgroundDownloadPending: make(chan struct{}, 1),
-		backgroundDownloadQueue:   *newJobQueue(),
-		initialScanState:          INITIAL_SCAN_IDLE,
-		InitialScanDone:           make(chan struct{}, 1),
-	}
+	folderBase := newFolderBase(cfg, evLogger, model, fset)
 
 	blobUrl := ""
-	virtual_descriptor, hasVirtualDescriptor := strings.CutPrefix(f.Path, ":virtual:")
+	virtual_descriptor, hasVirtualDescriptor := strings.CutPrefix(folderBase.Path, ":virtual:")
 	if !hasVirtualDescriptor {
 		panic("missing :virtual:")
 	}
 
 	parts := strings.Split(virtual_descriptor, ":mount_at:")
 	blobUrl = parts[0]
+	mountPath := ""
 	if len(parts) >= 2 {
 		//url := "s3://bucket-syncthing-uli-virtual-folder-test1/" + myDir
-		f.mountPath = parts[1]
+		mountPath = parts[1]
 	}
 
-	f.blockCache = blockstorage.NewGoCloudUrlStorage(context.TODO(), blobUrl, model.id.String())
-	if f.Type.IsReceiveEncrypted() {
-		f.blockCache = blockstorage.NewEncryptedHashBlockStorage(f.blockCache)
+	lifetimeCtx, cancel := context.WithCancel(context.TODO())
+	var blockCache blockstorage.HashBlockStorageI = blockstorage.NewGoCloudUrlStorage(
+		lifetimeCtx, blobUrl, model.id.String())
+
+	if folderBase.Type.IsReceiveEncrypted() {
+		blockCache = blockstorage.NewEncryptedHashBlockStorage(blockCache)
+	}
+
+	f := &virtualFolderSyncthingService{
+		folderBase:                folderBase,
+		lifetimeCtx:               lifetimeCtx,
+		cancel:                    cancel,
+		blockCache:                blockCache,
+		deleteService:             blockstorage.NewAsyncCheckedDeleteService(lifetimeCtx, blockCache),
+		mountPath:                 mountPath,
+		mountService:              nil,
+		backgroundDownloadPending: make(chan struct{}, 1),
+		backgroundDownloadQueue:   *newJobQueue(),
+		initialScanState:          INITIAL_SCAN_IDLE,
+		InitialScanDone:           make(chan struct{}, 1),
 	}
 
 	return f
@@ -262,6 +276,8 @@ func (f *virtualFolderSyncthingService) Serve(ctx context.Context) error {
 	f.model.foldersRunning.Add(1)
 	defer f.model.foldersRunning.Add(-1)
 	defer l.Infof("vf.Serve exits")
+	defer f.deleteService.Close()
+	defer f.cancel()
 
 	f.ctx = ctx
 
