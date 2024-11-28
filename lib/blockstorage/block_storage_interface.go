@@ -53,6 +53,9 @@ type HashBlockStorageI interface {
 	ReserveAndGet(hash []byte, downloadData bool) (data []byte, ok bool)
 	ReserveAndSet(hash []byte, data []byte)
 	DeleteReservation(hash []byte)
+	AnnounceDelete(hash []byte) error
+	DeAnnounceDelete(hash []byte) error
+	UncheckedDelete(hash []byte) error
 	GetMeta(name string) (data []byte, ok bool)
 	SetMeta(name string, data []byte)
 	DeleteMeta(name string)
@@ -61,6 +64,7 @@ type HashBlockStorageI interface {
 	//IterateBlocks(fn func(hash []byte, state HashBlockState) bool) error
 	GetBlockHashesCountHint() int
 	GetBlockHashesCache(ctx context.Context, progressNotifier func(count int, currentHash []byte)) HashBlockStateMap
+	GetBlockHashState(hash []byte) HashBlockState
 }
 
 func (s HashBlockState) String() string {

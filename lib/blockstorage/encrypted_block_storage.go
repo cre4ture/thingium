@@ -13,6 +13,26 @@ type EncryptedHashBlockStorage struct {
 	store HashBlockStorageI
 }
 
+// AnnounceDelete implements HashBlockStorageI.
+func (e *EncryptedHashBlockStorage) AnnounceDelete(hash []byte) error {
+	return e.store.AnnounceDelete(hash)
+}
+
+// DeAnnounceDelete implements HashBlockStorageI.
+func (e *EncryptedHashBlockStorage) DeAnnounceDelete(hash []byte) error {
+	return e.store.DeAnnounceDelete(hash)
+}
+
+// GetBlockHashState implements HashBlockStorageI.
+func (e *EncryptedHashBlockStorage) GetBlockHashState(hash []byte) HashBlockState {
+	return e.store.GetBlockHashState(hash)
+}
+
+// UncheckedDelete implements HashBlockStorageI.
+func (e *EncryptedHashBlockStorage) UncheckedDelete(hash []byte) error {
+	return e.store.UncheckedDelete(hash)
+}
+
 const HASH_MAPPING_PREFIX = "real_hashes/"
 
 func (e *EncryptedHashBlockStorage) genRealHashKey(hash []byte) string {

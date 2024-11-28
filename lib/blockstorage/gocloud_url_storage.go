@@ -105,6 +105,49 @@ type GoCloudUrlStorage struct {
 	myDeviceId string
 }
 
+func (hm *GoCloudUrlStorage) getATag(hash []byte, tag string) string {
+	hashKey := getBlockStringKey(hash)
+	return hashKey + "." + tag + "." + hm.myDeviceId
+}
+
+func (hm *GoCloudUrlStorage) putATag(hash []byte, tag string) error {
+	hashDeviceTagKey := hm.getATag(hash, tag)
+	// force existence of stag with our ID
+	existsAlready, err := hm.bucket.Exists(hm.ctx, hashDeviceTagKey)
+	if err != nil {
+		return err
+	}
+	if tag != BLOCK_USE_TAG { // skip logging for use tags as this spams
+		logger.DefaultLogger.Debugf("Put tag %v (exists: %v): %v", tag, existsAlready, hashDeviceTagKey)
+	}
+	if existsAlready {
+		return nil
+	}
+	return hm.bucket.WriteAll(hm.ctx, hashDeviceTagKey, []byte{}, nil)
+}
+
+func (hm *GoCloudUrlStorage) removeATag(hash []byte, tag string) error {
+	reservationKey := getBlockStringKey(hash) + "." + tag + "." + hm.myDeviceId
+	logger.DefaultLogger.Debugf("removing tag %v: %v", tag, reservationKey)
+	return hm.bucket.Delete(hm.ctx, reservationKey)
+}
+
+// AnnounceDelete implements HashBlockStorageI.
+func (hm *GoCloudUrlStorage) AnnounceDelete(hash []byte) error {
+	return hm.putATag(hash, BLOCK_DELETE_TAG)
+}
+
+// DeAnnounceDelete implements HashBlockStorageI.
+func (hm *GoCloudUrlStorage) DeAnnounceDelete(hash []byte) error {
+	return hm.removeATag(hash, BLOCK_DELETE_TAG)
+}
+
+// UncheckedDelete implements HashBlockStorageI.
+func (hm *GoCloudUrlStorage) UncheckedDelete(hash []byte) error {
+	stringKey := getBlockStringKey(hash)
+	return hm.bucket.Delete(hm.ctx, stringKey)
+}
+
 // GetBlockHashesCountHint implements HashBlockStorageI.
 func (hm *GoCloudUrlStorage) GetBlockHashesCountHint() int {
 
@@ -188,6 +231,16 @@ func (hm *GoCloudUrlStorage) GetBlockHashesCache(
 	return hashSet
 }
 
+func (hm *GoCloudUrlStorage) GetBlockHashState(hash []byte) HashBlockState {
+	blockState := HBS_NOT_AVAILABLE
+	hm.IterateBlocksInternal(hashutil.HashToStringMapKey(hash), func(hash []byte, state HashBlockState) bool {
+		blockState = state
+		return true
+	})
+
+	return blockState
+}
+
 //func (hm *GoCloudUrlStorage) Has(hash []byte) (ok bool) {
 //	if len(hash) == 0 {
 //		return false
@@ -209,28 +262,13 @@ func (hm *GoCloudUrlStorage) GetBlockHashesCache(
 //	return true
 //}
 
-func (hm *GoCloudUrlStorage) putReservationTag(hashKey string) error {
-	USE_TAG := "." + BLOCK_USE_TAG + "."
-	hashDeviceUseKey := hashKey + USE_TAG + hm.myDeviceId
-	// force existence of use-tag with our ID
-	existsAlready, err := hm.bucket.Exists(hm.ctx, hashDeviceUseKey)
-	if err != nil {
-		return err
-	}
-	//logger.DefaultLogger.Debugf("Put reservation tag(exists: %v): %v", existsAlready, hashDeviceUseKey)
-	if existsAlready {
-		return nil
-	}
-	return hm.bucket.WriteAll(hm.ctx, hashDeviceUseKey, []byte{}, nil)
-}
-
 func (hm *GoCloudUrlStorage) reserveAndCheckExistence(hash []byte) (ok bool, retry bool) {
 	DELETE_TAG := "." + BLOCK_DELETE_TAG + "." // delete tags need to be alphabetically before use tags
 	USE_TAG := "." + BLOCK_USE_TAG + "."
 
 	hashKey := getBlockStringKey(hash)
 	// force existence of use-tag with our ID
-	err := hm.putReservationTag(hashKey)
+	err := hm.putATag(hash, BLOCK_USE_TAG)
 	if err != nil {
 		return false, false
 	}
@@ -300,9 +338,8 @@ func (hm *GoCloudUrlStorage) ReserveAndGet(hash []byte, downloadData bool) (data
 }
 
 func (hm *GoCloudUrlStorage) ReserveAndSet(hash []byte, data []byte) {
-	hashKey := getBlockStringKey(hash)
 	// force existence of use-tag with our ID
-	err := hm.putReservationTag(hashKey)
+	err := hm.putATag(hash, BLOCK_USE_TAG)
 	if err != nil {
 		panic("writing to block storage failed! Put reservation.")
 	}
@@ -316,6 +353,7 @@ func (hm *GoCloudUrlStorage) ReserveAndSet(hash []byte, data []byte) {
 	//	return // skip upload
 	//}
 
+	hashKey := getBlockStringKey(hash)
 	err = hm.bucket.WriteAll(hm.ctx, hashKey, data, nil)
 	if err != nil {
 		log.Fatal(err)
@@ -326,9 +364,7 @@ func (hm *GoCloudUrlStorage) ReserveAndSet(hash []byte, data []byte) {
 func (hm *GoCloudUrlStorage) DeleteReservation(hash []byte) {
 	// delete reference to block data for this node
 	// TODO: trigger async immediate checked delete?
-	reservationKey := getBlockStringKey(hash) + "." + BLOCK_USE_TAG + "." + hm.myDeviceId
-	logger.DefaultLogger.Debugf("removing reservation: %v", reservationKey)
-	err := hm.bucket.Delete(hm.ctx, reservationKey)
+	err := hm.removeATag(hash, BLOCK_USE_TAG)
 	if err != nil {
 		log.Fatal(err)
 		panic("writing to block storage failed!")
