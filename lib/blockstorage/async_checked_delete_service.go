@@ -2,13 +2,15 @@ package blockstorage
 
 import (
 	"context"
-	"io"
 	"sync"
 	"time"
+
+	"github.com/syncthing/syncthing/lib/hashutil"
+	"github.com/syncthing/syncthing/lib/logger"
 )
 
 type AsyncCheckedDeleteService struct {
-	io.Closer
+	// io.Closer
 	ctx            context.Context
 	cancel         context.CancelFunc
 	hbs            HashBlockStorageI
@@ -50,6 +52,10 @@ func (ds *AsyncCheckedDeleteService) Close() error {
 	return nil
 }
 
+func (ds *AsyncCheckedDeleteService) RequestCheckedDelete(hash []byte) {
+	ds.todoList <- hash
+}
+
 func (ds *AsyncCheckedDeleteService) serveTodoList() {
 	defer ds.serviceDone.Done()
 
@@ -61,6 +67,7 @@ func (ds *AsyncCheckedDeleteService) serveTodoList() {
 			// first check again, as the job might have been waiting in TODO list for a while
 			currentState := ds.hbs.GetBlockHashState(currentJob)
 			if currentState != HBS_AVAILABLE_FREE {
+				logger.DefaultLogger.Infof("skip delete as still reserved for: %v", hashutil.HashToStringMapKey(currentJob))
 				continue
 			}
 
@@ -69,6 +76,7 @@ func (ds *AsyncCheckedDeleteService) serveTodoList() {
 				time: time.Now().Add(TIME_CONSTANT),
 				hash: currentJob,
 			}
+			logger.DefaultLogger.Infof("announced delete for: %v", hashutil.HashToStringMapKey(currentJob))
 		}
 	}
 }
@@ -96,6 +104,8 @@ func (ds *AsyncCheckedDeleteService) servePendingList() {
 				currentState := ds.hbs.GetBlockHashState(currentJob.hash)
 				if currentState != HBS_AVAILABLE_FREE {
 					// if state changed in grace period, this needs to be accepted
+					logger.DefaultLogger.Infof("abort delete due to new reservation for: %v",
+						hashutil.HashToStringMapKey(currentJob.hash))
 					return
 				}
 
@@ -107,6 +117,8 @@ func (ds *AsyncCheckedDeleteService) servePendingList() {
 
 				// we are still in time window for deletion, no state changed, finally delete
 				ds.hbs.UncheckedDelete(currentJob.hash)
+				logger.DefaultLogger.Infof("delete done for: %v",
+					hashutil.HashToStringMapKey(currentJob.hash))
 			}()
 		}
 	}

@@ -547,7 +547,9 @@ func (vf *virtualFolderSyncthingService) cleanupUnneededReservations(checkMap bl
 		if state.IsAvailableAndReservedByMe() {
 			_, stillNeeded := usedBlockHashes[hash]
 			if !stillNeeded {
-				vf.blockCache.DeleteReservation(hashutil.StringMapKeyToHashNoError(hash))
+				byteHash := hashutil.StringMapKeyToHashNoError(hash)
+				vf.blockCache.DeleteReservation(byteHash)
+				vf.deleteService.RequestCheckedDelete(byteHash)
 			}
 		}
 	}
