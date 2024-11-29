@@ -396,12 +396,12 @@ func (f *virtualFolderSyncthingService) Pull_x_doInSync(ctx context.Context, opt
 }
 
 func (vf *virtualFolderSyncthingService) Pull_x(ctx context.Context, opts PullOptions) error {
-	defer logger.DefaultLogger.Infof("pull_x END z - opts: %v", opts)
+	defer logger.DefaultLogger.Infof("pull_x END z - opts: %+v", opts)
 	snap, err := vf.fset.Snapshot()
 	if err != nil {
 		return err
 	}
-	defer logger.DefaultLogger.Infof("pull_x END snap - opts: %v", opts)
+	defer logger.DefaultLogger.Infof("pull_x END snap - opts: %+v", opts)
 	defer snap.Release()
 
 	if opts.onlyCheck {
@@ -409,10 +409,10 @@ func (vf *virtualFolderSyncthingService) Pull_x(ctx context.Context, opts PullOp
 	} else {
 		vf.setState(FolderSyncing)
 	}
-	defer logger.DefaultLogger.Infof("pull_x END setState - opts: %v", opts)
+	defer logger.DefaultLogger.Infof("pull_x END setState - opts: %+v", opts)
 	defer vf.setState(FolderIdle)
 
-	logger.DefaultLogger.Infof("pull_x START - opts: %v", opts)
+	logger.DefaultLogger.Infof("pull_x START - opts: %+v", opts)
 	defer logger.DefaultLogger.Infof("pull_x END a")
 
 	checkMap := blockstorage.HashBlockStateMap(nil)
