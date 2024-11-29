@@ -475,7 +475,17 @@ func (vf *virtualFolderSyncthingService) Pull_x(ctx context.Context, opts PullOp
 	for i := 0; i < count; i++ {
 		inProgress <- 100 + i
 	}
+	defer func() {
+		// wait for async operations to complete
+		logger.DefaultLogger.Infof("PULL_X: wait for async operations to complete ...")
+		for i := 0; i < count; i++ {
+			<-inProgress
+			// logger.DefaultLogger.Infof("PULL_X: wait for async operations to complete ... %v/%v", (i + 1), count)
+		}
+		logger.DefaultLogger.Infof("PULL_X: wait for async operations to complete - DONE")
+	}()
 
+	isAbortOrErr := false
 	pullF := func(f protocol.FileIntf) bool /* true to continue */ {
 		myFileSize := f.FileSize()
 		leaseNR := <-inProgress
@@ -505,10 +515,15 @@ func (vf *virtualFolderSyncthingService) Pull_x(ctx context.Context, opts PullOp
 		select {
 		case <-vf.ctx.Done():
 			logger.DefaultLogger.Infof("pull ONE - stop continue")
+			isAbortOrErr = true
 			return false
 		default:
 			return true
 		}
+	}
+
+	if isAbortOrErr {
+		return nil
 	}
 
 	for job, ok := jobs.Pop(); ok; job, ok = jobs.Pop() {
@@ -516,18 +531,15 @@ func (vf *virtualFolderSyncthingService) Pull_x(ctx context.Context, opts PullOp
 		if ok {
 			good := pullF(fi)
 			if !good {
+				isAbortOrErr = true
 				break
 			}
 		}
 	}
 
-	// wait for async operations to complete
-	logger.DefaultLogger.Infof("PULL_X: wait for async operations to complete ...")
-	for i := 0; i < count; i++ {
-		<-inProgress
-		// logger.DefaultLogger.Infof("PULL_X: wait for async operations to complete ... %v/%v", (i + 1), count)
+	if isAbortOrErr {
+		return nil
 	}
-	logger.DefaultLogger.Infof("PULL_X: wait for async operations to complete - DONE")
 
 	if checkMap != nil {
 		vf.cleanupUnneededReservations(checkMap)
