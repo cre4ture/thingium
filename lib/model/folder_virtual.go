@@ -311,10 +311,10 @@ func (f *virtualFolderSyncthingService) Serve(ctx context.Context) error {
 
 	if f.initialScanState == INITIAL_SCAN_IDLE {
 		f.initialScanState = INITIAL_SCAN_RUNNING
-		f.Pull_x(ctx, false, true)
+		f.Pull_x(ctx, PullOptions{false, true})
 		f.initialScanState = INITIAL_SCAN_COMPLETED
 		close(f.InitialScanDone)
-		f.Pull_x(ctx, true, false)
+		f.Pull_x(ctx, PullOptions{true, false})
 	}
 
 	for {
@@ -357,7 +357,7 @@ func (f *virtualFolderSyncthingService) DelayScan(d time.Duration) {}
 func (f *virtualFolderSyncthingService) ScheduleScan() {
 	logger.DefaultLogger.Infof("ScheduleScan - pull_x")
 	f.requestDoInSync(func() error {
-		err := f.Pull_x(f.ctx, false, false)
+		err := f.Pull_x(f.ctx, PullOptions{false, false})
 		logger.DefaultLogger.Infof("ScheduleScan - pull_x - DONE. Err: %v", err)
 		return err
 	})
@@ -371,47 +371,52 @@ func (f *virtualFolderSyncthingService) BringToFront(filename string) {
 
 func (vf *virtualFolderSyncthingService) Scan(subs []string) error {
 	logger.DefaultLogger.Infof("Scan - pull_x")
-	return vf.Pull_x_doInSync(vf.ctx, true, false)
+	return vf.Pull_x_doInSync(vf.ctx, PullOptions{true, false})
 }
 
 func (vf *virtualFolderSyncthingService) PullAllMissing(onlyCheck bool) error {
 	logger.DefaultLogger.Infof("PullAllMissing - pull_x - %v", onlyCheck)
-	return vf.Pull_x_doInSync(vf.ctx, false, true)
+	return vf.Pull_x_doInSync(vf.ctx, PullOptions{false, true})
 }
 
 func (vf *virtualFolderSyncthingService) PullAll(onlyCheck bool) error {
 	logger.DefaultLogger.Infof("PullAll - pull_x")
-	return vf.Pull_x_doInSync(vf.ctx, false, onlyCheck)
+	return vf.Pull_x_doInSync(vf.ctx, PullOptions{false, onlyCheck})
 }
 
-func (f *virtualFolderSyncthingService) Pull_x_doInSync(ctx context.Context, onlyMissing bool, onlyCheck bool) error {
+type PullOptions struct {
+	onlyMissing bool
+	onlyCheck   bool
+}
+
+func (f *virtualFolderSyncthingService) Pull_x_doInSync(ctx context.Context, opts PullOptions) error {
 	return f.doInSync(func() error {
-		return f.Pull_x(ctx, onlyMissing, onlyCheck)
+		return f.Pull_x(ctx, opts)
 	})
 }
 
-func (vf *virtualFolderSyncthingService) Pull_x(ctx context.Context, onlyMissing bool, onlyCheck bool) error {
-	defer logger.DefaultLogger.Infof("pull_x END z")
+func (vf *virtualFolderSyncthingService) Pull_x(ctx context.Context, opts PullOptions) error {
+	defer logger.DefaultLogger.Infof("pull_x END z - opts: %v", opts)
 	snap, err := vf.fset.Snapshot()
 	if err != nil {
 		return err
 	}
-	defer logger.DefaultLogger.Infof("pull_x END snap")
+	defer logger.DefaultLogger.Infof("pull_x END snap - opts: %v", opts)
 	defer snap.Release()
 
-	if onlyCheck {
+	if opts.onlyCheck {
 		vf.setState(FolderScanning)
 	} else {
 		vf.setState(FolderSyncing)
 	}
-	defer logger.DefaultLogger.Infof("pull_x END setState")
+	defer logger.DefaultLogger.Infof("pull_x END setState - opts: %v", opts)
 	defer vf.setState(FolderIdle)
 
-	logger.DefaultLogger.Infof("pull_x START")
+	logger.DefaultLogger.Infof("pull_x START - opts: %v", opts)
 	defer logger.DefaultLogger.Infof("pull_x END a")
 
 	checkMap := blockstorage.HashBlockStateMap(nil)
-	if onlyCheck && true {
+	if opts.onlyCheck && true {
 		func() {
 			asyncNotifier := utils.NewAsyncProgressNotifier(vf.ctx)
 			asyncNotifier.StartAsyncProgressNotification(
@@ -445,10 +450,10 @@ func (vf *virtualFolderSyncthingService) Pull_x(ctx context.Context, onlyMissing
 			return true
 		}
 
-		if onlyMissing {
+		if opts.onlyMissing {
 			snap.WithNeedTruncated(protocol.LocalDeviceID, prepareFn)
 		} else {
-			if onlyCheck {
+			if opts.onlyCheck {
 				snap.WithHaveTruncated(protocol.LocalDeviceID, prepareFn)
 			} else {
 				snap.WithGlobalTruncated(prepareFn)
