@@ -491,9 +491,9 @@ func (vf *virtualFolderSyncthingService) Pull_x(ctx context.Context, onlyMissing
 				}
 			}
 			if checkMap != nil {
-				vf.ScanOne(snap, f, checkMap, finishFn)
+				vf.scanOne(snap, f, checkMap, finishFn)
 			} else {
-				vf.PullOne(snap, f, false, finishFn)
+				vf.pullOne(snap, f, false, finishFn)
 			}
 		}()
 
@@ -569,7 +569,7 @@ func (vf *virtualFolderSyncthingService) cleanupUnneededReservations(checkMap bl
 	return nil
 }
 
-func (vf *virtualFolderSyncthingService) PullOne(
+func (vf *virtualFolderSyncthingService) pullOne(
 	snap *db.Snapshot, f protocol.FileIntf, synchronous bool, fn func(),
 ) {
 
@@ -637,7 +637,7 @@ func (vf *virtualFolderSyncthingService) PullOne(
 	}
 }
 
-func (vf *virtualFolderSyncthingService) ScanOne(snap *db.Snapshot, f protocol.FileIntf, checkMap blockstorage.HashBlockStateMap, fn func()) {
+func (vf *virtualFolderSyncthingService) scanOne(snap *db.Snapshot, f protocol.FileIntf, checkMap blockstorage.HashBlockStateMap, fn func()) {
 
 	if f.IsDirectory() {
 		// no work to do for directories.
