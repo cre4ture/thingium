@@ -475,15 +475,20 @@ func (vf *virtualFolderSyncthingService) Pull_x(ctx context.Context, onlyMissing
 		myFileSize := f.FileSize()
 		leaseNR := <-inProgress
 		go func() {
+			doScan := checkMap != nil
 			actionName := "Pull"
-			if checkMap != nil {
+			if doScan {
 				actionName = "Scan"
 			}
-			logger.DefaultLogger.Infof("%v ONE with leaseNR: %v", actionName, leaseNR)
+			if !doScan {
+				logger.DefaultLogger.Infof("%v ONE with leaseNR: %v", actionName, leaseNR)
+			}
 			finishFn := func() {
 				asyncNotifier.Progress.Update(myFileSize)
 				inProgress <- leaseNR
-				logger.DefaultLogger.Infof("%v ONE with leaseNR: %v - DONE, size: %v", actionName, leaseNR, myFileSize)
+				if !doScan {
+					logger.DefaultLogger.Infof("%v ONE with leaseNR: %v - DONE, size: %v", actionName, leaseNR, myFileSize)
+				}
 			}
 			if checkMap != nil {
 				vf.ScanOne(snap, f, checkMap, finishFn)
