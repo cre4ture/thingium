@@ -511,7 +511,7 @@ func (vf *virtualFolderSyncthingService) Pull_x(ctx context.Context, onlyMissing
 	logger.DefaultLogger.Infof("PULL_X: wait for async operations to complete ...")
 	for i := 0; i < count; i++ {
 		<-inProgress
-		logger.DefaultLogger.Infof("PULL_X: wait for async operations to complete ... %v/%v", (i + 1), count)
+		// logger.DefaultLogger.Infof("PULL_X: wait for async operations to complete ... %v/%v", (i + 1), count)
 	}
 	logger.DefaultLogger.Infof("PULL_X: wait for async operations to complete - DONE")
 
