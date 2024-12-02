@@ -422,7 +422,10 @@ func (hm *GoCloudUrlStorage) IterateBlocks(fn func(d HashAndState) bool) error {
 			if d.err != nil {
 				return d.err
 			}
-			stopRequested = stopRequested || fn(d.d)
+			if !stopRequested {
+				logger.DefaultLogger.Infof("calling handler function for %+v", d)
+				stopRequested = fn(d.d)
+			}
 		}
 	}
 
