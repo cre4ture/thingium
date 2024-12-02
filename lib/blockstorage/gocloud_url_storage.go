@@ -199,6 +199,9 @@ func (hm *GoCloudUrlStorage) GetBlockHashesCache(
 	progressNotifier func(count int, currentHash []byte),
 ) HashBlockStateMap {
 
+	startTime := time.Now()
+	defer logger.DefaultLogger.Infof("Total time for cached blocks listing: %v minutes", time.Since(startTime).Minutes())
+
 	hashSet := make(map[string]HashBlockState)
 	err := hm.IterateBlocks(ctx, func(d HashAndState) {
 
