@@ -426,14 +426,14 @@ func (hm *GoCloudUrlStorage) IterateBlocks(ctx context.Context, fn func(d HashAn
 			return nil
 		}
 
-		logger.DefaultLogger.Infof("processing channel: %+v", channel)
+		// logger.DefaultLogger.Infof("processing channel: %+v", channel)
 		for d := range channel {
 
 			if IsDone(ctx) {
 				return nil
 			}
 
-			logger.DefaultLogger.Infof("processing channel entry: %+v", d)
+			// logger.DefaultLogger.Infof("processing channel entry: %+v", d)
 			if d.err != nil {
 				return d.err
 			}
