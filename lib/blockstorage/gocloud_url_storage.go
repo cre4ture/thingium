@@ -418,7 +418,9 @@ func (hm *GoCloudUrlStorage) IterateBlocks(fn func(d HashAndState) bool) error {
 
 	stopRequested := false
 	for channel := range chanOfChannels {
+		logger.DefaultLogger.Infof("processing channel: %+v", channel)
 		for d := range channel {
+			logger.DefaultLogger.Infof("processing channel entry: %+v", d)
 			if d.err != nil {
 				return d.err
 			}
