@@ -32,12 +32,12 @@ const BLOCK_USE_TAG = "used-by"
 
 type HashBlockStorageMapBuilder struct {
 	ownName      string
-	cb           func(hash string, state HashBlockState)
+	cb           func(d HashAndState)
 	currentHash  string
 	currentState HashBlockState
 }
 
-func NewHashBlockStorageMapBuilder(ownName string, cb func(hash string, state HashBlockState)) *HashBlockStorageMapBuilder {
+func NewHashBlockStorageMapBuilder(ownName string, cb func(d HashAndState)) *HashBlockStorageMapBuilder {
 	return &HashBlockStorageMapBuilder{
 		ownName:      ownName,
 		cb:           cb,
@@ -50,7 +50,7 @@ func (b *HashBlockStorageMapBuilder) completeIfNextHash(hash string) bool {
 	complete := hash != b.currentHash
 	if complete {
 		if b.currentState.dataExists {
-			b.cb(b.currentHash, b.currentState)
+			b.cb(HashAndState{hashutil.StringMapKeyToHashNoError(b.currentHash), b.currentState})
 		}
 		b.currentHash = hash
 		b.currentState = HashBlockState{}
@@ -200,21 +200,12 @@ func (hm *GoCloudUrlStorage) GetBlockHashesCache(
 ) HashBlockStateMap {
 
 	hashSet := make(map[string]HashBlockState)
-	err := hm.IterateBlocks(func(d HashAndState) bool {
+	err := hm.IterateBlocks(ctx, func(d HashAndState) {
 
 		hashString := hashutil.HashToStringMapKey(d.hash)
 		hashSet[hashString] = d.state
 		// logger.DefaultLogger.Infof("IterateBlocks hash(hash, state): %v, %v", hashString, state)
 		progressNotifier(len(hashSet), d.hash)
-
-		select {
-		case <-ctx.Done():
-			return false
-		case <-hm.ctx.Done():
-			return false
-		default:
-			return true
-		}
 	})
 
 	if err != nil {
@@ -230,9 +221,8 @@ func (hm *GoCloudUrlStorage) GetBlockHashesCache(
 
 func (hm *GoCloudUrlStorage) GetBlockHashState(hash []byte) HashBlockState {
 	blockState := HashBlockState{}
-	hm.IterateBlocksInternal(hashutil.HashToStringMapKey(hash), func(d HashAndState) bool {
+	hm.IterateBlocksInternal(hm.ctx, hashutil.HashToStringMapKey(hash), func(d HashAndState) {
 		blockState = d.state
-		return true
 	})
 
 	return blockState
@@ -391,24 +381,38 @@ type HashStateAndError struct {
 	err error
 }
 
-func (hm *GoCloudUrlStorage) IterateBlocks(fn func(d HashAndState) bool) error {
+func IsDone(ctx context.Context) bool {
+	select {
+	case <-ctx.Done():
+		return true
+	default:
+		return false
+	}
+}
+
+func (hm *GoCloudUrlStorage) IterateBlocks(ctx context.Context, fn func(d HashAndState)) error {
 
 	chanOfChannels := make(chan chan HashStateAndError, 5)
 	go func() {
 		defer close(chanOfChannels)
 		// do iterations in chunks for better scalability.
 		for i := 0; i < 256; i++ {
+
+			if IsDone(ctx) {
+				return
+			}
+
 			b := byte(i)
 			b_str := hashutil.HashToStringMapKey([]byte{b})
 			partChannel := make(chan HashStateAndError, 20)
 			chanOfChannels <- partChannel
 			go func() {
 				defer close(partChannel)
-				stopRequested, err := hm.IterateBlocksInternal(b_str, func(d HashAndState) bool {
+				err := hm.IterateBlocksInternal(ctx, b_str, func(d HashAndState) {
 					partChannel <- HashStateAndError{d, nil}
-					return true
 				})
-				if stopRequested || (err != nil) {
+
+				if err != nil {
 					partChannel <- HashStateAndError{HashAndState{}, err}
 					return
 				}
@@ -416,29 +420,36 @@ func (hm *GoCloudUrlStorage) IterateBlocks(fn func(d HashAndState) bool) error {
 		}
 	}()
 
-	stopRequested := false
 	for channel := range chanOfChannels {
+
+		if IsDone(ctx) {
+			return nil
+		}
+
 		logger.DefaultLogger.Infof("processing channel: %+v", channel)
 		for d := range channel {
-			logger.DefaultLogger.Infof("processing channel entry (stop: %v): %+v", stopRequested, d)
+
+			if IsDone(ctx) {
+				return nil
+			}
+
+			logger.DefaultLogger.Infof("processing channel entry: %+v", d)
 			if d.err != nil {
 				return d.err
 			}
-			if !stopRequested {
-				logger.DefaultLogger.Infof("calling handler function for %+v", d)
-				stopRequested = fn(d.d)
-			}
+
+			fn(d.d)
 		}
 	}
 
 	return nil
 }
 
-func (hm *GoCloudUrlStorage) IterateBlocksInternal(prefix string, fn func(d HashAndState) bool) (bool, error) {
+func (hm *GoCloudUrlStorage) IterateBlocksInternal(
+	ctx context.Context, prefix string, fn func(d HashAndState)) error {
 
-	stopRequested := false
-	iterator := NewHashBlockStorageMapBuilder(hm.myDeviceId, func(hashStr string, state HashBlockState) {
-		stopRequested = !fn(HashAndState{hashutil.StringMapKeyToHashNoError(hashStr), state})
+	iterator := NewHashBlockStorageMapBuilder(hm.myDeviceId, func(d HashAndState) {
+		fn(d)
 	})
 
 	folderPrefix := BlockDataSubFolder + "/"
@@ -448,11 +459,15 @@ func (hm *GoCloudUrlStorage) IterateBlocksInternal(prefix string, fn func(d Hash
 	pageToken := blob.FirstPageToken
 	i := 0
 	for {
+		if IsDone(ctx) {
+			return context.Canceled
+		}
+
 		logger.DefaultLogger.Infof("prefix %v - loading page #%v ... ", prefix, i)
 		i += 1
 		page, nextPageToken, err := hm.bucket.ListPage(hm.ctx, pageToken, perPageCount, opts)
 		if err != nil {
-			return false, err
+			return err
 		}
 
 		for _, obj := range page {
@@ -473,15 +488,16 @@ func (hm *GoCloudUrlStorage) IterateBlocksInternal(prefix string, fn func(d Hash
 					}
 				}
 			}
-			if stopRequested {
-				return stopRequested, nil
+
+			if IsDone(ctx) {
+				return context.Canceled
 			}
 		}
 
 		if len(nextPageToken) == 0 {
 			// DONE
 			iterator.close()
-			return false, nil
+			return nil
 		}
 
 		pageToken = nextPageToken
