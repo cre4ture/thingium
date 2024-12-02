@@ -18,6 +18,11 @@ type HashBlockState struct {
 	deletionPending  bool
 }
 
+type HashAndState struct {
+	hash  []byte
+	state HashBlockState
+}
+
 func (s HashBlockState) IsAvailable() bool {
 	return s.dataExists && (!s.deletionPending)
 }

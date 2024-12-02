@@ -200,12 +200,12 @@ func (hm *GoCloudUrlStorage) GetBlockHashesCache(
 ) HashBlockStateMap {
 
 	hashSet := make(map[string]HashBlockState)
-	err := hm.IterateBlocks(func(hash []byte, state HashBlockState) bool {
+	err := hm.IterateBlocks(func(d HashAndState) bool {
 
-		hashString := hashutil.HashToStringMapKey(hash)
-		hashSet[hashString] = state
+		hashString := hashutil.HashToStringMapKey(d.hash)
+		hashSet[hashString] = d.state
 		// logger.DefaultLogger.Infof("IterateBlocks hash(hash, state): %v, %v", hashString, state)
-		progressNotifier(len(hashSet), hash)
+		progressNotifier(len(hashSet), d.hash)
 
 		select {
 		case <-ctx.Done():
@@ -230,8 +230,8 @@ func (hm *GoCloudUrlStorage) GetBlockHashesCache(
 
 func (hm *GoCloudUrlStorage) GetBlockHashState(hash []byte) HashBlockState {
 	blockState := HashBlockState{}
-	hm.IterateBlocksInternal(hashutil.HashToStringMapKey(hash), func(hash []byte, state HashBlockState) bool {
-		blockState = state
+	hm.IterateBlocksInternal(hashutil.HashToStringMapKey(hash), func(d HashAndState) bool {
+		blockState = d.state
 		return true
 	})
 
@@ -386,26 +386,54 @@ func (hm *GoCloudUrlStorage) Close() error {
 	return hm.bucket.Close()
 }
 
-func (hm *GoCloudUrlStorage) IterateBlocks(fn func(hash []byte, state HashBlockState) bool) error {
+type HashStateAndError struct {
+	d   HashAndState
+	err error
+}
 
-	// do iterations in chunks for better scalability.
-	for i := 0; i < 256; i++ {
-		b := byte(i)
-		b_str := hashutil.HashToStringMapKey([]byte{b})
-		stopRequested, err := hm.IterateBlocksInternal(b_str, fn)
-		if stopRequested || (err != nil) {
-			return err
+func (hm *GoCloudUrlStorage) IterateBlocks(fn func(d HashAndState) bool) error {
+
+	chanOfChannels := make(chan chan HashStateAndError, 5)
+	go func() {
+		defer close(chanOfChannels)
+		// do iterations in chunks for better scalability.
+		for i := 0; i < 256; i++ {
+			b := byte(i)
+			b_str := hashutil.HashToStringMapKey([]byte{b})
+			partChannel := make(chan HashStateAndError, 20)
+			chanOfChannels <- partChannel
+			go func() {
+				defer close(partChannel)
+				stopRequested, err := hm.IterateBlocksInternal(b_str, func(d HashAndState) bool {
+					partChannel <- HashStateAndError{d, nil}
+					return true
+				})
+				if stopRequested || (err != nil) {
+					partChannel <- HashStateAndError{HashAndState{}, err}
+					return
+				}
+			}()
+		}
+	}()
+
+	stopRequested := false
+	for channel := range chanOfChannels {
+		for d := range channel {
+			if d.err != nil {
+				return d.err
+			}
+			stopRequested = stopRequested || fn(d.d)
 		}
 	}
 
 	return nil
 }
 
-func (hm *GoCloudUrlStorage) IterateBlocksInternal(prefix string, fn func(hash []byte, state HashBlockState) bool) (bool, error) {
+func (hm *GoCloudUrlStorage) IterateBlocksInternal(prefix string, fn func(d HashAndState) bool) (bool, error) {
 
 	stopRequested := false
 	iterator := NewHashBlockStorageMapBuilder(hm.myDeviceId, func(hashStr string, state HashBlockState) {
-		stopRequested = !fn(hashutil.StringMapKeyToHashNoError(hashStr), state)
+		stopRequested = !fn(HashAndState{hashutil.StringMapKeyToHashNoError(hashStr), state})
 	})
 
 	folderPrefix := BlockDataSubFolder + "/"
@@ -434,7 +462,10 @@ func (hm *GoCloudUrlStorage) IterateBlocksInternal(prefix string, fn func(hash [
 					deviceId := elements[2]
 					iterator.addUse(hashString, deviceId)
 				} else if tp == BLOCK_DELETE_TAG {
-					iterator.addDelete(hashString)
+					// ignore deletes that are older than a minute as they are outdated/left overs, TODO: use constant
+					if time.Since(obj.ModTime) < time.Minute {
+						iterator.addDelete(hashString)
+					}
 				}
 			}
 			if stopRequested {
