@@ -422,7 +422,7 @@ func (vf *virtualFolderSyncthingService) Pull_x(ctx context.Context, opts PullOp
 			asyncNotifier.StartAsyncProgressNotification(
 				logger.DefaultLogger,
 				uint64(255), // use first hash byte as progress indicator. This works as storage is sorted.
-				uint(1),
+				uint(5),
 				vf.evLogger,
 				vf.folderID,
 				make([]string, 0),
