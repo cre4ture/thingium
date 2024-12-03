@@ -407,7 +407,7 @@ func (hm *GoCloudUrlStorage) IterateBlocks(ctx context.Context, fn func(d HashAn
 
 			b := byte(i)
 			b_str := hashutil.HashToStringMapKey([]byte{b})
-			partChannel := make(chan HashStateAndError, 200000)
+			partChannel := make(chan HashStateAndError, 10)
 			chanOfChannels <- partChannel
 			go func() {
 				defer close(partChannel)
