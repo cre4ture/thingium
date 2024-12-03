@@ -8,7 +8,6 @@ package blockstorage
 
 import (
 	"context"
-	"io"
 	"log"
 	"strconv"
 	"strings"
@@ -95,8 +94,8 @@ func (b *HashBlockStorageMapBuilder) close() {
 }
 
 type GoCloudUrlStorage struct {
-	io.Closer
-
+	// io.Closer
+	url        string
 	ctx        context.Context
 	bucket     *blob.Bucket
 	myDeviceId string
@@ -178,6 +177,7 @@ func NewGoCloudUrlStorage(ctx context.Context, url string, myDeviceId string) *G
 	}
 
 	instance := &GoCloudUrlStorage{
+		url:        url,
 		ctx:        ctx,
 		bucket:     bucket,
 		myDeviceId: myDeviceId,
@@ -396,6 +396,13 @@ func IsDone(ctx context.Context) bool {
 func (hm *GoCloudUrlStorage) IterateBlocks(ctx context.Context, fn func(d HashAndState)) error {
 
 	chanOfChannels := make(chan chan HashStateAndError, 1)
+	hm2 := NewGoCloudUrlStorage(ctx, hm.url, hm.myDeviceId)
+	defer hm2.Close()
+
+	connections := make([]*GoCloudUrlStorage, 0, 2)
+	connections = append(connections, hm)
+	connections = append(connections, hm2)
+
 	go func() {
 		defer close(chanOfChannels)
 		// do iterations in chunks for better scalability.
@@ -411,7 +418,8 @@ func (hm *GoCloudUrlStorage) IterateBlocks(ctx context.Context, fn func(d HashAn
 			chanOfChannels <- partChannel
 			go func() {
 				defer close(partChannel)
-				err := hm.IterateBlocksInternal(ctx, b_str, func(d HashAndState) {
+				hmIdx := i % 2
+				err := connections[hmIdx].IterateBlocksInternal(ctx, b_str, func(d HashAndState) {
 					partChannel <- HashStateAndError{d, nil}
 				})
 
