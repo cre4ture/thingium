@@ -397,7 +397,7 @@ func IsDone(ctx context.Context) bool {
 
 func (hm *GoCloudUrlStorage) IterateBlocks(ctx context.Context, fn func(d HashAndState)) error {
 
-	numberOfParallelChannels := 10
+	numberOfParallelChannels := 2
 	chanOfChannels := make(chan chan HashStateAndError, numberOfParallelChannels-1)
 
 	connections := make([]*GoCloudUrlStorage, 0, numberOfParallelChannels)
@@ -423,7 +423,7 @@ func (hm *GoCloudUrlStorage) IterateBlocks(ctx context.Context, fn func(d HashAn
 			chanOfChannels <- partChannel
 			go func() {
 				defer close(partChannel)
-				hmIdx := i % numberOfParallelChannels
+				hmIdx := 0
 				err := connections[hmIdx].IterateBlocksInternal(ctx, b_str, func(d HashAndState) {
 					partChannel <- HashStateAndError{d, nil}
 				})
