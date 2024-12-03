@@ -395,7 +395,7 @@ func IsDone(ctx context.Context) bool {
 
 func (hm *GoCloudUrlStorage) IterateBlocks(ctx context.Context, fn func(d HashAndState)) error {
 
-	chanOfChannels := make(chan chan HashStateAndError)
+	chanOfChannels := make(chan chan HashStateAndError, 1)
 	go func() {
 		defer close(chanOfChannels)
 		// do iterations in chunks for better scalability.
