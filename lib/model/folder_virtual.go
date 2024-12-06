@@ -10,7 +10,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"fmt"
 	"io"
 	"io/fs"
 	"log"
@@ -161,100 +160,6 @@ func (f *virtualFolderSyncthingService) RequestBackgroundDownload(filename strin
 	}
 }
 
-type VirtualFolderPuller struct {
-	sharedPullerStateBase
-	job                     string
-	snap                    *db.Snapshot
-	folderService           *virtualFolderSyncthingService
-	backgroundDownloadQueue *jobQueue
-	fset                    *db.FileSet
-	ctx                     context.Context
-}
-
-func NewVirtualFolderPuller(f *virtualFolderSyncthingService, job string) {
-	defer f.backgroundDownloadQueue.Done(job)
-
-	now := time.Now()
-
-	snap, err := f.fset.Snapshot()
-	if err != nil {
-		return
-	}
-	defer snap.Release()
-
-	fi, ok := snap.GetGlobal(job)
-	if !ok {
-		return
-	}
-
-	instance := &VirtualFolderPuller{
-		sharedPullerStateBase: sharedPullerStateBase{
-			created:          now,
-			file:             fi,
-			folder:           f.folderID,
-			reused:           0,
-			copyTotal:        len(fi.Blocks),
-			copyNeeded:       len(fi.Blocks),
-			updated:          now,
-			available:        make([]int, 0),
-			availableUpdated: now,
-			mut:              sync.NewRWMutex(),
-		},
-		job:                     job,
-		snap:                    snap,
-		folderService:           f,
-		backgroundDownloadQueue: &f.backgroundDownloadQueue,
-		fset:                    f.fset,
-		ctx:                     f.ctx,
-	}
-
-	f.model.progressEmitter.Register(instance)
-	defer f.model.progressEmitter.Deregister(instance)
-
-	instance.doPull()
-}
-
-func (f *VirtualFolderPuller) doPull() {
-
-	all_ok := true
-	for _, bi := range f.file.Blocks {
-		//logger.DefaultLogger.Debugf("check block info #%v: %+v", i, bi)
-		_, ok, variant := f.folderService.GetBlockDataFromCacheOrDownload(f.snap, f.file, bi)
-		all_ok = all_ok && ok
-
-		switch variant {
-		case GET_BLOCK_CACHED:
-			f.copiedFromElsewhere(bi.Size)
-			f.copyDone(bi)
-		case GET_BLOCK_DOWNLOAD:
-			f.pullDone(bi)
-		case GET_BLOCK_FAILED:
-		}
-
-		select {
-		case <-f.ctx.Done():
-			return
-		default:
-		}
-	}
-
-	if !all_ok {
-		f.folderService.evLogger.Log(events.Failure, fmt.Sprintf("failed to pull all blocks for: %v", f.job))
-		return
-	}
-
-	f.fset.UpdateOne(protocol.LocalDeviceID, &f.file)
-
-	seq := f.fset.Sequence(protocol.LocalDeviceID)
-	f.folderService.evLogger.Log(events.LocalIndexUpdated, map[string]interface{}{
-		"folder":    f.folderService.ID,
-		"items":     1,
-		"filenames": append([]string(nil), f.file.Name),
-		"sequence":  seq,
-		"version":   seq, // legacy for sequence
-	})
-}
-
 func (f *virtualFolderSyncthingService) serve_backgroundDownloadTask() {
 	defer l.Infof("vf.serve_backgroundDownloadTask exits")
 	for {
@@ -266,7 +171,7 @@ func (f *virtualFolderSyncthingService) serve_backgroundDownloadTask() {
 
 		for job, ok := f.backgroundDownloadQueue.Pop(); ok; job, ok = f.backgroundDownloadQueue.Pop() {
 			func() {
-				NewVirtualFolderPuller(f, job)
+				createVirtualFolderFilePullerAndPull(f, job)
 			}()
 		}
 	}
