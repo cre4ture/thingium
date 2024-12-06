@@ -342,9 +342,9 @@ func (f *virtualFolderSyncthingService) Serve(ctx context.Context) error {
 
 		case <-f.pullScheduled:
 			f.requestDoInSync(func() error {
-				l.Debugf("Serve: f.PullAllMissing(false) - START")
-				err := f.PullAllMissing(false)
-				l.Debugf("Serve: f.PullAllMissing(false) - DONE. Err: %v", err)
+				l.Debugf("Serve: f.pullAllMissing(false) - START")
+				err := f.pullAllMissing(false)
+				l.Debugf("Serve: f.pullAllMissing(false) - DONE. Err: %v", err)
 				return err
 			})
 			continue
@@ -372,17 +372,17 @@ func (f *virtualFolderSyncthingService) BringToFront(filename string) {
 
 func (vf *virtualFolderSyncthingService) Scan(subs []string) error {
 	logger.DefaultLogger.Infof("Scan - pull_x")
-	return vf.Pull_x_doInSync(vf.ctx, PullOptions{true, false})
+	return vf.pull_x_doInSync(vf.ctx, PullOptions{true, false})
 }
 
-func (vf *virtualFolderSyncthingService) PullAllMissing(onlyCheck bool) error {
-	logger.DefaultLogger.Infof("PullAllMissing - pull_x - %v", onlyCheck)
-	return vf.Pull_x_doInSync(vf.ctx, PullOptions{false, true})
+func (vf *virtualFolderSyncthingService) pullAllMissing(onlyCheck bool) error {
+	logger.DefaultLogger.Infof("pullAllMissing - pull_x - %v", onlyCheck)
+	return vf.pull_x_doInSync(vf.ctx, PullOptions{false, true})
 }
 
 func (vf *virtualFolderSyncthingService) PullAll(onlyCheck bool) error {
 	logger.DefaultLogger.Infof("PullAll - pull_x")
-	return vf.Pull_x_doInSync(vf.ctx, PullOptions{false, onlyCheck})
+	return vf.pull_x_doInSync(vf.ctx, PullOptions{false, onlyCheck})
 }
 
 type PullOptions struct {
@@ -390,7 +390,7 @@ type PullOptions struct {
 	onlyCheck   bool
 }
 
-func (f *virtualFolderSyncthingService) Pull_x_doInSync(ctx context.Context, opts PullOptions) error {
+func (f *virtualFolderSyncthingService) pull_x_doInSync(ctx context.Context, opts PullOptions) error {
 	return f.doInSync(func() error {
 		return f.Pull_x(ctx, opts)
 	})
