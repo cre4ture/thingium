@@ -255,8 +255,8 @@ func (f *VirtualFolderPuller) PullOne() {
 	})
 }
 
-func (f *virtualFolderSyncthingService) Serve_backgroundDownloadTask() {
-	defer l.Infof("vf.Serve_backgroundDownloadTask exits")
+func (f *virtualFolderSyncthingService) serve_backgroundDownloadTask() {
+	defer l.Infof("vf.serve_backgroundDownloadTask exits")
 	for {
 		select {
 		case <-f.backgroundDownloadPending:
@@ -272,6 +272,7 @@ func (f *virtualFolderSyncthingService) Serve_backgroundDownloadTask() {
 	}
 }
 
+// model.service API
 func (f *virtualFolderSyncthingService) Serve(ctx context.Context) error {
 	f.model.foldersRunning.Add(1)
 	defer f.model.foldersRunning.Add(-1)
@@ -305,7 +306,7 @@ func (f *virtualFolderSyncthingService) Serve(ctx context.Context) error {
 	f.backgroundDownloadCtx = backgroundDownloadCtx
 	backgroundDownloadTasks := 40
 	for i := 0; i < backgroundDownloadTasks; i++ {
-		go f.Serve_backgroundDownloadTask()
+		go f.serve_backgroundDownloadTask()
 	}
 	defer cancel()
 
@@ -352,9 +353,11 @@ func (f *virtualFolderSyncthingService) Serve(ctx context.Context) error {
 	}
 }
 
-func (f *virtualFolderSyncthingService) Override()                 {}
-func (f *virtualFolderSyncthingService) Revert()                   {}
-func (f *virtualFolderSyncthingService) DelayScan(d time.Duration) {}
+func (f *virtualFolderSyncthingService) Override()                 {} // model.service API
+func (f *virtualFolderSyncthingService) Revert()                   {} // model.service API
+func (f *virtualFolderSyncthingService) DelayScan(d time.Duration) {} // model.service API
+
+// model.service API
 func (f *virtualFolderSyncthingService) ScheduleScan() {
 	logger.DefaultLogger.Infof("ScheduleScan - pull_x")
 	f.requestDoInSync(func() error {
@@ -363,15 +366,20 @@ func (f *virtualFolderSyncthingService) ScheduleScan() {
 		return err
 	})
 }
+
+// model.service API
 func (f *virtualFolderSyncthingService) Jobs(page, per_page int) ([]string, []string, int) {
 	return f.backgroundDownloadQueue.Jobs(page, per_page)
 }
+
+// model.service API
 func (f *virtualFolderSyncthingService) BringToFront(filename string) {
 	f.backgroundDownloadQueue.BringToFront(filename)
 }
 
+// model.service API
 func (vf *virtualFolderSyncthingService) Scan(subs []string) error {
-	logger.DefaultLogger.Infof("Scan - pull_x")
+	logger.DefaultLogger.Infof("Scan(%+v) - pull_x", subs)
 	return vf.pull_x_doInSync(vf.ctx, PullOptions{true, false})
 }
 
