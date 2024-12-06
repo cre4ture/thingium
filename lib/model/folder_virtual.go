@@ -211,10 +211,10 @@ func NewVirtualFolderPuller(f *virtualFolderSyncthingService, job string) {
 	f.model.progressEmitter.Register(instance)
 	defer f.model.progressEmitter.Deregister(instance)
 
-	instance.PullOne()
+	instance.doPull()
 }
 
-func (f *VirtualFolderPuller) PullOne() {
+func (f *VirtualFolderPuller) doPull() {
 
 	all_ok := true
 	for _, bi := range f.file.Blocks {
