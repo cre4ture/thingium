@@ -380,11 +380,6 @@ func (vf *virtualFolderSyncthingService) pullAllMissing(onlyCheck bool) error {
 	return vf.pull_x_doInSync(vf.ctx, PullOptions{false, true})
 }
 
-func (vf *virtualFolderSyncthingService) PullAll(onlyCheck bool) error {
-	logger.DefaultLogger.Infof("PullAll - pull_x")
-	return vf.pull_x_doInSync(vf.ctx, PullOptions{false, onlyCheck})
-}
-
 type PullOptions struct {
 	onlyMissing bool
 	onlyCheck   bool
