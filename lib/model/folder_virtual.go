@@ -338,6 +338,7 @@ func (f *virtualFolderSyncthingService) Serve(ctx context.Context) error {
 			l.Debugln(f, "Running something due to request")
 			err := req.fn()
 			req.err <- err
+			continue
 
 		case <-f.pullScheduled:
 			f.requestDoInSync(func() error {
