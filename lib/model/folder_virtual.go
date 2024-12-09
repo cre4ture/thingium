@@ -266,7 +266,7 @@ func (f *virtualFolderSyncthingService) DelayScan(d time.Duration) {} // model.s
 func (f *virtualFolderSyncthingService) ScheduleScan() {
 	logger.DefaultLogger.Infof("ScheduleScan - pull_x")
 	f.doInSync(func() error {
-		err := f.Pull_x(f.ctx, PullOptions{false, false})
+		err := f.Pull_x(f.ctx, PullOptions{false, true})
 		logger.DefaultLogger.Infof("ScheduleScan - pull_x - DONE. Err: %v", err)
 		return err
 	})
@@ -299,7 +299,9 @@ type PullOptions struct {
 }
 
 func (f *virtualFolderSyncthingService) pull_x_doInSync(ctx context.Context, opts PullOptions) error {
+	logger.DefaultLogger.Infof("request pull_x_doInSync - %+v", opts)
 	return f.doInSync(func() error {
+		logger.DefaultLogger.Infof("execute pull_x_doInSync - %+v", opts)
 		return f.Pull_x(ctx, opts)
 	})
 }
