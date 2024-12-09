@@ -247,6 +247,7 @@ func (f *virtualFolderSyncthingService) Serve(ctx context.Context) error {
 			continue
 
 		case <-f.pullScheduled:
+			logger.DefaultLogger.Infof("virtualFolderServe: case <-f.pullScheduled")
 			f.doInSync(func() error {
 				l.Debugf("Serve: f.pullAllMissing(false) - START")
 				err := f.pullAllMissing(false)
