@@ -24,6 +24,7 @@ import (
 	"github.com/syncthing/syncthing/lib/fs"
 	"github.com/syncthing/syncthing/lib/ignore"
 	"github.com/syncthing/syncthing/lib/locations"
+	"github.com/syncthing/syncthing/lib/logger"
 	"github.com/syncthing/syncthing/lib/osutil"
 	"github.com/syncthing/syncthing/lib/protocol"
 	"github.com/syncthing/syncthing/lib/scanner"
@@ -373,6 +374,7 @@ func (f *folder) ignoresUpdated() {
 }
 
 func (f *folderBase) SchedulePull() {
+	logger.DefaultLogger.Infof("folderBase SchedulePull - %v", f.ID)
 	select {
 	case f.pullScheduled <- struct{}{}:
 	default:
