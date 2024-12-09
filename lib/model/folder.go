@@ -394,7 +394,7 @@ func (f *folder) Scan(subdirs []string) error {
 
 // doInSync allows to run functions synchronously in folder.serve from exported,
 // asynchronously called methods.
-func (f *folderBase) requestDoInSync(fn func() error) syncRequest {
+func (f *folderBase) newRequestDoInSync(fn func() error) syncRequest {
 	req := syncRequest{
 		fn:  fn,
 		err: make(chan error, 1),
@@ -405,7 +405,7 @@ func (f *folderBase) requestDoInSync(fn func() error) syncRequest {
 // doInSync allows to run functions synchronously in folder.serve from exported,
 // asynchronously called methods.
 func (f *folderBase) doInSync(fn func() error) error {
-	req := f.requestDoInSync(fn)
+	req := f.newRequestDoInSync(fn)
 
 	select {
 	case f.doInSyncChan <- req:

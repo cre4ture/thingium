@@ -247,7 +247,7 @@ func (f *virtualFolderSyncthingService) Serve(ctx context.Context) error {
 			continue
 
 		case <-f.pullScheduled:
-			f.requestDoInSync(func() error {
+			f.doInSync(func() error {
 				l.Debugf("Serve: f.pullAllMissing(false) - START")
 				err := f.pullAllMissing(false)
 				l.Debugf("Serve: f.pullAllMissing(false) - DONE. Err: %v", err)
@@ -265,7 +265,7 @@ func (f *virtualFolderSyncthingService) DelayScan(d time.Duration) {} // model.s
 // model.service API
 func (f *virtualFolderSyncthingService) ScheduleScan() {
 	logger.DefaultLogger.Infof("ScheduleScan - pull_x")
-	f.requestDoInSync(func() error {
+	f.doInSync(func() error {
 		err := f.Pull_x(f.ctx, PullOptions{false, false})
 		logger.DefaultLogger.Infof("ScheduleScan - pull_x - DONE. Err: %v", err)
 		return err
