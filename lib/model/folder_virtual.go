@@ -224,6 +224,7 @@ func (f *virtualFolderSyncthingService) Serve(ctx context.Context) error {
 	}
 
 	for {
+		logger.DefaultLogger.Infof("virtualFolderServe: waiting for signal to process ...")
 		select {
 		case <-f.ctx.Done():
 			close(f.done)
@@ -254,6 +255,7 @@ func (f *virtualFolderSyncthingService) Serve(ctx context.Context) error {
 				l.Debugf("Serve: f.pullAllMissing(false) - DONE. Err: %v", err)
 				return err
 			})
+			logger.DefaultLogger.Infof("virtualFolderServe: case <-f.pullScheduled - 2")
 			continue
 		}
 	}
