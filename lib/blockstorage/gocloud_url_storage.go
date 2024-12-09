@@ -113,9 +113,9 @@ func (hm *GoCloudUrlStorage) putATag(hash []byte, tag string) error {
 	if err != nil {
 		return err
 	}
-	if tag != BLOCK_USE_TAG { // skip logging for use tags as this spams
-		logger.DefaultLogger.Debugf("Put tag %v (exists: %v): %v", tag, existsAlready, hashDeviceTagKey)
-	}
+	//if tag != BLOCK_USE_TAG { // skip logging for use tags as this spams
+	//	logger.DefaultLogger.Debugf("Put tag %v (exists: %v): %v", tag, existsAlready, hashDeviceTagKey)
+	//}
 	if existsAlready {
 		return nil
 	}
@@ -124,7 +124,7 @@ func (hm *GoCloudUrlStorage) putATag(hash []byte, tag string) error {
 
 func (hm *GoCloudUrlStorage) removeATag(hash []byte, tag string) error {
 	reservationKey := getBlockStringKey(hash) + "." + tag + "." + hm.myDeviceId
-	logger.DefaultLogger.Debugf("removing tag %v: %v", tag, reservationKey)
+	// logger.DefaultLogger.Debugf("removing tag %v: %v", tag, reservationKey)
 	return hm.bucket.Delete(hm.ctx, reservationKey)
 }
 
@@ -220,7 +220,8 @@ func (hm *GoCloudUrlStorage) GetBlockHashesCache(
 
 	blockCountHint := strconv.Itoa(len(hashSet))
 	hm.SetMeta("BlockCountHint", []byte(blockCountHint))
-	logger.DefaultLogger.Debugf("SetMeta(BlockCountHint): %v", blockCountHint)
+	speedElementsPerSecond := float64(len(hashSet)) / time.Since(startTime).Seconds()
+	logger.DefaultLogger.Debugf("SetMeta(BlockCountHint): %v, speed(block/s): %v", blockCountHint, speedElementsPerSecond)
 	return hashSet
 }
 
@@ -480,7 +481,7 @@ func (hm *GoCloudUrlStorage) IterateBlocksInternal(
 			return context.Canceled
 		}
 
-		logger.DefaultLogger.Infof("prefix %v - loading page #%v ... ", prefix, i)
+		// logger.DefaultLogger.Infof("prefix %v - loading page #%v ... ", prefix, i)
 		i += 1
 		page, nextPageToken, err := hm.bucket.ListPage(hm.ctx, pageToken, perPageCount, opts)
 		if err != nil {
