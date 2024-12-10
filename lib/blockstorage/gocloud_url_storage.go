@@ -107,12 +107,16 @@ func (hm *GoCloudUrlStorage) getATag(hash []byte, tag string) string {
 	return hashKey + "." + tag + "." + hm.myDeviceId
 }
 
-func (hm *GoCloudUrlStorage) putATag(hash []byte, tag string) error {
+func (hm *GoCloudUrlStorage) putATag(hash []byte, tag string, updateTime bool) error {
 	hashDeviceTagKey := hm.getATag(hash, tag)
 	// force existence of stag with our ID
-	existsAlready, err := hm.bucket.Exists(hm.ctx, hashDeviceTagKey)
-	if err != nil {
-		return err
+	existsAlready := false
+	err := error(nil)
+	if !updateTime {
+		existsAlready, err = hm.bucket.Exists(hm.ctx, hashDeviceTagKey)
+		if err != nil {
+			return err
+		}
 	}
 	//if tag != BLOCK_USE_TAG { // skip logging for use tags as this spams
 	//	logger.DefaultLogger.Debugf("Put tag %v (exists: %v): %v", tag, existsAlready, hashDeviceTagKey)
@@ -131,7 +135,7 @@ func (hm *GoCloudUrlStorage) removeATag(hash []byte, tag string) error {
 
 // AnnounceDelete implements HashBlockStorageI.
 func (hm *GoCloudUrlStorage) AnnounceDelete(hash []byte) error {
-	return hm.putATag(hash, BLOCK_DELETE_TAG)
+	return hm.putATag(hash, BLOCK_DELETE_TAG, true)
 }
 
 // DeAnnounceDelete implements HashBlockStorageI.
@@ -262,7 +266,7 @@ func (hm *GoCloudUrlStorage) reserveAndCheckExistence(hash []byte) (ok bool, ret
 
 	hashKey := getBlockStringKey(hash)
 	// force existence of use-tag with our ID
-	err := hm.putATag(hash, BLOCK_USE_TAG)
+	err := hm.putATag(hash, BLOCK_USE_TAG, false)
 	if err != nil {
 		return false, false
 	}
@@ -333,7 +337,7 @@ func (hm *GoCloudUrlStorage) ReserveAndGet(hash []byte, downloadData bool) (data
 
 func (hm *GoCloudUrlStorage) ReserveAndSet(hash []byte, data []byte) {
 	// force existence of use-tag with our ID
-	err := hm.putATag(hash, BLOCK_USE_TAG)
+	err := hm.putATag(hash, BLOCK_USE_TAG, false)
 	if err != nil {
 		panic("writing to block storage failed! Put reservation.")
 	}
