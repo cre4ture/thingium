@@ -23,7 +23,7 @@ type PendingDelete struct {
 	hash []byte
 }
 
-const MAX_PENDING_DELETES = 30        // this needs to be limited to keep timing constrains of pending deletes
+const MAX_PENDING_DELETES = 10        // this needs to be limited to keep timing constrains of pending deletes
 const TIME_CONSTANT = time.Minute / 3 // grace period + deletion window + another grace period
 
 func NewAsyncCheckedDeleteService(ctx context.Context, hbs HashBlockStorageI) *AsyncCheckedDeleteService {
@@ -112,6 +112,7 @@ func (ds *AsyncCheckedDeleteService) servePendingList() {
 			logger.DefaultLogger.Infof("AsyncCheckedDeleteService servePendingList A")
 			// abort pending operations:
 			for currentJob := range ds.pendingDeletes {
+				logger.DefaultLogger.Infof("AsyncCheckedDeleteService servePendingList A1")
 				// clear all pending delete markers immediately
 				ds.hbs.DeAnnounceDelete(currentJob.hash)
 			}
