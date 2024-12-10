@@ -67,6 +67,7 @@ func (ds *AsyncCheckedDeleteService) RequestCheckedDelete(hash []byte) {
 }
 
 func (ds *AsyncCheckedDeleteService) serveTodoList() {
+	defer close(ds.pendingDeletes)
 	for {
 		select {
 		case <-ds.ctx.Done():
