@@ -4,8 +4,6 @@ import (
 	"context"
 	"sync"
 	"time"
-
-	"github.com/syncthing/syncthing/lib/logger"
 )
 
 type AsyncCheckedDeleteService struct {
@@ -39,13 +37,11 @@ func NewAsyncCheckedDeleteService(ctx context.Context, hbs HashBlockStorageI) *A
 
 	instance.serviceDone.Add(1)
 	go func() {
-		defer logger.DefaultLogger.Infof("AsyncCheckedDeleteService serveTodoList DONE")
 		defer instance.serviceDone.Done()
 		instance.serveTodoList()
 	}()
 	instance.serviceDone.Add(1)
 	go func() {
-		defer logger.DefaultLogger.Infof("AsyncCheckedDeleteService servePendingList DONE")
 		defer instance.serviceDone.Done()
 		instance.servePendingList()
 	}()
@@ -54,11 +50,8 @@ func NewAsyncCheckedDeleteService(ctx context.Context, hbs HashBlockStorageI) *A
 }
 
 func (ds *AsyncCheckedDeleteService) Close() error {
-	logger.DefaultLogger.Infof("AsyncCheckedDeleteService Close A")
 	ds.cancel()
-	logger.DefaultLogger.Infof("AsyncCheckedDeleteService Close B")
 	ds.serviceDone.Wait()
-	logger.DefaultLogger.Infof("AsyncCheckedDeleteService Close C")
 	return nil
 }
 
@@ -110,29 +103,21 @@ func (ds *AsyncCheckedDeleteService) servePendingList() {
 	for {
 		select {
 		case <-ds.ctx.Done():
-			logger.DefaultLogger.Infof("AsyncCheckedDeleteService servePendingList A")
 			// abort pending operations:
 			for currentJob := range ds.pendingDeletes {
-				logger.DefaultLogger.Infof("AsyncCheckedDeleteService servePendingList A1")
 				// clear all pending delete markers immediately
 				ds.hbs.DeAnnounceDelete(currentJob.hash)
 			}
-			logger.DefaultLogger.Infof("AsyncCheckedDeleteService servePendingList B")
 			return
 		case currentJob := <-ds.pendingDeletes:
 			func() {
 				defer ds.hbs.DeAnnounceDelete(currentJob.hash)
 
 				timeTillDue := time.Until(currentJob.time)
-				logger.DefaultLogger.Infof("AsyncCheckedDeleteService servePendingList waiting...")
-
 				err := abortableTimeSleep(ds.ctx, timeTillDue)
 				if err != nil {
-					logger.DefaultLogger.Infof("AsyncCheckedDeleteService servePendingList C")
 					return
 				}
-
-				logger.DefaultLogger.Infof("AsyncCheckedDeleteService servePendingList continue")
 
 				// check again, abort if state changed, delete when state same and we are still in time
 				currentState := ds.hbs.GetBlockHashState(currentJob.hash)
