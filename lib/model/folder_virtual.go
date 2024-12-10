@@ -290,7 +290,7 @@ func (vf *virtualFolderSyncthingService) Scan(subs []string) error {
 
 func (vf *virtualFolderSyncthingService) pullAllMissing(onlyCheck bool) error {
 	logger.DefaultLogger.Infof("pullAllMissing - pull_x - %v", onlyCheck)
-	return vf.pull_x_doInSync(vf.ctx, PullOptions{false, true})
+	return vf.pull_x_doInSync(vf.ctx, PullOptions{true, onlyCheck})
 }
 
 type PullOptions struct {
