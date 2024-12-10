@@ -43,6 +43,7 @@ const kqueueItemCountThreshold = 10000
 type folderBase struct {
 	stateTracker
 	config.FolderConfiguration
+	*stats.FolderStatisticsReference
 
 	evLogger events.Logger
 	model    *model
@@ -62,15 +63,16 @@ func newFolderBase(
 	fset *db.FileSet,
 ) *folderBase {
 	return &folderBase{
-		stateTracker:        newStateTracker(cfg.ID, evLogger),
-		FolderConfiguration: cfg,
-		evLogger:            evLogger,
-		model:               model,
-		fset:                fset,
-		ctx:                 nil, // needs to be set at start of "serve"
-		done:                make(chan struct{}),
-		doInSyncChan:        make(chan syncRequest),
-		pullScheduled:       make(chan struct{}, 1), // This needs to be 1-buffered so that we queue a pull if we're busy when it comes.
+		stateTracker:              newStateTracker(cfg.ID, evLogger),
+		FolderConfiguration:       cfg,
+		FolderStatisticsReference: stats.NewFolderStatisticsReference(model.db, cfg.ID),
+		evLogger:                  evLogger,
+		model:                     model,
+		fset:                      fset,
+		ctx:                       nil, // needs to be set at start of "serve"
+		done:                      make(chan struct{}),
+		doInSyncChan:              make(chan syncRequest),
+		pullScheduled:             make(chan struct{}, 1), // This needs to be 1-buffered so that we queue a pull if we're busy when it comes.
 	}
 }
 
@@ -157,7 +159,6 @@ type NativeFilesystemFolderService interface {
 
 type folder struct {
 	*folderBase
-	*stats.FolderStatisticsReference
 	ioLimiter *semaphore.Semaphore
 
 	localFlags uint32
@@ -213,9 +214,8 @@ type puller interface {
 
 func newFolder(model *model, fset *db.FileSet, ignores *ignore.Matcher, cfg config.FolderConfiguration, evLogger events.Logger, ioLimiter *semaphore.Semaphore, ver versioner.Versioner) folder {
 	f := folder{
-		folderBase:                newFolderBase(cfg, evLogger, model, fset),
-		FolderStatisticsReference: stats.NewFolderStatisticsReference(model.db, cfg.ID),
-		ioLimiter:                 ioLimiter,
+		folderBase: newFolderBase(cfg, evLogger, model, fset),
+		ioLimiter:  ioLimiter,
 
 		shortID:       model.shortID,
 		ignores:       ignores,

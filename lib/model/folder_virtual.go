@@ -26,7 +26,6 @@ import (
 	"github.com/syncthing/syncthing/lib/logger"
 	"github.com/syncthing/syncthing/lib/protocol"
 	"github.com/syncthing/syncthing/lib/semaphore"
-	"github.com/syncthing/syncthing/lib/stats"
 	"github.com/syncthing/syncthing/lib/sync"
 	"github.com/syncthing/syncthing/lib/utils"
 	"github.com/syncthing/syncthing/lib/versioner"
@@ -456,6 +455,7 @@ func (vf *virtualFolderSyncthingService) Pull_x(ctx context.Context, opts PullOp
 
 	if checkMap != nil {
 		vf.cleanupUnneededReservations(checkMap)
+		vf.ScanCompleted()
 	}
 
 	return nil
@@ -528,6 +528,7 @@ func (vf *virtualFolderSyncthingService) pullOne(
 		fi, ok := snap.GetGlobal(f.FileName())
 		if ok {
 			vf.fset.UpdateOne(protocol.LocalDeviceID, &fi)
+			vf.ReceivedFile(fi.Name, fi.IsDeleted())
 		}
 		fn2()
 	} else {
@@ -558,6 +559,7 @@ func (vf *virtualFolderSyncthingService) pullOne(
 					if all_ok {
 						//logger.DefaultLogger.Debugf("synchronous check block info (%v blocks, %v size) SUCCEEDED. ALL OK, file: %s", fi.Blocks, fi.Size, fi.Name)
 						vf.fset.UpdateOne(protocol.LocalDeviceID, &fi)
+						vf.ReceivedFile(fi.Name, fi.IsDeleted())
 					} else {
 						//logger.DefaultLogger.Debugf("synchronous check block info result: incomplete, file: %s", fi.Name)
 					}
@@ -622,9 +624,6 @@ func (vf *virtualFolderSyncthingService) scanOne(snap *db.Snapshot, f protocol.F
 func (f *virtualFolderSyncthingService) Errors() []FileError             { return []FileError{} }
 func (f *virtualFolderSyncthingService) WatchError() error               { return nil }
 func (f *virtualFolderSyncthingService) ScheduleForceRescan(path string) {}
-func (f *virtualFolderSyncthingService) GetStatistics() (stats.FolderStatistics, error) {
-	return stats.FolderStatistics{}, nil
-}
 
 var _ = (virtualFolderServiceI)((*virtualFolderSyncthingService)(nil))
 
