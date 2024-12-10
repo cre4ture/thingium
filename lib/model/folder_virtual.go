@@ -557,7 +557,7 @@ func (vf *virtualFolderSyncthingService) pullOne(
 					}
 
 					if all_ok {
-						//logger.DefaultLogger.Debugf("synchronous check block info (%v blocks, %v size) SUCCEEDED. ALL OK, file: %s", fi.Blocks, fi.Size, fi.Name)
+						logger.DefaultLogger.Debugf("synchronous check block info (%v blocks, %v size) SUCCEEDED. ALL OK, file: %s", fi.Blocks, fi.Size, fi.Name)
 						vf.fset.UpdateOne(protocol.LocalDeviceID, &fi)
 						vf.ReceivedFile(fi.Name, fi.IsDeleted())
 					} else {
