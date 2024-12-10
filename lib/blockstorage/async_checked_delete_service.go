@@ -4,6 +4,8 @@ import (
 	"context"
 	"sync"
 	"time"
+
+	"github.com/syncthing/syncthing/lib/logger"
 )
 
 type AsyncCheckedDeleteService struct {
@@ -44,8 +46,11 @@ func NewAsyncCheckedDeleteService(ctx context.Context, hbs HashBlockStorageI) *A
 }
 
 func (ds *AsyncCheckedDeleteService) Close() error {
+	logger.DefaultLogger.Infof("AsyncCheckedDeleteService Close A")
 	ds.cancel()
+	logger.DefaultLogger.Infof("AsyncCheckedDeleteService Close B")
 	ds.serviceDone.Wait()
+	logger.DefaultLogger.Infof("AsyncCheckedDeleteService Close C")
 	return nil
 }
 
