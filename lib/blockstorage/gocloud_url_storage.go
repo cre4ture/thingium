@@ -339,7 +339,7 @@ func (hm *GoCloudUrlStorage) ReserveAndSet(hash []byte, data []byte) {
 	// force existence of use-tag with our ID
 	err := hm.putATag(hash, BLOCK_USE_TAG, false)
 	if err != nil {
-		panic("writing to block storage failed! Put reservation.")
+		log.Panicf("writing to block storage failed! Put reservation. %+v", err)
 	}
 
 	//existsAlready, err := hm.bucket.Exists(hm.ctx, stringKey)
@@ -354,8 +354,7 @@ func (hm *GoCloudUrlStorage) ReserveAndSet(hash []byte, data []byte) {
 	hashKey := getBlockStringKey(hash)
 	err = hm.bucket.WriteAll(hm.ctx, hashKey, data, nil)
 	if err != nil {
-		log.Fatal(err)
-		panic("writing to block storage failed! Write.")
+		log.Panicf("writing to block storage failed! Write. %+v", err)
 	}
 }
 
