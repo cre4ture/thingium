@@ -160,7 +160,6 @@ func (f *virtualFolderSyncthingService) RequestBackgroundDownload(filename strin
 }
 
 func (f *virtualFolderSyncthingService) serve_backgroundDownloadTask() {
-	defer l.Infof("vf.serve_backgroundDownloadTask exits")
 	for {
 		select {
 		case <-f.backgroundDownloadPending:
