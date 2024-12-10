@@ -385,40 +385,27 @@ func (vf *virtualFolderSyncthingService) Pull_x(ctx context.Context, opts PullOp
 	defer asyncNotifier.Stop()
 	defer logger.DefaultLogger.Infof("pull_x END b")
 
-	count := 60
-	inProgress := make(chan int, count)
-	for i := 0; i < count; i++ {
-		inProgress <- 100 + i
-	}
-	defer func() {
-		// wait for async operations to complete
-		logger.DefaultLogger.Infof("PULL_X: wait for async operations to complete ...")
-		for i := 0; i < count; i++ {
-			<-inProgress
-			// logger.DefaultLogger.Infof("PULL_X: wait for async operations to complete ... %v/%v", (i + 1), count)
-		}
-		logger.DefaultLogger.Infof("PULL_X: wait for async operations to complete - DONE")
-	}()
+	leases := utils.NewParallelLeases(60, 1)
+	defer leases.WaitAllDone()
 
 	isAbortOrErr := false
 	pullF := func(f protocol.FileIntf) bool /* true to continue */ {
 		myFileSize := f.FileSize()
-		leaseNR := <-inProgress
-		go func() {
+		leases.AsyncRunOneWithDoneFn(func(doneFn func()) {
 			doScan := checkMap != nil
 			actionName := "Pull"
 			if doScan {
 				actionName = "Scan"
 			}
 			if !doScan {
-				logger.DefaultLogger.Infof("%v ONE with leaseNR: %v", actionName, leaseNR)
+				logger.DefaultLogger.Infof("%v ONE - START, size: %v", actionName, myFileSize)
 			}
 			progressFn := func(deltaBytes int64, done bool) {
 				asyncNotifier.Progress.Update(deltaBytes)
 				if done {
-					inProgress <- leaseNR
+					doneFn()
 					if !doScan {
-						logger.DefaultLogger.Infof("%v ONE with leaseNR: %v - DONE, size: %v", actionName, leaseNR, myFileSize)
+						logger.DefaultLogger.Infof("%v ONE - DONE, size: %v", actionName, myFileSize)
 					}
 				}
 			}
@@ -427,7 +414,7 @@ func (vf *virtualFolderSyncthingService) Pull_x(ctx context.Context, opts PullOp
 			} else {
 				vf.pullOne(snap, f, false, progressFn)
 			}
-		}()
+		})
 
 		select {
 		case <-vf.ctx.Done():

@@ -15,6 +15,7 @@ import (
 
 	"github.com/syncthing/syncthing/lib/hashutil"
 	"github.com/syncthing/syncthing/lib/logger"
+	"github.com/syncthing/syncthing/lib/utils"
 	"gocloud.dev/blob"
 
 	_ "gocloud.dev/blob/azureblob"
@@ -387,15 +388,6 @@ type HashStateAndError struct {
 	err error
 }
 
-func IsDone(ctx context.Context) bool {
-	select {
-	case <-ctx.Done():
-		return true
-	default:
-		return false
-	}
-}
-
 func (hm *GoCloudUrlStorage) IterateBlocks(ctx context.Context, fn func(d HashAndState)) error {
 
 	numberOfParallelRequests := 2
@@ -415,7 +407,7 @@ func (hm *GoCloudUrlStorage) IterateBlocks(ctx context.Context, fn func(d HashAn
 		// do iterations in chunks for better scalability.
 		for i := 0; i < 256; i++ {
 
-			if IsDone(ctx) {
+			if utils.IsDone(ctx) {
 				return
 			}
 
@@ -440,14 +432,14 @@ func (hm *GoCloudUrlStorage) IterateBlocks(ctx context.Context, fn func(d HashAn
 
 	for channel := range chanOfChannels {
 
-		if IsDone(ctx) {
+		if utils.IsDone(ctx) {
 			return nil
 		}
 
 		// logger.DefaultLogger.Infof("processing channel: %+v", channel)
 		for d := range channel {
 
-			if IsDone(ctx) {
+			if utils.IsDone(ctx) {
 				return nil
 			}
 
@@ -477,7 +469,7 @@ func (hm *GoCloudUrlStorage) IterateBlocksInternal(
 	pageToken := blob.FirstPageToken
 	i := 0
 	for {
-		if IsDone(ctx) {
+		if utils.IsDone(ctx) {
 			return context.Canceled
 		}
 
@@ -507,7 +499,7 @@ func (hm *GoCloudUrlStorage) IterateBlocksInternal(
 				}
 			}
 
-			if IsDone(ctx) {
+			if utils.IsDone(ctx) {
 				return context.Canceled
 			}
 		}
