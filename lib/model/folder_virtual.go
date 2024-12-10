@@ -287,7 +287,7 @@ func (f *virtualFolderSyncthingService) BringToFront(filename string) {
 // model.service API
 func (vf *virtualFolderSyncthingService) Scan(subs []string) error {
 	logger.DefaultLogger.Infof("Scan(%+v) - pull_x", subs)
-	return vf.pull_x_doInSync(vf.ctx, PullOptions{true, false})
+	return vf.pull_x_doInSync(vf.ctx, PullOptions{false, true})
 }
 
 func (vf *virtualFolderSyncthingService) pullAllMissing(onlyCheck bool) error {
