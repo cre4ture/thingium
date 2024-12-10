@@ -71,7 +71,7 @@ func (f *VirtualFolderFilePuller) doPull() {
 	all_ok := atomic.Bool{}
 	all_ok.Store(true)
 	func() {
-		leases := utils.NewParallelLeases(30, 2)
+		leases := utils.NewParallelLeases(10, 2)
 		defer leases.WaitAllDone()
 
 		for _, bi := range f.file.Blocks {
