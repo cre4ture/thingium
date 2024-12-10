@@ -38,9 +38,17 @@ func NewAsyncCheckedDeleteService(ctx context.Context, hbs HashBlockStorageI) *A
 	}
 
 	instance.serviceDone.Add(1)
-	go instance.serveTodoList()
+	go func() {
+		defer logger.DefaultLogger.Infof("AsyncCheckedDeleteService serveTodoList DONE")
+		defer instance.serviceDone.Done()
+		instance.serveTodoList()
+	}()
 	instance.serviceDone.Add(1)
-	go instance.servePendingList()
+	go func() {
+		defer logger.DefaultLogger.Infof("AsyncCheckedDeleteService servePendingList DONE")
+		defer instance.serviceDone.Done()
+		instance.servePendingList()
+	}()
 
 	return instance
 }
@@ -59,8 +67,6 @@ func (ds *AsyncCheckedDeleteService) RequestCheckedDelete(hash []byte) {
 }
 
 func (ds *AsyncCheckedDeleteService) serveTodoList() {
-	defer ds.serviceDone.Done()
-
 	for {
 		select {
 		case <-ds.ctx.Done():
@@ -75,9 +81,15 @@ func (ds *AsyncCheckedDeleteService) serveTodoList() {
 			}
 
 			ds.hbs.AnnounceDelete(currentJob)
-			ds.pendingDeletes <- PendingDelete{
+			pendingDeleteJob := PendingDelete{
 				time: time.Now().Add(TIME_CONSTANT),
 				hash: currentJob,
+			}
+			select {
+			case <-ds.ctx.Done():
+				ds.hbs.DeAnnounceDelete(currentJob)
+				return
+			case ds.pendingDeletes <- pendingDeleteJob:
 			}
 			// logger.DefaultLogger.Infof("announced delete for: %v", hashutil.HashToStringMapKey(currentJob))
 		}
@@ -94,8 +106,6 @@ func abortableTimeSleep(ctx context.Context, duration time.Duration) error {
 }
 
 func (ds *AsyncCheckedDeleteService) servePendingList() {
-	defer ds.serviceDone.Done()
-
 	for {
 		select {
 		case <-ds.ctx.Done():
