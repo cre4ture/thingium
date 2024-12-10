@@ -33,7 +33,7 @@ var (
 
 const (
 	DefaultMarkerName          = ".stfolder"
-	EncryptionTokenName        = "syncthing-encryption_password_token"
+	EncryptionTokenName        = "syncthing-encryption-password-token"
 	maxConcurrentWritesDefault = 2
 	maxConcurrentWritesLimit   = 64
 )
