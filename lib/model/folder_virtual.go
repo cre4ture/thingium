@@ -144,15 +144,13 @@ func newVirtualFolder(
 	return f
 }
 
-func (f *virtualFolderSyncthingService) RequestBackgroundDownload(filename string, size int64, modified time.Time, fn func()) {
+func (f *virtualFolderSyncthingService) RequestBackgroundDownload(filename string, size int64, modified time.Time, fn jobQueueProgressFn) {
 	wasNew := f.backgroundDownloadQueue.PushIfNew(filename, size, modified, fn)
 	if !wasNew {
-		fn()
+		fn(size, true)
 		return
 	}
 
-	f.backgroundDownloadQueue.SortAccordingToConfig(f.Order)
-	//logger.DefaultLogger.Warnf("f.backgroundDownloadQueue.SortAccordingToConfig(f.Order[%v])", f.Order)
 	select {
 	case f.backgroundDownloadPending <- struct{}{}:
 	default:
@@ -415,17 +413,19 @@ func (vf *virtualFolderSyncthingService) Pull_x(ctx context.Context, opts PullOp
 			if !doScan {
 				logger.DefaultLogger.Infof("%v ONE with leaseNR: %v", actionName, leaseNR)
 			}
-			finishFn := func() {
-				asyncNotifier.Progress.Update(myFileSize)
-				inProgress <- leaseNR
-				if !doScan {
-					logger.DefaultLogger.Infof("%v ONE with leaseNR: %v - DONE, size: %v", actionName, leaseNR, myFileSize)
+			progressFn := func(deltaBytes int64, done bool) {
+				asyncNotifier.Progress.Update(deltaBytes)
+				if done {
+					inProgress <- leaseNR
+					if !doScan {
+						logger.DefaultLogger.Infof("%v ONE with leaseNR: %v - DONE, size: %v", actionName, leaseNR, myFileSize)
+					}
 				}
 			}
 			if checkMap != nil {
-				vf.scanOne(snap, f, checkMap, finishFn)
+				vf.scanOne(snap, f, checkMap, progressFn)
 			} else {
-				vf.pullOne(snap, f, false, finishFn)
+				vf.pullOne(snap, f, false, progressFn)
 			}
 		}()
 
@@ -505,7 +505,7 @@ func (vf *virtualFolderSyncthingService) cleanupUnneededReservations(checkMap bl
 }
 
 func (vf *virtualFolderSyncthingService) pullOne(
-	snap *db.Snapshot, f protocol.FileIntf, synchronous bool, fn func(),
+	snap *db.Snapshot, f protocol.FileIntf, synchronous bool, fn jobQueueProgressFn,
 ) {
 
 	vf.evLogger.Log(events.ItemStarted, map[string]string{
@@ -517,15 +517,18 @@ func (vf *virtualFolderSyncthingService) pullOne(
 
 	err := error(nil)
 
-	fn2 := func() {
-		fn()
-		vf.evLogger.Log(events.ItemFinished, map[string]interface{}{
-			"folder": vf.folderID,
-			"item":   f.FileName(),
-			"error":  events.Error(err),
-			"type":   "dir",
-			"action": "update",
-		})
+	fn2 := func(deltaBytes int64, done bool) {
+		fn(deltaBytes, done)
+
+		if done {
+			vf.evLogger.Log(events.ItemFinished, map[string]interface{}{
+				"folder": vf.folderID,
+				"item":   f.FileName(),
+				"error":  events.Error(err),
+				"type":   "dir",
+				"action": "update",
+			})
+		}
 	}
 
 	if f.IsDirectory() {
@@ -535,53 +538,20 @@ func (vf *virtualFolderSyncthingService) pullOne(
 			vf.fset.UpdateOne(protocol.LocalDeviceID, &fi)
 			vf.ReceivedFile(fi.Name, fi.IsDeleted())
 		}
-		fn2()
+		fn2(f.FileSize(), true)
 	} else {
-		if !synchronous {
-			vf.RequestBackgroundDownload(f.FileName(), f.FileSize(), f.ModTime(), fn2)
-		} else {
-			func() {
-				defer fn2()
-				fi, ok := snap.GetGlobal(f.FileName())
-				if ok {
-					all_ok := true
-					for i, bi := range fi.Blocks {
-						//logger.DefaultLogger.Debugf("synchronous NEW check(%v) block info #%v: %+v", onlyCheck, i, bi, hashutil.HashToStringMapKey(bi.Hash))
-						ok := false
-						_, ok, _ = vf.GetBlockDataFromCacheOrDownload(snap, fi, bi)
-						all_ok = all_ok && ok
-						if !ok {
-							logger.DefaultLogger.Warnf("synchronous check block info FAILED. NOT OK: #%v: %+v", i, bi, hashutil.HashToStringMapKey(bi.Hash))
-						}
-
-						select {
-						case <-vf.ctx.Done():
-							return
-						default:
-						}
-					}
-
-					if all_ok {
-						logger.DefaultLogger.Debugf("synchronous check block info (%v blocks, %v size) SUCCEEDED. ALL OK, file: %s", fi.Blocks, fi.Size, fi.Name)
-						vf.fset.UpdateOne(protocol.LocalDeviceID, &fi)
-						vf.ReceivedFile(fi.Name, fi.IsDeleted())
-					} else {
-						//logger.DefaultLogger.Debugf("synchronous check block info result: incomplete, file: %s", fi.Name)
-					}
-				}
-			}()
-		}
+		vf.RequestBackgroundDownload(f.FileName(), f.FileSize(), f.ModTime(), fn2)
 	}
 }
 
-func (vf *virtualFolderSyncthingService) scanOne(snap *db.Snapshot, f protocol.FileIntf, checkMap blockstorage.HashBlockStateMap, fn func()) {
+func (vf *virtualFolderSyncthingService) scanOne(snap *db.Snapshot, f protocol.FileIntf, checkMap blockstorage.HashBlockStateMap, fn jobQueueProgressFn) {
 
 	if f.IsDirectory() {
 		// no work to do for directories.
-		fn()
+		fn(f.FileSize(), true)
 	} else {
 		func() {
-			defer fn()
+			defer fn(0, true)
 
 			fi, ok := snap.Get(protocol.LocalDeviceID, f.FileName())
 			if !ok {
@@ -603,6 +573,8 @@ func (vf *virtualFolderSyncthingService) scanOne(snap *db.Snapshot, f protocol.F
 						f.FileName(), bi.Offset, hashutil.HashToStringMapKey(bi.Hash), inMap)
 				}
 				all_ok = all_ok && ok
+
+				fn(int64(bi.Size), false)
 
 				select {
 				case <-vf.ctx.Done():

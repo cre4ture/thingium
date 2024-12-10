@@ -22,11 +22,13 @@ type jobQueue struct {
 	mut      sync.Mutex
 }
 
+type jobQueueProgressFn func(deltaBytes int64, done bool)
+
 type jobQueueEntry struct {
-	name               string
-	size               int64
-	modified           int64
-	completionCallback func()
+	name             string
+	size             int64
+	modified         int64
+	progressCallback jobQueueProgressFn
 }
 
 func newJobQueue() *jobQueue {
@@ -35,7 +37,7 @@ func newJobQueue() *jobQueue {
 	}
 }
 
-func (q *jobQueue) PushIfNew(file string, size int64, modified time.Time, fn func()) bool {
+func (q *jobQueue) PushIfNew(file string, size int64, modified time.Time, fn jobQueueProgressFn) bool {
 	q.mut.Lock()
 	defer q.mut.Unlock()
 	for i := range q.queued {
@@ -52,7 +54,7 @@ func (q *jobQueue) Push(file string, size int64, modified time.Time) {
 	q.mut.Lock()
 	defer q.mut.Unlock()
 	// The range of UnixNano covers a range of reasonable timestamps.
-	q.queued = append(q.queued, jobQueueEntry{file, size, modified.UnixNano(), func() {}})
+	q.queued = append(q.queued, jobQueueEntry{file, size, modified.UnixNano(), func(deltaBytes int64, done bool) {}})
 }
 
 func (q *jobQueue) Pop() (string, bool) {
@@ -95,7 +97,7 @@ func (q *jobQueue) Done(file string) {
 	for i := range q.progress {
 		toCheck := &q.progress[i]
 		if toCheck.name == file {
-			toCheck.completionCallback()
+			toCheck.progressCallback(0, true)
 			copy(q.progress[i:], q.progress[i+1:])
 			q.progress = q.progress[:len(q.progress)-1]
 			return
