@@ -234,7 +234,7 @@ func (f *virtualFolderSyncthingService) Serve(ctx context.Context) error {
 		// TODO: f.Pull_x(ctx, PullOptions{false, true})
 		f.initialScanState = INITIAL_SCAN_COMPLETED
 		close(f.InitialScanDone)
-		f.Pull_x(ctx, PullOptions{true, false})
+		f.pullOrScan_x(ctx, PullOptions{true, false})
 	}
 
 	for {
@@ -254,7 +254,7 @@ func (f *virtualFolderSyncthingService) Serve(ctx context.Context) error {
 		case <-f.pullScheduled:
 			logger.DefaultLogger.Infof("virtualFolderServe: case <-f.pullScheduled")
 			l.Debugf("Serve: f.pullAllMissing(false) - START")
-			err := f.Pull_x(ctx, PullOptions{true, false})
+			err := f.pullOrScan_x(ctx, PullOptions{true, false})
 			l.Debugf("Serve: f.pullAllMissing(false) - DONE. Err: %v", err)
 			logger.DefaultLogger.Infof("virtualFolderServe: case <-f.pullScheduled - 2")
 			continue
@@ -270,7 +270,7 @@ func (f *virtualFolderSyncthingService) DelayScan(d time.Duration) {} // model.s
 func (f *virtualFolderSyncthingService) ScheduleScan() {
 	logger.DefaultLogger.Infof("ScheduleScan - pull_x")
 	f.doInSync(func() error {
-		err := f.Pull_x(f.ctx, PullOptions{false, true})
+		err := f.pullOrScan_x(f.ctx, PullOptions{false, true})
 		logger.DefaultLogger.Infof("ScheduleScan - pull_x - DONE. Err: %v", err)
 		return err
 	})
@@ -289,12 +289,7 @@ func (f *virtualFolderSyncthingService) BringToFront(filename string) {
 // model.service API
 func (vf *virtualFolderSyncthingService) Scan(subs []string) error {
 	logger.DefaultLogger.Infof("Scan(%+v) - pull_x", subs)
-	return vf.pull_x_doInSync(vf.ctx, PullOptions{false, true})
-}
-
-func (vf *virtualFolderSyncthingService) pullAllMissing(onlyCheck bool) error {
-	logger.DefaultLogger.Infof("pullAllMissing - pull_x - %v", onlyCheck)
-	return vf.pull_x_doInSync(vf.ctx, PullOptions{true, onlyCheck})
+	return vf.pullOrScan_x_doInSync(vf.ctx, PullOptions{false, true})
 }
 
 type PullOptions struct {
@@ -302,15 +297,15 @@ type PullOptions struct {
 	onlyCheck   bool
 }
 
-func (f *virtualFolderSyncthingService) pull_x_doInSync(ctx context.Context, opts PullOptions) error {
-	logger.DefaultLogger.Infof("request pull_x_doInSync - %+v", opts)
+func (f *virtualFolderSyncthingService) pullOrScan_x_doInSync(ctx context.Context, opts PullOptions) error {
+	logger.DefaultLogger.Infof("request pullOrScan_x_doInSync - %+v", opts)
 	return f.doInSync(func() error {
-		logger.DefaultLogger.Infof("execute pull_x_doInSync - %+v", opts)
-		return f.Pull_x(ctx, opts)
+		logger.DefaultLogger.Infof("execute pullOrScan_x_doInSync - %+v", opts)
+		return f.pullOrScan_x(ctx, opts)
 	})
 }
 
-func (vf *virtualFolderSyncthingService) Pull_x(ctx context.Context, opts PullOptions) error {
+func (vf *virtualFolderSyncthingService) pullOrScan_x(ctx context.Context, opts PullOptions) error {
 	defer logger.DefaultLogger.Infof("pull_x END z - opts: %+v", opts)
 	snap, err := vf.fset.Snapshot()
 	if err != nil {
