@@ -333,7 +333,7 @@ func (vf *virtualFolderSyncthingService) Pull_x(ctx context.Context, opts PullOp
 	defer logger.DefaultLogger.Infof("pull_x END a")
 
 	checkMap := blockstorage.HashBlockStateMap(nil)
-	if opts.onlyCheck && true {
+	if opts.onlyCheck {
 		func() {
 			asyncNotifier := utils.NewAsyncProgressNotifier(vf.ctx)
 			asyncNotifier.StartAsyncProgressNotification(
