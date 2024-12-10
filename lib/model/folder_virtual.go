@@ -217,7 +217,7 @@ func (f *virtualFolderSyncthingService) Serve(ctx context.Context) error {
 
 	backgroundDownloadCtx, cancel := context.WithCancel(context.Background())
 	f.backgroundDownloadCtx = backgroundDownloadCtx
-	backgroundDownloadTasks := 40
+	backgroundDownloadTasks := 5
 	backgroundDownloadTaskWaitGroup := sync.NewWaitGroup()
 	for i := 0; i < backgroundDownloadTasks; i++ {
 		backgroundDownloadTaskWaitGroup.Add(1)
