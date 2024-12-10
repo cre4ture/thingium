@@ -217,7 +217,7 @@ func (f *virtualFolderSyncthingService) Serve(ctx context.Context) error {
 
 	if f.initialScanState == INITIAL_SCAN_IDLE {
 		f.initialScanState = INITIAL_SCAN_RUNNING
-		f.Pull_x(ctx, PullOptions{false, true})
+		// TODO: f.Pull_x(ctx, PullOptions{false, true})
 		f.initialScanState = INITIAL_SCAN_COMPLETED
 		close(f.InitialScanDone)
 		f.Pull_x(ctx, PullOptions{true, false})
