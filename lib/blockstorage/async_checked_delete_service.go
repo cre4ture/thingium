@@ -21,7 +21,7 @@ type PendingDelete struct {
 	hash []byte
 }
 
-const MAX_PENDING_DELETES = 10        // this needs to be limited to keep timing constrains of pending deletes
+const MAX_PENDING_DELETES = 30        // this needs to be limited to keep timing constrains of pending deletes
 const TIME_CONSTANT = time.Minute / 3 // grace period + deletion window + another grace period
 
 func NewAsyncCheckedDeleteService(ctx context.Context, hbs HashBlockStorageI) *AsyncCheckedDeleteService {
@@ -79,6 +79,15 @@ func (ds *AsyncCheckedDeleteService) serveTodoList() {
 	}
 }
 
+func abortableTimeSleep(ctx context.Context, duration time.Duration) error {
+	select {
+	case <-ctx.Done():
+		return context.Canceled
+	case <-time.After(duration):
+		return nil
+	}
+}
+
 func (ds *AsyncCheckedDeleteService) servePendingList() {
 	defer ds.serviceDone.Done()
 
@@ -96,7 +105,10 @@ func (ds *AsyncCheckedDeleteService) servePendingList() {
 				defer ds.hbs.DeAnnounceDelete(currentJob.hash)
 
 				timeTillDue := time.Until(currentJob.time)
-				time.Sleep(timeTillDue)
+				err := abortableTimeSleep(ds.ctx, timeTillDue)
+				if err != nil {
+					return
+				}
 
 				// check again, abort if state changed, delete when state same and we are still in time
 				currentState := ds.hbs.GetBlockHashState(currentJob.hash)
