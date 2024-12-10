@@ -444,7 +444,7 @@ func (vf *virtualFolderSyncthingService) Pull_x(ctx context.Context, opts PullOp
 	}
 
 	for job, ok := jobs.Pop(); ok; job, ok = jobs.Pop() {
-		fi, ok := snap.GetGlobalTruncated(job)
+		fi, ok := snap.GetGlobalTruncated(job.name)
 		if ok {
 			good := pullF(fi)
 			if !good {

@@ -445,7 +445,8 @@ nextFile:
 		default:
 		}
 
-		fileName, ok := f.queue.Pop()
+		job, ok := f.queue.Pop()
+		fileName := job.name
 		if !ok {
 			break
 		}

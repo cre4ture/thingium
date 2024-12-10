@@ -57,19 +57,19 @@ func (q *jobQueue) Push(file string, size int64, modified time.Time) {
 	q.queued = append(q.queued, jobQueueEntry{file, size, modified.UnixNano(), func(deltaBytes int64, done bool) {}})
 }
 
-func (q *jobQueue) Pop() (string, bool) {
+func (q *jobQueue) Pop() (jobQueueEntry, bool) {
 	q.mut.Lock()
 	defer q.mut.Unlock()
 
 	if len(q.queued) == 0 {
-		return "", false
+		return jobQueueEntry{}, false
 	}
 
 	f := q.queued[0]
 	q.queued = q.queued[1:]
 	q.progress = append(q.progress, f)
 
-	return f.name, true
+	return f, true
 }
 
 func (q *jobQueue) BringToFront(filename string) {
