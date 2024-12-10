@@ -182,6 +182,14 @@ func (f *virtualFolderSyncthingService) Serve(ctx context.Context) error {
 	f.model.foldersRunning.Add(1)
 	defer f.model.foldersRunning.Add(-1)
 	defer l.Infof("vf.Serve exits")
+
+	defer func() {
+		if f.blockCache != nil {
+			f.blockCache.Close()
+			f.blockCache = nil
+		}
+	}()
+
 	defer f.deleteService.Close()
 	defer f.cancel()
 
@@ -205,6 +213,10 @@ func (f *virtualFolderSyncthingService) Serve(ctx context.Context) error {
 		}
 
 		f.mountService = mount
+		defer func() {
+			f.mountService.Close()
+			f.mountService = nil
+		}()
 	}
 
 	backgroundDownloadCtx, cancel := context.WithCancel(context.Background())
@@ -228,17 +240,7 @@ func (f *virtualFolderSyncthingService) Serve(ctx context.Context) error {
 		select {
 		case <-f.ctx.Done():
 			close(f.done)
-			l.Debugf("Serve: case <-ctx.Done():")
-			if f.mountService != nil {
-				f.mountService.Close()
-				f.mountService = nil
-			}
-			l.Debugf("Serve: case <-ctx.Done(): 1")
-			if f.blockCache != nil {
-				f.blockCache.Close()
-				f.blockCache = nil
-			}
-			l.Debugf("Serve: case <-ctx.Done(): 2")
+			l.Debugf("Serve: case <-ctx.Done()")
 			return nil
 
 		case req := <-f.doInSyncChan:
