@@ -49,7 +49,7 @@ type virtualFolderSyncthingService struct {
 	*folderBase
 	lifetimeCtxCancel context.CancelFunc // TODO: when to call this function?
 	mountPath         string
-	blockCache        blockstorage.HashBlockStorageI // block cache needs to be early accessible as it is used to read the encryption token
+	blockCache        blockstorage.HashBlockStorageI // block cache needs to be early accessible as it is used to read the encryption token. TODO: when to close it?
 	running           *runningVirtualFolderSyncthingService
 }
 
@@ -130,10 +130,6 @@ func newVirtualFolder(
 	if folderBase.Type.IsReceiveEncrypted() {
 		blockCache = blockstorage.NewEncryptedHashBlockStorage(blockCache)
 	}
-
-	defer func() {
-		blockCache.Close()
-	}()
 
 	f := &virtualFolderSyncthingService{
 		folderBase:        folderBase,
