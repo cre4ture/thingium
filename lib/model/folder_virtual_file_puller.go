@@ -23,12 +23,12 @@ type VirtualFolderFilePuller struct {
 	ctx                     context.Context
 }
 
-func createVirtualFolderFilePullerAndPull(f *virtualFolderSyncthingService, job jobQueueEntry) {
+func createVirtualFolderFilePullerAndPull(f *runningVirtualFolderSyncthingService, job jobQueueEntry) {
 	defer f.backgroundDownloadQueue.Done(job.name)
 
 	now := time.Now()
 
-	snap, err := f.fset.Snapshot()
+	snap, err := f.parent.fset.Snapshot()
 	if err != nil {
 		return
 	}
@@ -43,7 +43,7 @@ func createVirtualFolderFilePullerAndPull(f *virtualFolderSyncthingService, job 
 		sharedPullerStateBase: sharedPullerStateBase{
 			created:          now,
 			file:             fi,
-			folder:           f.folderID,
+			folder:           f.parent.folderID,
 			reused:           0,
 			copyTotal:        len(fi.Blocks),
 			copyNeeded:       len(fi.Blocks),
@@ -54,14 +54,14 @@ func createVirtualFolderFilePullerAndPull(f *virtualFolderSyncthingService, job 
 		},
 		job:                     job,
 		snap:                    snap,
-		folderService:           f,
+		folderService:           f.parent,
 		backgroundDownloadQueue: &f.backgroundDownloadQueue,
-		fset:                    f.fset,
-		ctx:                     f.ctx,
+		fset:                    f.parent.fset,
+		ctx:                     f.serviceRunningCtx,
 	}
 
-	f.model.progressEmitter.Register(instance)
-	defer f.model.progressEmitter.Deregister(instance)
+	f.parent.model.progressEmitter.Register(instance)
+	defer f.parent.model.progressEmitter.Deregister(instance)
 
 	instance.doPull()
 }

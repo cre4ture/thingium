@@ -10,7 +10,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"io"
+	"errors"
 	"io/fs"
 	"log"
 	"os"
@@ -47,16 +47,20 @@ const (
 
 type virtualFolderSyncthingService struct {
 	*folderBase
-	lifetimeCtx   context.Context
-	cancel        context.CancelFunc
-	blockCache    blockstorage.HashBlockStorageI
-	deleteService *blockstorage.AsyncCheckedDeleteService
-	mountPath     string
-	mountService  io.Closer
+	lifetimeCtxCancel context.CancelFunc // TODO: when to call this function?
+	mountPath         string
+	blockCache        blockstorage.HashBlockStorageI // block cache needs to be early accessible as it is used to read the encryption token
+	running           *runningVirtualFolderSyncthingService
+}
+
+type runningVirtualFolderSyncthingService struct {
+	parent            *virtualFolderSyncthingService
+	blockCache        blockstorage.HashBlockStorageI // convenience shortcut to parent
+	serviceRunningCtx context.Context
+	deleteService     *blockstorage.AsyncCheckedDeleteService
 
 	backgroundDownloadPending chan struct{}
 	backgroundDownloadQueue   jobQueue
-	backgroundDownloadCtx     context.Context
 
 	initialScanState InitialScanState
 	InitialScanDone  chan struct{}
@@ -119,32 +123,114 @@ func newVirtualFolder(
 		mountPath = parts[1]
 	}
 
-	lifetimeCtx, cancel := context.WithCancel(context.TODO())
+	lifetimeCtx, lifetimeCtxCancel := context.WithCancel(context.Background())
 	var blockCache blockstorage.HashBlockStorageI = blockstorage.NewGoCloudUrlStorage(
-		lifetimeCtx, blobUrl, model.id.String())
+		lifetimeCtx, blobUrl, folderBase.model.id.String())
 
 	if folderBase.Type.IsReceiveEncrypted() {
 		blockCache = blockstorage.NewEncryptedHashBlockStorage(blockCache)
 	}
 
+	defer func() {
+		blockCache.Close()
+	}()
+
 	f := &virtualFolderSyncthingService{
-		folderBase:                folderBase,
-		lifetimeCtx:               lifetimeCtx,
-		cancel:                    cancel,
-		blockCache:                blockCache,
-		deleteService:             blockstorage.NewAsyncCheckedDeleteService(lifetimeCtx, blockCache),
-		mountPath:                 mountPath,
-		mountService:              nil,
-		backgroundDownloadPending: make(chan struct{}, 1),
-		backgroundDownloadQueue:   *newJobQueue(),
-		initialScanState:          INITIAL_SCAN_IDLE,
-		InitialScanDone:           make(chan struct{}, 1),
+		folderBase:        folderBase,
+		lifetimeCtxCancel: lifetimeCtxCancel,
+		mountPath:         mountPath,
 	}
 
 	return f
 }
 
-func (f *virtualFolderSyncthingService) RequestBackgroundDownload(filename string, size int64, modified time.Time, fn jobQueueProgressFn) {
+func (vf *virtualFolderSyncthingService) runVirtualFolderServiceCoroutine(
+	ctx context.Context,
+	cochan chan error, /* simulate coroutine */
+) {
+
+	initError := func() error { // coroutine
+
+		if vf.running != nil {
+			return errors.New("internal error. virtual folder already running!")
+		}
+
+		serviceRunningCtx, lifetimeCtxCancel := context.WithCancel(ctx)
+		defer lifetimeCtxCancel()
+
+		deleteService := blockstorage.NewAsyncCheckedDeleteService(serviceRunningCtx, vf.blockCache)
+		defer deleteService.Close()
+
+		backgroundDownloadTasks := 5
+		backgroundDownloadTaskWaitGroup := sync.NewWaitGroup()
+		defer backgroundDownloadTaskWaitGroup.Wait()
+
+		rvf := &runningVirtualFolderSyncthingService{
+			parent:                    vf,
+			blockCache:                vf.blockCache,
+			serviceRunningCtx:         serviceRunningCtx,
+			deleteService:             deleteService,
+			backgroundDownloadPending: make(chan struct{}, 1),
+			backgroundDownloadQueue:   *newJobQueue(),
+			initialScanState:          INITIAL_SCAN_IDLE,
+			InitialScanDone:           make(chan struct{}, 1),
+		}
+		vf.running = rvf
+
+		for i := 0; i < backgroundDownloadTasks; i++ {
+			backgroundDownloadTaskWaitGroup.Add(1)
+			go func() {
+				defer backgroundDownloadTaskWaitGroup.Done()
+				vf.running.serve_backgroundDownloadTask()
+			}()
+		}
+
+		if vf.mountPath != "" {
+			stVF := &syncthingVirtualFolderFuseAdapter{
+				vFSS:           vf,
+				folderID:       vf.ID,
+				model:          vf.model,
+				fset:           vf.fset,
+				ino_mu:         sync.NewMutex(),
+				next_ino_nr:    1,
+				ino_mapping:    make(map[string]uint64),
+				directories_mu: sync.NewMutex(),
+				directories:    make(map[string]*TreeEntry),
+			}
+			mount, err := NewVirtualFolderMount(vf.mountPath, vf.ID, vf.Label, stVF)
+			if err != nil {
+				return err
+			}
+
+			defer func() {
+				mount.Close()
+			}()
+		}
+
+		if rvf.initialScanState == INITIAL_SCAN_IDLE {
+			rvf.initialScanState = INITIAL_SCAN_RUNNING
+			// TODO: rvf.Pull_x(ctx, PullOptions{false, true})
+			rvf.initialScanState = INITIAL_SCAN_COMPLETED
+			close(rvf.InitialScanDone)
+			rvf.pullOrScan_x(ctx, PullOptions{true, false})
+		}
+
+		// unblock caller after successful init
+		logger.DefaultLogger.Infof("Service coroutine running - unblock caller")
+		cochan <- nil
+
+		logger.DefaultLogger.Infof("Service coroutine running - wait for shutdown signal")
+		<-cochan // wait for shutdown signal
+		logger.DefaultLogger.Infof("Service coroutine running - shutdown signal received")
+
+		return nil // all prepared defers needed for shutdown will be handled properly here
+	}()
+
+	cochan <- initError // signal failed init (!= nil) or finalized shutdown (== nil)
+	logger.DefaultLogger.Infof("Service coroutine shutdown - send DONE signal")
+}
+
+func (f *runningVirtualFolderSyncthingService) RequestBackgroundDownload(filename string, size int64, modified time.Time, fn jobQueueProgressFn) {
 	wasNew := f.backgroundDownloadQueue.PushIfNew(filename, size, modified, fn)
 	if !wasNew {
 		fn(size, true)
@@ -157,11 +243,11 @@ func (f *virtualFolderSyncthingService) RequestBackgroundDownload(filename strin
 	}
 }
 
-func (f *virtualFolderSyncthingService) serve_backgroundDownloadTask() {
+func (f *runningVirtualFolderSyncthingService) serve_backgroundDownloadTask() {
 	for {
 		select {
 		case <-f.backgroundDownloadPending:
-		case <-f.backgroundDownloadCtx.Done():
+		case <-f.serviceRunningCtx.Done():
 			return
 		}
 
@@ -175,67 +261,28 @@ func (f *virtualFolderSyncthingService) serve_backgroundDownloadTask() {
 
 // model.service API
 func (f *virtualFolderSyncthingService) Serve(ctx context.Context) error {
+	f.ctx = ctx // legacy compatibility
+
 	f.model.foldersRunning.Add(1)
 	defer f.model.foldersRunning.Add(-1)
+
 	defer l.Infof("vf.Serve exits")
 
+	cochan := make(chan error)
+	f.runVirtualFolderServiceCoroutine(ctx, cochan)
+	initError := <-cochan
+	if initError != nil {
+		return initError
+	} // else the service is running
+
 	defer func() {
-		if f.blockCache != nil {
-			f.blockCache.Close()
-			f.blockCache = nil
-		}
+		// release service coroutine:
+		logger.DefaultLogger.Infof("release service coroutine ...")
+		cochan <- nil
+		logger.DefaultLogger.Infof("wait for stop of service coroutine ...")
+		_ = <-cochan
+		logger.DefaultLogger.Infof("service coroutine STOPPED")
 	}()
-
-	defer f.deleteService.Close()
-	defer f.cancel()
-
-	f.ctx = ctx
-
-	if (f.mountService == nil) && (f.mountPath != "") {
-		stVF := &syncthingVirtualFolderFuseAdapter{
-			vFSS:           f,
-			folderID:       f.ID,
-			model:          f.model,
-			fset:           f.fset,
-			ino_mu:         sync.NewMutex(),
-			next_ino_nr:    1,
-			ino_mapping:    make(map[string]uint64),
-			directories_mu: sync.NewMutex(),
-			directories:    make(map[string]*TreeEntry),
-		}
-		mount, err := NewVirtualFolderMount(f.mountPath, f.ID, f.Label, stVF)
-		if err != nil {
-			return err
-		}
-
-		f.mountService = mount
-		defer func() {
-			f.mountService.Close()
-			f.mountService = nil
-		}()
-	}
-
-	backgroundDownloadCtx, cancel := context.WithCancel(context.Background())
-	f.backgroundDownloadCtx = backgroundDownloadCtx
-	backgroundDownloadTasks := 5
-	backgroundDownloadTaskWaitGroup := sync.NewWaitGroup()
-	for i := 0; i < backgroundDownloadTasks; i++ {
-		backgroundDownloadTaskWaitGroup.Add(1)
-		go func() {
-			defer backgroundDownloadTaskWaitGroup.Done()
-			f.serve_backgroundDownloadTask()
-		}()
-	}
-	defer backgroundDownloadTaskWaitGroup.Wait()
-	defer cancel()
-
-	if f.initialScanState == INITIAL_SCAN_IDLE {
-		f.initialScanState = INITIAL_SCAN_RUNNING
-		// TODO: f.Pull_x(ctx, PullOptions{false, true})
-		f.initialScanState = INITIAL_SCAN_COMPLETED
-		close(f.InitialScanDone)
-		f.pullOrScan_x(ctx, PullOptions{true, false})
-	}
 
 	for {
 		logger.DefaultLogger.Infof("virtualFolderServe: waiting for signal to process ...")
@@ -251,10 +298,10 @@ func (f *virtualFolderSyncthingService) Serve(ctx context.Context) error {
 			req.err <- err
 			continue
 
-		case <-f.pullScheduled:
+		case <-f.pullScheduled: // TODO: replace with "doInSyncChan"
 			logger.DefaultLogger.Infof("virtualFolderServe: case <-f.pullScheduled")
 			l.Debugf("Serve: f.pullAllMissing(false) - START")
-			err := f.pullOrScan_x(ctx, PullOptions{true, false})
+			err := f.running.pullOrScan_x(ctx, PullOptions{true, false})
 			l.Debugf("Serve: f.pullAllMissing(false) - DONE. Err: %v", err)
 			logger.DefaultLogger.Infof("virtualFolderServe: case <-f.pullScheduled - 2")
 			continue
@@ -270,7 +317,10 @@ func (f *virtualFolderSyncthingService) DelayScan(d time.Duration) {} // model.s
 func (f *virtualFolderSyncthingService) ScheduleScan() {
 	logger.DefaultLogger.Infof("ScheduleScan - pull_x")
 	f.doInSync(func() error {
-		err := f.pullOrScan_x(f.ctx, PullOptions{false, true})
+		if f.running == nil {
+			return nil // ignore request
+		}
+		err := f.running.pullOrScan_x(f.ctx, PullOptions{false, true})
 		logger.DefaultLogger.Infof("ScheduleScan - pull_x - DONE. Err: %v", err)
 		return err
 	})
@@ -278,18 +328,29 @@ func (f *virtualFolderSyncthingService) ScheduleScan() {
 
 // model.service API
 func (f *virtualFolderSyncthingService) Jobs(page, per_page int) ([]string, []string, int) {
-	return f.backgroundDownloadQueue.Jobs(page, per_page)
+	if f.running == nil {
+		return []string{}, []string{}, 0
+	}
+	return f.running.backgroundDownloadQueue.Jobs(page, per_page)
 }
 
 // model.service API
 func (f *virtualFolderSyncthingService) BringToFront(filename string) {
-	f.backgroundDownloadQueue.BringToFront(filename)
+	if f.running == nil {
+		return
+	}
+
+	f.running.backgroundDownloadQueue.BringToFront(filename)
 }
 
 // model.service API
 func (vf *virtualFolderSyncthingService) Scan(subs []string) error {
+	if vf.running == nil {
+		return nil
+	}
+
 	logger.DefaultLogger.Infof("Scan(%+v) - pull_x", subs)
-	return vf.pullOrScan_x_doInSync(vf.ctx, PullOptions{false, true})
+	return vf.running.pullOrScan_x_doInSync(vf.ctx, PullOptions{false, true})
 }
 
 type PullOptions struct {
@@ -297,17 +358,17 @@ type PullOptions struct {
 	onlyCheck   bool
 }
 
-func (f *virtualFolderSyncthingService) pullOrScan_x_doInSync(ctx context.Context, opts PullOptions) error {
+func (f *runningVirtualFolderSyncthingService) pullOrScan_x_doInSync(ctx context.Context, opts PullOptions) error {
 	logger.DefaultLogger.Infof("request pullOrScan_x_doInSync - %+v", opts)
-	return f.doInSync(func() error {
+	return f.parent.doInSync(func() error {
 		logger.DefaultLogger.Infof("execute pullOrScan_x_doInSync - %+v", opts)
 		return f.pullOrScan_x(ctx, opts)
 	})
 }
 
-func (vf *virtualFolderSyncthingService) pullOrScan_x(ctx context.Context, opts PullOptions) error {
+func (vf *runningVirtualFolderSyncthingService) pullOrScan_x(ctx context.Context, opts PullOptions) error {
 	defer logger.DefaultLogger.Infof("pull_x END z - opts: %+v", opts)
-	snap, err := vf.fset.Snapshot()
+	snap, err := vf.parent.fset.Snapshot()
 	if err != nil {
 		return err
 	}
@@ -315,12 +376,12 @@ func (vf *virtualFolderSyncthingService) pullOrScan_x(ctx context.Context, opts 
 	defer snap.Release()
 
 	if opts.onlyCheck {
-		vf.setState(FolderScanning)
+		vf.parent.setState(FolderScanning)
 	} else {
-		vf.setState(FolderSyncing)
+		vf.parent.setState(FolderSyncing)
 	}
 	defer logger.DefaultLogger.Infof("pull_x END setState - opts: %+v", opts)
-	defer vf.setState(FolderIdle)
+	defer vf.parent.setState(FolderIdle)
 
 	logger.DefaultLogger.Infof("pull_x START - opts: %+v", opts)
 	defer logger.DefaultLogger.Infof("pull_x END a")
@@ -328,13 +389,13 @@ func (vf *virtualFolderSyncthingService) pullOrScan_x(ctx context.Context, opts 
 	checkMap := blockstorage.HashBlockStateMap(nil)
 	if opts.onlyCheck {
 		func() {
-			asyncNotifier := utils.NewAsyncProgressNotifier(vf.ctx)
+			asyncNotifier := utils.NewAsyncProgressNotifier(vf.serviceRunningCtx)
 			asyncNotifier.StartAsyncProgressNotification(
 				logger.DefaultLogger,
 				uint64(255), // use first hash byte as progress indicator. This works as storage is sorted.
 				uint(5),
-				vf.evLogger,
-				vf.folderID,
+				vf.parent.evLogger,
+				vf.parent.folderID,
 				make([]string, 0),
 				nil)
 			defer logger.DefaultLogger.Infof("pull_x END1 asyncNotifier.Stop()")
@@ -370,12 +431,12 @@ func (vf *virtualFolderSyncthingService) pullOrScan_x(ctx context.Context, opts 
 			}
 		}
 
-		jobs.SortAccordingToConfig(vf.Order)
+		jobs.SortAccordingToConfig(vf.parent.Order)
 	}
 
-	asyncNotifier := utils.NewAsyncProgressNotifier(vf.ctx)
+	asyncNotifier := utils.NewAsyncProgressNotifier(vf.serviceRunningCtx)
 	asyncNotifier.StartAsyncProgressNotification(
-		logger.DefaultLogger, totalBytes, uint(1), vf.evLogger, vf.folderID, make([]string, 0), nil)
+		logger.DefaultLogger, totalBytes, uint(1), vf.parent.evLogger, vf.parent.folderID, make([]string, 0), nil)
 	defer logger.DefaultLogger.Infof("pull_x END asyncNotifier.Stop()")
 	defer asyncNotifier.Stop()
 	defer logger.DefaultLogger.Infof("pull_x END b")
@@ -412,7 +473,7 @@ func (vf *virtualFolderSyncthingService) pullOrScan_x(ctx context.Context, opts 
 		})
 
 		select {
-		case <-vf.ctx.Done():
+		case <-vf.serviceRunningCtx.Done():
 			logger.DefaultLogger.Infof("pull ONE - stop continue")
 			isAbortOrErr = true
 			return false
@@ -442,14 +503,14 @@ func (vf *virtualFolderSyncthingService) pullOrScan_x(ctx context.Context, opts 
 
 	if checkMap != nil {
 		vf.cleanupUnneededReservations(checkMap)
-		vf.ScanCompleted()
+		vf.parent.ScanCompleted()
 	}
 
 	return nil
 }
 
-func (vf *virtualFolderSyncthingService) cleanupUnneededReservations(checkMap blockstorage.HashBlockStateMap) error {
-	snap, err := vf.fset.Snapshot()
+func (vf *runningVirtualFolderSyncthingService) cleanupUnneededReservations(checkMap blockstorage.HashBlockStateMap) error {
+	snap, err := vf.parent.fset.Snapshot()
 	if err != nil {
 		return err
 	}
@@ -486,12 +547,12 @@ func (vf *virtualFolderSyncthingService) cleanupUnneededReservations(checkMap bl
 	return nil
 }
 
-func (vf *virtualFolderSyncthingService) pullOne(
+func (vf *runningVirtualFolderSyncthingService) pullOne(
 	snap *db.Snapshot, f protocol.FileIntf, synchronous bool, fn jobQueueProgressFn,
 ) {
 
-	vf.evLogger.Log(events.ItemStarted, map[string]string{
-		"folder": vf.folderID,
+	vf.parent.evLogger.Log(events.ItemStarted, map[string]string{
+		"folder": vf.parent.folderID,
 		"item":   f.FileName(),
 		"type":   "file",
 		"action": "update",
@@ -503,8 +564,8 @@ func (vf *virtualFolderSyncthingService) pullOne(
 		fn(deltaBytes, done)
 
 		if done {
-			vf.evLogger.Log(events.ItemFinished, map[string]interface{}{
-				"folder": vf.folderID,
+			vf.parent.evLogger.Log(events.ItemFinished, map[string]interface{}{
+				"folder": vf.parent.folderID,
 				"item":   f.FileName(),
 				"error":  events.Error(err),
 				"type":   "dir",
@@ -517,8 +578,8 @@ func (vf *virtualFolderSyncthingService) pullOne(
 		// no work to do for directories. directly take over:
 		fi, ok := snap.GetGlobal(f.FileName())
 		if ok {
-			vf.fset.UpdateOne(protocol.LocalDeviceID, &fi)
-			vf.ReceivedFile(fi.Name, fi.IsDeleted())
+			vf.parent.fset.UpdateOne(protocol.LocalDeviceID, &fi)
+			vf.parent.ReceivedFile(fi.Name, fi.IsDeleted())
 		}
 		fn2(f.FileSize(), true)
 	} else {
@@ -526,7 +587,7 @@ func (vf *virtualFolderSyncthingService) pullOne(
 	}
 }
 
-func (vf *virtualFolderSyncthingService) scanOne(snap *db.Snapshot, f protocol.FileIntf, checkMap blockstorage.HashBlockStateMap, fn jobQueueProgressFn) {
+func (vf *runningVirtualFolderSyncthingService) scanOne(snap *db.Snapshot, f protocol.FileIntf, checkMap blockstorage.HashBlockStateMap, fn jobQueueProgressFn) {
 
 	if f.IsDirectory() {
 		// no work to do for directories.
@@ -547,7 +608,7 @@ func (vf *virtualFolderSyncthingService) scanOne(snap *db.Snapshot, f protocol.F
 				ok = inMap
 				if inMap && (!blockState.IsAvailableAndReservedByMe()) {
 					// block is there but not hold, add missing hold - checking again for existence as in unhold state it could have been removed meanwhile
-					_, reservationOk := vf.blockCache.ReserveAndGet(bi.Hash, false)
+					_, reservationOk := vf.parent.blockCache.ReserveAndGet(bi.Hash, false)
 					ok = reservationOk
 				}
 				if !ok {
@@ -558,10 +619,8 @@ func (vf *virtualFolderSyncthingService) scanOne(snap *db.Snapshot, f protocol.F
 
 				fn(int64(bi.Size), false)
 
-				select {
-				case <-vf.ctx.Done():
+				if utils.IsDone(vf.serviceRunningCtx) {
 					return
-				default:
 				}
 			}
 
@@ -573,7 +632,7 @@ func (vf *virtualFolderSyncthingService) scanOne(snap *db.Snapshot, f protocol.F
 				// either, so we will not create a conflict copy of our local
 				// changes.
 				fi.Version = protocol.Vector{}
-				vf.fset.UpdateOne(protocol.LocalDeviceID, &fi)
+				vf.parent.fset.UpdateOne(protocol.LocalDeviceID, &fi)
 			}
 
 		}()
@@ -586,10 +645,8 @@ func (f *virtualFolderSyncthingService) ScheduleForceRescan(path string) {}
 
 var _ = (virtualFolderServiceI)((*virtualFolderSyncthingService)(nil))
 
+// API to model
 func (vf *virtualFolderSyncthingService) GetHashBlockData(hash []byte, response_data []byte) (int, error) {
-	if vf.blockCache == nil {
-		return 0, protocol.ErrGeneric
-	}
 	data, ok := vf.blockCache.ReserveAndGet(hash, true)
 	if !ok {
 		return 0, protocol.ErrNoSuchFile

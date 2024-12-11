@@ -617,7 +617,12 @@ func (vf *VirtualFileReadResult) Bytes(outBuf []byte) ([]byte, fuse.Status) {
 	}
 
 	if nextOutBufWriteBegin != 0 {
-		vf.f.vFSS.RequestBackgroundDownload(vf.fi.Name, vf.fi.Size, vf.fi.ModTime(), func(deltaBytes int64, done bool) {})
+
+		if vf.f.vFSS.running != nil {
+			// request download of remaining file data:
+			vf.f.vFSS.running.RequestBackgroundDownload(vf.fi.Name, vf.fi.Size, vf.fi.ModTime(), func(deltaBytes int64, done bool) {})
+		}
+
 		return outBuf[:nextOutBufWriteBegin], 0
 	} else {
 		return nil, 0
