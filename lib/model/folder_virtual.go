@@ -139,6 +139,8 @@ func newVirtualFolder(
 		folderBase:        folderBase,
 		lifetimeCtxCancel: lifetimeCtxCancel,
 		mountPath:         mountPath,
+		blockCache:        blockCache,
+		running:           nil,
 	}
 
 	return f
