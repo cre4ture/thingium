@@ -271,7 +271,7 @@ func (f *virtualFolderSyncthingService) Serve(ctx context.Context) error {
 	defer l.Infof("vf.Serve exits")
 
 	cochan := make(chan error)
-	f.runVirtualFolderServiceCoroutine(ctx, cochan)
+	go f.runVirtualFolderServiceCoroutine(ctx, cochan)
 	initError := <-cochan
 	if initError != nil {
 		return initError
