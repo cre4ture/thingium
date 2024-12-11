@@ -148,13 +148,13 @@ func newVirtualFolder(
 
 func (vf *virtualFolderSyncthingService) runVirtualFolderServiceCoroutine(
 	ctx context.Context,
-	cochan chan error, /* simulate coroutine */
+	ping_pong_chan chan error, /* simulate coroutine */
 ) {
 
 	initError := func() error { // coroutine
 
 		if vf.running != nil {
-			return errors.New("internal error. virtual folder already running!")
+			return errors.New("internal error. virtual folder already running")
 		}
 
 		serviceRunningCtx, lifetimeCtxCancel := context.WithCancel(ctx)
@@ -162,10 +162,6 @@ func (vf *virtualFolderSyncthingService) runVirtualFolderServiceCoroutine(
 
 		deleteService := blockstorage.NewAsyncCheckedDeleteService(serviceRunningCtx, vf.blockCache)
 		defer deleteService.Close()
-
-		backgroundDownloadTasks := 5
-		backgroundDownloadTaskWaitGroup := sync.NewWaitGroup()
-		defer backgroundDownloadTaskWaitGroup.Wait()
 
 		rvf := &runningVirtualFolderSyncthingService{
 			parent:                    vf,
@@ -179,6 +175,9 @@ func (vf *virtualFolderSyncthingService) runVirtualFolderServiceCoroutine(
 		}
 		vf.running = rvf
 
+		backgroundDownloadTasks := 5
+		backgroundDownloadTaskWaitGroup := sync.NewWaitGroup()
+		defer backgroundDownloadTaskWaitGroup.Wait()
 		for i := 0; i < backgroundDownloadTasks; i++ {
 			backgroundDownloadTaskWaitGroup.Add(1)
 			go func() {
@@ -219,16 +218,16 @@ func (vf *virtualFolderSyncthingService) runVirtualFolderServiceCoroutine(
 
 		// unblock caller after successful init
 		logger.DefaultLogger.Infof("Service coroutine running - unblock caller")
-		cochan <- nil
+		ping_pong_chan <- nil
 
 		logger.DefaultLogger.Infof("Service coroutine running - wait for shutdown signal")
-		<-cochan // wait for shutdown signal
+		<-ping_pong_chan // wait for shutdown signal
 		logger.DefaultLogger.Infof("Service coroutine running - shutdown signal received")
 
 		return nil // all prepared defers needed for shutdown will be handled properly here
 	}()
 
-	cochan <- initError // signal failed init (!= nil) or finalized shutdown (== nil)
+	ping_pong_chan <- initError // signal failed init (!= nil) or finalized shutdown (== nil)
 	logger.DefaultLogger.Infof("Service coroutine shutdown - send DONE signal")
 }
 
@@ -270,19 +269,19 @@ func (f *virtualFolderSyncthingService) Serve(ctx context.Context) error {
 
 	defer l.Infof("vf.Serve exits")
 
-	cochan := make(chan error)
-	go f.runVirtualFolderServiceCoroutine(ctx, cochan)
-	initError := <-cochan
+	co_chan := make(chan error) // un-buffered!
+	go f.runVirtualFolderServiceCoroutine(ctx, co_chan)
+	initError := <-co_chan
 	if initError != nil {
 		return initError
-	} // else the service is running
+	} // else the service is initialized
 
 	defer func() {
 		// release service coroutine:
 		logger.DefaultLogger.Infof("release service coroutine ...")
-		cochan <- nil
+		co_chan <- nil
 		logger.DefaultLogger.Infof("wait for stop of service coroutine ...")
-		_ = <-cochan
+		<-co_chan
 		logger.DefaultLogger.Infof("service coroutine STOPPED")
 	}()
 
