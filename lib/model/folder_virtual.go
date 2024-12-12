@@ -577,6 +577,7 @@ func (vf *runningVirtualFolderSyncthingService) pullOne(
 		if ok {
 			vf.parent.fset.UpdateOne(protocol.LocalDeviceID, &fi)
 			vf.parent.ReceivedFile(fi.Name, fi.IsDeleted())
+			vf.parent.emitDiskChangeEvents([]protocol.FileInfo{fi}, events.RemoteChangeDetected)
 		}
 		fn2(f.FileSize(), true)
 	} else {

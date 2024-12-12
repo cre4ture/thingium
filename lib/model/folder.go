@@ -1365,7 +1365,7 @@ func (f *folder) updateLocals(fs []protocol.FileInfo) {
 	})
 }
 
-func (f *folder) emitDiskChangeEvents(fs []protocol.FileInfo, typeOfEvent events.EventType) {
+func (f *folderBase) emitDiskChangeEvents(fs []protocol.FileInfo, typeOfEvent events.EventType) {
 	for _, file := range fs {
 		if file.IsInvalid() {
 			continue
