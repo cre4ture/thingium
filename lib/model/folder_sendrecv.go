@@ -1010,13 +1010,14 @@ func (f *sendReceiveFolder) renameFile(cur, source, target protocol.FileInfo, sn
 	if f.versioner != nil {
 		err = f.CheckAvailableSpace(uint64(source.Size))
 		if err == nil {
-			err = osutil.Copy(f.CopyRangeMethod, f.mtimefs, f.mtimefs, source.Name, tempName)
+			//err = osutil.Copy(f.CopyRangeMethod, f.mtimefs, f.mtimefs, source.Name, tempName)
+			err = f.mtimefs_data.Copy(f.CopyRangeMethod, source.Name, tempName)
 			if err == nil {
 				err = f.inWritableDir(f.versioner.Archive, source.Name)
 			}
 		}
 	} else {
-		err = osutil.RenameOrCopy(f.CopyRangeMethod, f.mtimefs, f.mtimefs, source.Name, tempName)
+		err = f.mtimefs_data.RenameOrCopy(f.CopyRangeMethod, source.Name, tempName)
 	}
 	if err != nil {
 		return err
@@ -1112,7 +1113,7 @@ func (f *sendReceiveFolder) handleFile(file protocol.FileInfo, snap *db.Snapshot
 		"action": "update",
 	})
 
-	s := newSharedPullerState(file, f.mtimefs, f.folderID, tempName, blocks, reused, f.IgnorePerms || file.NoPermissions, hasCurFile, curFile, !f.DisableSparseFiles, !f.DisableFsync)
+	s := newSharedPullerState(file, f.mtimefs_data, f.folderID, tempName, blocks, reused, f.IgnorePerms || file.NoPermissions, hasCurFile, curFile, !f.DisableSparseFiles, !f.DisableFsync)
 
 	l.Debugf("%v need file %s; copy %d, reused %v", f, file.Name, len(blocks), len(reused))
 
@@ -1240,7 +1241,7 @@ func (f *sendReceiveFolder) shortcutFile(file protocol.FileInfo, dbUpdateChan ch
 	// Still need to re-write the trailer with the new encrypted fileinfo.
 	if f.Type.IsReceiveEncrypted() {
 		err = inWritableDir(func(path string) error {
-			fd, err := f.mtimefs.OpenFile(path, fs.OptReadWrite, 0o666)
+			fd, err := f.mtimefs_data.OpenFile(path, fs.OptReadWrite, 0o666)
 			if err != nil {
 				return err
 			}

@@ -462,6 +462,10 @@ func (fs *fakeFS) Open(name string) (File, error) {
 	return &fakeFile{fakeEntry: entry, mut: &fs.mut}, nil
 }
 
+func (m *fakeFS) OpenForRead(name string) (io.ReadCloser, error) {
+	return m.Open(name)
+}
+
 func (fs *fakeFS) OpenFile(name string, flags int, mode FileMode) (File, error) {
 	if flags&os.O_CREATE == 0 {
 		return fs.Open(name)

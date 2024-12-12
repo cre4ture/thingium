@@ -38,8 +38,7 @@ type XattrFilter interface {
 	GetMaxTotalSize() int
 }
 
-// The Filesystem interface abstracts access to the file system.
-type Filesystem interface {
+type CommonFilesystemLL interface {
 	Chmod(name string, mode FileMode) error
 	Lchown(name string, uid, gid string) error // uid/gid as strings; numeric on POSIX, SID on Windows, like in os/user package
 	Chtimes(name string, atime time.Time, mtime time.Time) error
@@ -49,12 +48,11 @@ type Filesystem interface {
 	Lstat(name string) (FileInfo, error)
 	Mkdir(name string, perm FileMode) error
 	MkdirAll(name string, perm FileMode) error
-	Open(name string) (File, error)
-	OpenFile(name string, flags int, mode FileMode) (File, error)
 	ReadSymlink(name string) (string, error)
 	Remove(name string) error
 	RemoveAll(name string) error
 	Rename(oldname, newname string) error
+	OpenForRead(name string) (io.ReadCloser, error)
 	Stat(name string) (FileInfo, error)
 	SymlinksSupported() bool
 	Walk(name string, walkFn WalkFunc) error
@@ -80,19 +78,29 @@ type Filesystem interface {
 	wrapperType() filesystemWrapperType
 }
 
+type Filesystem interface {
+	CommonFilesystemLL
+	Open(name string) (File, error)
+	OpenFile(name string, flags int, mode FileMode) (File, error)
+}
+
 // The File interface abstracts access to a regular file, being a somewhat
 // smaller interface than os.File
-type File interface {
+type FileCommon interface {
 	io.Closer
 	io.Reader
 	io.ReaderAt
 	io.Seeker
-	io.Writer
-	io.WriterAt
 	Name() string
 	Truncate(size int64) error
 	Stat() (FileInfo, error)
 	Sync() error
+}
+
+type File interface {
+	FileCommon
+	io.Writer
+	io.WriterAt
 }
 
 // The FileInfo interface is almost the same as os.FileInfo, but with the

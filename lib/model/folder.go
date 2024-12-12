@@ -22,6 +22,7 @@ import (
 	"github.com/syncthing/syncthing/lib/db"
 	"github.com/syncthing/syncthing/lib/events"
 	"github.com/syncthing/syncthing/lib/fs"
+	"github.com/syncthing/syncthing/lib/fshigh"
 	"github.com/syncthing/syncthing/lib/ignore"
 	"github.com/syncthing/syncthing/lib/locations"
 	"github.com/syncthing/syncthing/lib/logger"
@@ -154,7 +155,7 @@ func (*folderBase) verifyBuffer(buf []byte, block protocol.BlockInfo) error {
 
 type NativeFilesystemFolderService interface {
 	service
-	getFilesystem() fs.Filesystem
+	getFilesystem() fshigh.HashBlockFilesystem
 }
 
 type folder struct {
@@ -165,7 +166,8 @@ type folder struct {
 
 	shortID       protocol.ShortID
 	ignores       *ignore.Matcher
-	mtimefs       fs.Filesystem
+	mtimefs       fs.CommonFilesystemLL
+	mtimefs_data  fshigh.HashBlockFilesystem
 	modTimeWindow time.Duration
 
 	scanInterval           time.Duration
@@ -199,8 +201,8 @@ type folder struct {
 	warnedKqueue bool
 }
 
-func (f *folder) getFilesystem() fs.Filesystem {
-	return f.mtimefs
+func (f *folder) getFilesystem() fshigh.HashBlockFilesystem {
+	return f.mtimefs_data
 }
 
 type syncRequest struct {
@@ -213,6 +215,8 @@ type puller interface {
 }
 
 func newFolder(model *model, fset *db.FileSet, ignores *ignore.Matcher, cfg config.FolderConfiguration, evLogger events.Logger, ioLimiter *semaphore.Semaphore, ver versioner.Versioner) folder {
+	classicFs := cfg.Filesystem(fset)
+	hbfs := fshigh.NewHashBlockFilesystemAdapter(classicFs)
 	f := folder{
 		folderBase: newFolderBase(cfg, evLogger, model, fset),
 		ioLimiter:  ioLimiter,
@@ -220,6 +224,7 @@ func newFolder(model *model, fset *db.FileSet, ignores *ignore.Matcher, cfg conf
 		shortID:       model.shortID,
 		ignores:       ignores,
 		mtimefs:       cfg.Filesystem(fset),
+		mtimefs_data:  hbfs,
 		modTimeWindow: cfg.ModTimeWindow(),
 
 		scanInterval:           time.Duration(cfg.RescanIntervalS) * time.Second,

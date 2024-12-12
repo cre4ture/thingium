@@ -9,6 +9,7 @@ package fs
 import (
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/user"
 	"path/filepath"
@@ -241,6 +242,10 @@ func (f *BasicFilesystem) Open(name string) (File, error) {
 		return nil, err
 	}
 	return basicFile{fd, name}, err
+}
+
+func (m *BasicFilesystem) OpenForRead(name string) (io.ReadCloser, error) {
+	return m.Open(name)
 }
 
 func (f *BasicFilesystem) OpenFile(name string, flags int, mode FileMode) (File, error) {

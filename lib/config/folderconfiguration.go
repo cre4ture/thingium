@@ -22,6 +22,7 @@ import (
 	"github.com/syncthing/syncthing/lib/build"
 	"github.com/syncthing/syncthing/lib/db"
 	"github.com/syncthing/syncthing/lib/fs"
+	"github.com/syncthing/syncthing/lib/fshigh"
 	"github.com/syncthing/syncthing/lib/protocol"
 )
 
@@ -49,7 +50,7 @@ func (f FolderConfiguration) Copy() FolderConfiguration {
 // Filesystem creates a filesystem for the path and options of this folder.
 // The fset parameter may be nil, in which case no mtime handling on top of
 // the filesystem is provided.
-func (f FolderConfiguration) Filesystem(fset *db.FileSet) fs.Filesystem {
+func (f FolderConfiguration) Filesystem(fset *db.FileSet) *fshigh.ClassicFilesystemHL {
 	// This is intentionally not a pointer method, because things like
 	// cfg.Folders["default"].Filesystem(nil) should be valid.
 	opts := make([]fs.Option, 0, 3)
@@ -62,7 +63,9 @@ func (f FolderConfiguration) Filesystem(fset *db.FileSet) fs.Filesystem {
 	if fset != nil {
 		opts = append(opts, fset.MtimeOption())
 	}
-	return fs.NewFilesystem(f.FilesystemType, f.Path, opts...)
+	return &fshigh.ClassicFilesystemHL{
+		Filesystem: fs.NewFilesystem(f.FilesystemType, f.Path, opts...),
+	}
 }
 
 func (f FolderConfiguration) ModTimeWindow() time.Duration {

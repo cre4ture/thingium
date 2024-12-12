@@ -8,6 +8,7 @@ package fs
 
 import (
 	"context"
+	"io"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -158,6 +159,10 @@ func (m *metricsFS) Open(name string) (File, error) {
 		return nil, err
 	}
 	return &metricsFile{next: f, fs: m}, nil
+}
+
+func (m *metricsFS) OpenForRead(name string) (io.ReadCloser, error) {
+	return m.Open(name)
 }
 
 func (m *metricsFS) OpenFile(name string, flags int, mode FileMode) (File, error) {

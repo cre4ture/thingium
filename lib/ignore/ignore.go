@@ -100,14 +100,14 @@ func (p Pattern) allowsSkippingIgnoredDirs() bool {
 // called on it) and if any of the files have Changed(). To forget all
 // files, call Reset().
 type ChangeDetector interface {
-	Remember(fs fs.Filesystem, name string, modtime time.Time)
-	Seen(fs fs.Filesystem, name string) bool
+	Remember(fs fs.CommonFilesystemLL, name string, modtime time.Time)
+	Seen(fs fs.CommonFilesystemLL, name string) bool
 	Changed() bool
 	Reset()
 }
 
 type Matcher struct {
-	fs             fs.Filesystem
+	fs             fs.CommonFilesystemLL
 	lines          []string  // exact lines read from .stignore
 	patterns       []Pattern // patterns including those from included files
 	withCache      bool
@@ -136,7 +136,7 @@ func WithChangeDetector(cd ChangeDetector) Option {
 	}
 }
 
-func New(fs fs.Filesystem, opts ...Option) *Matcher {
+func New(fs fs.CommonFilesystemLL, opts ...Option) *Matcher {
 	m := &Matcher{
 		fs:   fs,
 		stop: make(chan struct{}),
@@ -343,13 +343,13 @@ func hashPatterns(patterns []Pattern) string {
 	return fmt.Sprintf("%x", h.Sum(nil))
 }
 
-func loadIgnoreFile(fs fs.Filesystem, file string) (fs.File, fs.FileInfo, error) {
-	fd, err := fs.Open(file)
+func loadIgnoreFile(fs fs.CommonFilesystemLL, file string) (io.ReadCloser, fs.FileInfo, error) {
+	fd, err := fs.OpenForRead(file)
 	if err != nil {
 		return fd, nil, err
 	}
 
-	info, err := fd.Stat()
+	info, err := fs.Stat(file)
 	if err != nil {
 		fd.Close()
 	}
@@ -357,7 +357,7 @@ func loadIgnoreFile(fs fs.Filesystem, file string) (fs.File, fs.FileInfo, error)
 	return fd, info, err
 }
 
-func loadParseIncludeFile(filesystem fs.Filesystem, file string, cd ChangeDetector, linesSeen map[string]struct{}) ([]Pattern, error) {
+func loadParseIncludeFile(filesystem fs.CommonFilesystemLL, file string, cd ChangeDetector, linesSeen map[string]struct{}) ([]Pattern, error) {
 	// Allow escaping the folders filesystem.
 	// TODO: Deprecate, somehow?
 	if filesystem.Type() == fs.FilesystemTypeBasic {
@@ -482,7 +482,7 @@ func nativeUnicodeNorm(s string) string {
 	return norm.NFC.String(s)
 }
 
-func parseIgnoreFile(fs fs.Filesystem, fd io.Reader, currentFile string, cd ChangeDetector, linesSeen map[string]struct{}) ([]string, []Pattern, error) {
+func parseIgnoreFile(fs fs.CommonFilesystemLL, fd io.Reader, currentFile string, cd ChangeDetector, linesSeen map[string]struct{}) ([]string, []Pattern, error) {
 	var patterns []Pattern
 
 	addPattern := func(line string) error {
@@ -590,7 +590,7 @@ func WriteIgnores(filesystem fs.Filesystem, path string, content []string) error
 }
 
 type modtimeCheckerKey struct {
-	fs   fs.Filesystem
+	fs   fs.CommonFilesystemLL
 	name string
 }
 
@@ -605,11 +605,11 @@ func newModtimeChecker() *modtimeChecker {
 	}
 }
 
-func (c *modtimeChecker) Remember(fs fs.Filesystem, name string, modtime time.Time) {
+func (c *modtimeChecker) Remember(fs fs.CommonFilesystemLL, name string, modtime time.Time) {
 	c.modtimes[modtimeCheckerKey{fs, name}] = modtime
 }
 
-func (c *modtimeChecker) Seen(fs fs.Filesystem, name string) bool {
+func (c *modtimeChecker) Seen(fs fs.CommonFilesystemLL, name string) bool {
 	_, ok := c.modtimes[modtimeCheckerKey{fs, name}]
 	return ok
 }

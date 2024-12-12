@@ -37,7 +37,7 @@ type Config struct {
 	// If CurrentFiler is not nil, it is queried for the current file before rescanning.
 	CurrentFiler CurrentFiler
 	// The Filesystem provides an abstraction on top of the actual filesystem.
-	Filesystem fs.Filesystem
+	Filesystem fs.CommonFilesystemLL
 	// If IgnorePerms is true, changes to permission bits will not be
 	// detected.
 	IgnorePerms bool
@@ -623,7 +623,7 @@ func (noCurrentFiler) CurrentFile(_ string) (protocol.FileInfo, bool) {
 	return protocol.FileInfo{}, false
 }
 
-func CreateFileInfo(fi fs.FileInfo, name string, filesystem fs.Filesystem, scanOwnership bool, scanXattrs bool, xattrFilter XattrFilter) (protocol.FileInfo, error) {
+func CreateFileInfo(fi fs.FileInfo, name string, filesystem fs.CommonFilesystemLL, scanOwnership bool, scanXattrs bool, xattrFilter XattrFilter) (protocol.FileInfo, error) {
 	f := protocol.FileInfo{Name: name}
 	if scanOwnership || scanXattrs {
 		if plat, err := filesystem.PlatformData(name, scanOwnership, scanXattrs, xattrFilter); err == nil {

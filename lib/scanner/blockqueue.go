@@ -16,8 +16,8 @@ import (
 )
 
 // HashFile hashes the files and returns a list of blocks representing the file.
-func HashFile(ctx context.Context, folderID string, fs fs.Filesystem, path string, blockSize int, counter Counter, useWeakHashes bool) ([]protocol.BlockInfo, error) {
-	fd, err := fs.Open(path)
+func HashFile(ctx context.Context, folderID string, fs fs.CommonFilesystemLL, path string, blockSize int, counter Counter, useWeakHashes bool) ([]protocol.BlockInfo, error) {
+	fd, err := fs.OpenForRead(path)
 	if err != nil {
 		l.Debugln("open:", err)
 		return nil, err
@@ -26,7 +26,7 @@ func HashFile(ctx context.Context, folderID string, fs fs.Filesystem, path strin
 
 	// Get the size and modtime of the file before we start hashing it.
 
-	fi, err := fd.Stat()
+	fi, err := fs.Stat(path)
 	if err != nil {
 		l.Debugln("stat before:", err)
 		return nil, err
@@ -47,7 +47,7 @@ func HashFile(ctx context.Context, folderID string, fs fs.Filesystem, path strin
 	// Recheck the size and modtime again. If they differ, the file changed
 	// while we were reading it and our hash results are invalid.
 
-	fi, err = fd.Stat()
+	fi, err = fs.Stat(path)
 	if err != nil {
 		l.Debugln("stat after:", err)
 		return nil, err
@@ -65,7 +65,7 @@ func HashFile(ctx context.Context, folderID string, fs fs.Filesystem, path strin
 // is closed and all items handled.
 type parallelHasher struct {
 	folderID string
-	fs       fs.Filesystem
+	fs       fs.CommonFilesystemLL
 	outbox   chan<- ScanResult
 	inbox    <-chan protocol.FileInfo
 	counter  Counter
@@ -73,7 +73,7 @@ type parallelHasher struct {
 	wg       sync.WaitGroup
 }
 
-func newParallelHasher(ctx context.Context, folderID string, fs fs.Filesystem, workers int, outbox chan<- ScanResult, inbox <-chan protocol.FileInfo, counter Counter, done chan<- struct{}) {
+func newParallelHasher(ctx context.Context, folderID string, fs fs.CommonFilesystemLL, workers int, outbox chan<- ScanResult, inbox <-chan protocol.FileInfo, counter Counter, done chan<- struct{}) {
 	ph := &parallelHasher{
 		folderID: folderID,
 		fs:       fs,

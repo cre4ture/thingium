@@ -33,7 +33,7 @@ func (e *NotADirectoryError) Error() string {
 
 // TraversesSymlink returns an error if any path component of name (including name
 // itself) traverses a symlink.
-func TraversesSymlink(filesystem fs.Filesystem, name string) error {
+func TraversesSymlink(filesystem fs.CommonFilesystemLL, name string) error {
 	var err error
 	name, err = fs.Canonicalize(name)
 	if err != nil {
