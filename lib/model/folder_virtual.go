@@ -59,8 +59,7 @@ type runningVirtualFolderSyncthingService struct {
 	serviceRunningCtx context.Context
 	deleteService     *blockstorage.AsyncCheckedDeleteService
 
-	backgroundDownloadPending chan struct{}
-	backgroundDownloadQueue   jobQueue
+	backgroundDownloadQueue jobQueue
 
 	initialScanState InitialScanState
 	InitialScanDone  chan struct{}
@@ -160,14 +159,13 @@ func (vf *virtualFolderSyncthingService) runVirtualFolderServiceCoroutine(
 		defer deleteService.Close()
 
 		rvf := &runningVirtualFolderSyncthingService{
-			parent:                    vf,
-			blockCache:                vf.blockCache,
-			serviceRunningCtx:         serviceRunningCtx,
-			deleteService:             deleteService,
-			backgroundDownloadPending: make(chan struct{}, 1),
-			backgroundDownloadQueue:   *newJobQueue(),
-			initialScanState:          INITIAL_SCAN_IDLE,
-			InitialScanDone:           make(chan struct{}, 1),
+			parent:                  vf,
+			blockCache:              vf.blockCache,
+			serviceRunningCtx:       serviceRunningCtx,
+			deleteService:           deleteService,
+			backgroundDownloadQueue: *newJobQueue(),
+			initialScanState:        INITIAL_SCAN_IDLE,
+			InitialScanDone:         make(chan struct{}, 1),
 		}
 		vf.running = rvf
 
@@ -233,25 +231,27 @@ func (f *runningVirtualFolderSyncthingService) RequestBackgroundDownload(filenam
 		fn(size, true)
 		return
 	}
-
-	select {
-	case f.backgroundDownloadPending <- struct{}{}:
-	default:
-	}
 }
 
 func (f *runningVirtualFolderSyncthingService) serve_backgroundDownloadTask() {
+	myChan := make(chan *jobQueueEntry)
 	for {
+		go func() {
+			job, success := f.backgroundDownloadQueue.tryPopWithTimeout(time.Minute)
+			if success {
+				myChan <- &job
+			} else {
+				myChan <- nil
+			}
+		}()
+
 		select {
-		case <-f.backgroundDownloadPending:
 		case <-f.serviceRunningCtx.Done():
 			return
-		}
-
-		for job, ok := f.backgroundDownloadQueue.Pop(); ok; job, ok = f.backgroundDownloadQueue.Pop() {
-			func() {
-				createVirtualFolderFilePullerAndPull(f, job)
-			}()
+		case job := <-myChan:
+			if job != nil {
+				createVirtualFolderFilePullerAndPull(f, *job)
+			}
 		}
 	}
 }

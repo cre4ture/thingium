@@ -19,7 +19,7 @@ import (
 type jobQueue struct {
 	progress []jobQueueEntry
 	queued   []jobQueueEntry
-	mut      sync.Mutex
+	cond     *sync.TimeoutCond
 }
 
 type jobQueueProgressFn func(deltaBytes int64, done bool)
@@ -33,13 +33,13 @@ type jobQueueEntry struct {
 
 func newJobQueue() *jobQueue {
 	return &jobQueue{
-		mut: sync.NewMutex(),
+		cond: sync.NewTimeoutCond(sync.NewMutex()),
 	}
 }
 
 func (q *jobQueue) PushIfNew(file string, size int64, modified time.Time, fn jobQueueProgressFn) bool {
-	q.mut.Lock()
-	defer q.mut.Unlock()
+	q.cond.L.Lock()
+	defer q.cond.L.Unlock()
 	for i := range q.queued {
 		if q.queued[i].name == file {
 			return false
@@ -47,19 +47,21 @@ func (q *jobQueue) PushIfNew(file string, size int64, modified time.Time, fn job
 	}
 	// The range of UnixNano covers a range of reasonable timestamps.
 	q.queued = append(q.queued, jobQueueEntry{file, size, modified.UnixNano(), fn})
+	q.cond.Broadcast()
 	return true
 }
 
 func (q *jobQueue) Push(file string, size int64, modified time.Time) {
-	q.mut.Lock()
-	defer q.mut.Unlock()
+	q.cond.L.Lock()
+	defer q.cond.L.Unlock()
 	// The range of UnixNano covers a range of reasonable timestamps.
 	q.queued = append(q.queued, jobQueueEntry{file, size, modified.UnixNano(), func(deltaBytes int64, done bool) {}})
+	q.cond.Broadcast()
 }
 
 func (q *jobQueue) Pop() (jobQueueEntry, bool) {
-	q.mut.Lock()
-	defer q.mut.Unlock()
+	q.cond.L.Lock()
+	defer q.cond.L.Unlock()
 
 	if len(q.queued) == 0 {
 		return jobQueueEntry{}, false
@@ -72,9 +74,25 @@ func (q *jobQueue) Pop() (jobQueueEntry, bool) {
 	return f, true
 }
 
+func (q *jobQueue) tryPopWithTimeout(duration time.Duration) (jobQueueEntry, bool) {
+	waiter := q.cond.SetupWait(duration)
+	for {
+		job, success := q.Pop()
+		if success {
+			return job, true
+		}
+		if waiter.Wait() {
+			waiter = q.cond.SetupWait(duration)
+			continue
+		} else {
+			return jobQueueEntry{}, false
+		}
+	}
+}
+
 func (q *jobQueue) BringToFront(filename string) {
-	q.mut.Lock()
-	defer q.mut.Unlock()
+	q.cond.L.Lock()
+	defer q.cond.L.Unlock()
 
 	for i, cur := range q.queued {
 		if cur.name == filename {
@@ -91,8 +109,8 @@ func (q *jobQueue) BringToFront(filename string) {
 }
 
 func (q *jobQueue) Done(file string) {
-	q.mut.Lock()
-	defer q.mut.Unlock()
+	q.cond.L.Lock()
+	defer q.cond.L.Unlock()
 
 	for i := range q.progress {
 		toCheck := &q.progress[i]
@@ -108,8 +126,8 @@ func (q *jobQueue) Done(file string) {
 // Jobs returns a paginated list of file currently being pulled and files queued
 // to be pulled. It also returns how many items were skipped.
 func (q *jobQueue) Jobs(page, perpage int) ([]string, []string, int) {
-	q.mut.Lock()
-	defer q.mut.Unlock()
+	q.cond.L.Lock()
+	defer q.cond.L.Unlock()
 
 	toSkip := (page - 1) * perpage
 	plen := len(q.progress)
@@ -146,28 +164,28 @@ func (q *jobQueue) Jobs(page, perpage int) ([]string, []string, int) {
 }
 
 func (q *jobQueue) Shuffle() {
-	q.mut.Lock()
-	defer q.mut.Unlock()
+	q.cond.L.Lock()
+	defer q.cond.L.Unlock()
 
 	rand.Shuffle(q.queued)
 }
 
 func (q *jobQueue) Reset() {
-	q.mut.Lock()
-	defer q.mut.Unlock()
+	q.cond.L.Lock()
+	defer q.cond.L.Unlock()
 	q.progress = nil
 	q.queued = nil
 }
 
 func (q *jobQueue) lenQueued() int {
-	q.mut.Lock()
-	defer q.mut.Unlock()
+	q.cond.L.Lock()
+	defer q.cond.L.Unlock()
 	return len(q.queued)
 }
 
 func (q *jobQueue) lenProgress() int {
-	q.mut.Lock()
-	defer q.mut.Unlock()
+	q.cond.L.Lock()
+	defer q.cond.L.Unlock()
 	return len(q.progress)
 }
 
@@ -189,29 +207,29 @@ func (q *jobQueue) SortAccordingToConfig(Order config.PullOrder) {
 }
 
 func (q *jobQueue) SortSmallestFirst() {
-	q.mut.Lock()
-	defer q.mut.Unlock()
+	q.cond.L.Lock()
+	defer q.cond.L.Unlock()
 
 	sort.Sort(smallestFirst(q.queued))
 }
 
 func (q *jobQueue) SortLargestFirst() {
-	q.mut.Lock()
-	defer q.mut.Unlock()
+	q.cond.L.Lock()
+	defer q.cond.L.Unlock()
 
 	sort.Sort(sort.Reverse(smallestFirst(q.queued)))
 }
 
 func (q *jobQueue) SortOldestFirst() {
-	q.mut.Lock()
-	defer q.mut.Unlock()
+	q.cond.L.Lock()
+	defer q.cond.L.Unlock()
 
 	sort.Sort(oldestFirst(q.queued))
 }
 
 func (q *jobQueue) SortNewestFirst() {
-	q.mut.Lock()
-	defer q.mut.Unlock()
+	q.cond.L.Lock()
+	defer q.cond.L.Unlock()
 
 	sort.Sort(sort.Reverse(oldestFirst(q.queued)))
 }
