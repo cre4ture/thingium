@@ -59,10 +59,7 @@ func (q *jobQueue) Push(file string, size int64, modified time.Time) {
 	q.cond.Broadcast()
 }
 
-func (q *jobQueue) Pop() (jobQueueEntry, bool) {
-	q.cond.L.Lock()
-	defer q.cond.L.Unlock()
-
+func (q *jobQueue) popIntern() (jobQueueEntry, bool) {
 	if len(q.queued) == 0 {
 		return jobQueueEntry{}, false
 	}
@@ -74,12 +71,19 @@ func (q *jobQueue) Pop() (jobQueueEntry, bool) {
 	return f, true
 }
 
+func (q *jobQueue) Pop() (jobQueueEntry, bool) {
+	q.cond.L.Lock()
+	defer q.cond.L.Unlock()
+
+	return q.popIntern()
+}
+
 func (q *jobQueue) tryPopWithTimeout(duration time.Duration) (jobQueueEntry, bool) {
 	q.cond.L.Lock()
 	defer q.cond.L.Unlock()
 
 	for {
-		job, success := q.Pop()
+		job, success := q.popIntern()
 		if success {
 			return job, true
 		}
