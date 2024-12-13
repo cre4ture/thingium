@@ -75,14 +75,17 @@ func (q *jobQueue) Pop() (jobQueueEntry, bool) {
 }
 
 func (q *jobQueue) tryPopWithTimeout(duration time.Duration) (jobQueueEntry, bool) {
-	waiter := q.cond.SetupWait(duration)
+	q.cond.L.Lock()
+	defer q.cond.L.Unlock()
+
 	for {
 		job, success := q.Pop()
 		if success {
 			return job, true
 		}
+
+		waiter := q.cond.SetupWait(duration)
 		if waiter.Wait() {
-			waiter = q.cond.SetupWait(duration)
 			continue
 		} else {
 			return jobQueueEntry{}, false
