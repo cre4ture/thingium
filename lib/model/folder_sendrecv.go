@@ -1527,7 +1527,7 @@ func (f *sendReceiveFolder) pullBlock(state pullBlockState, snap *db.Snapshot, o
 		} else {
 			state.pullDone(state.block)
 		}
-	}, snap, state.file, state.block)
+	}, snap, protocol.BlockOfFile{File: state.file, Block: state.block})
 
 	if err != nil {
 		state.fail(err)

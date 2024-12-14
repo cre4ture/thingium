@@ -79,13 +79,16 @@ func newFolderBase(
 func (f *folderBase) pullBlockBase(
 	handleBlockData func([]byte),
 	snap *db.Snapshot,
-	file protocol.FileInfo,
-	block protocol.BlockInfo,
+	b protocol.BlockOfFile,
 ) error {
 	var lastError error
-	candidates := f.model.availabilityInSnapshot(f.FolderConfiguration, snap, file, block)
+	logger.DefaultLogger.Infof("pullBlockBase(%v) - START", b)
+	defer logger.DefaultLogger.Infof("pullBlockBase(%v) - RETURN", b)
+
+	candidates := f.model.availabilityInSnapshot(f.FolderConfiguration, snap, b.File, b.Block)
 
 	for {
+		logger.DefaultLogger.Infof("pullBlockBase(%v) - LOOP", b)
 		select {
 		case <-f.ctx.Done():
 			return fmt.Errorf("folder stopped: %w", f.ctx.Err())
@@ -96,6 +99,7 @@ func (f *folderBase) pullBlockBase(
 		// feasible device at all, fail the block (and in the long run, the
 		// file).
 		found := activity.leastBusy(candidates)
+		logger.DefaultLogger.Infof("pullBlockBase(%v) - least busy", b)
 		if found == -1 {
 			if lastError != nil {
 				return fmt.Errorf("pull: %w", lastError)
@@ -104,6 +108,7 @@ func (f *folderBase) pullBlockBase(
 			}
 		}
 
+		logger.DefaultLogger.Infof("pullBlockBase(%v) - selected", b)
 		selected := candidates[found]
 		candidates[found] = candidates[len(candidates)-1]
 		candidates = candidates[:len(candidates)-1]
@@ -112,11 +117,12 @@ func (f *folderBase) pullBlockBase(
 		// leastBusy can select another device when someone else asks.
 		activity.using(selected)
 		var buf []byte
-		blockNo := int(block.Offset / int64(file.BlockSize()))
-		buf, lastError = f.model.RequestGlobal(f.ctx, selected.ID, f.folderID, file.Name, blockNo, block.Offset, int(block.Size), block.Hash, block.WeakHash, selected.FromTemporary)
+		blockNo := int(b.Block.Offset / int64(b.File.BlockSize()))
+		logger.DefaultLogger.Infof("pullBlockBase(%v) - request global", b)
+		buf, lastError = f.model.RequestGlobal(f.ctx, selected.ID, f.folderID, b.File.Name, blockNo, b.Block.Offset, int(b.Block.Size), b.Block.Hash, b.Block.WeakHash, selected.FromTemporary)
 		activity.done(selected)
 		if lastError != nil {
-			l.Debugln("request:", f.folderID, file.Name, block.Offset, block.Size, selected.ID.Short(), "returned error:", lastError)
+			l.Debugln("request:", f.folderID, b.File.Name, b.Block.Offset, b.Block.Size, selected.ID.Short(), "returned error:", lastError)
 			continue
 		}
 
@@ -127,13 +133,14 @@ func (f *folderBase) pullBlockBase(
 		// integrity so we'll take it on trust. (The other side can and
 		// will verify.)
 		if !f.Type.IsReceiveEncrypted() {
-			lastError = f.verifyBuffer(buf, block)
+			lastError = f.verifyBuffer(buf, b.Block)
 		}
 		if lastError != nil {
-			l.Debugln("request:", f.folderID, file.Name, block.Offset, block.Size, "hash mismatch")
+			l.Debugln("request:", f.folderID, b.File.Name, b.Block.Offset, b.Block.Size, "hash mismatch")
 			continue
 		}
 
+		logger.DefaultLogger.Infof("pullBlockBase(%v) - handle block data", b)
 		handleBlockData(buf)
 		return nil
 	}

@@ -458,10 +458,6 @@ func (b BlockInfo) String() string {
 	return fmt.Sprintf("Block{%d/%d/%d/%x}", b.Offset, b.Size, b.WeakHash, b.Hash)
 }
 
-func (b BlockInfo) Index() uint64 {
-	return uint64(b.Offset) / uint64(b.Size)
-}
-
 // IsEmpty returns true if the block is a full block of zeroes.
 func (b BlockInfo) IsEmpty() bool {
 	if v, ok := sha256OfEmptyBlock[int(b.Size)]; ok {
@@ -585,4 +581,13 @@ func windowsOwnershipEqual(a, b *WindowsData) bool {
 		return false
 	}
 	return a.OwnerName == b.OwnerName && a.OwnerIsGroup == b.OwnerIsGroup
+}
+
+type BlockOfFile struct {
+	File  FileInfo
+	Block BlockInfo
+}
+
+func (b *BlockOfFile) String() string {
+	return fmt.Sprintf("block: %v:%v", b.File, b.Block.Offset/int64(b.File.BlockSize()))
 }
