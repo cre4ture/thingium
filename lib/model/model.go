@@ -54,8 +54,8 @@ type service interface {
 	Revert()
 	DelayScan(d time.Duration)
 	ScheduleScan()
-	SchedulePull()                                    // something relevant changed, we should try a pull
-	Jobs(page, perpage int) ([]string, []string, int) // In progress, Queued, skipped
+	SchedulePull()                                      // something relevant changed, we should try a pull
+	Jobs(page, perpage uint) ([]string, []string, uint) // In progress, Queued, skipped
 	Scan(subs []string) error
 	Errors() []FileError
 	WatchError() error
@@ -1022,7 +1022,7 @@ func (m *model) NeedFolderFiles(folder string, page, perpage int) ([]db.FileInfo
 	p := newPager(page, perpage)
 
 	if runnerOk {
-		progressNames, queuedNames, skipped := runner.Jobs(page, perpage)
+		progressNames, queuedNames, skipped := runner.Jobs(uint(page), uint(perpage))
 
 		progress = make([]db.FileInfoTruncated, len(progressNames))
 		queued = make([]db.FileInfoTruncated, len(queuedNames))
@@ -1046,7 +1046,7 @@ func (m *model) NeedFolderFiles(folder string, page, perpage int) ([]db.FileInfo
 		if p.get == 0 {
 			return progress, queued, nil, nil
 		}
-		p.toSkip -= skipped
+		p.toSkip -= int(skipped)
 	}
 
 	rest = make([]db.FileInfoTruncated, 0, perpage)

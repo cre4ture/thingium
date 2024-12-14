@@ -7,20 +7,17 @@
 package model
 
 import (
-	"context"
-	"sort"
+	"strings"
 	"time"
 
 	"github.com/samber/lo"
 	"github.com/syncthing/syncthing/lib/config"
-	"github.com/syncthing/syncthing/lib/rand"
-	"github.com/syncthing/syncthing/lib/sync"
+	"github.com/syncthing/syncthing/lib/utils"
 )
 
 type jobQueue struct {
-	progress []jobQueueEntry
-	queued   []jobQueueEntry
-	cond     *sync.TimeoutCond
+	queued   *utils.SortableChannel[jobQueueEntry]
+	progress *utils.SortableChannel[jobQueueEntry]
 }
 
 type jobQueueProgressFn func(deltaBytes int64, done bool)
@@ -28,203 +25,118 @@ type jobQueueProgressFn func(deltaBytes int64, done bool)
 type jobQueueEntry struct {
 	name             string
 	size             int64
-	modified         int64
+	modified         time.Time
 	progressCallback jobQueueProgressFn
 }
 
 func newJobQueue() *jobQueue {
 	return &jobQueue{
-		progress: make([]jobQueueEntry, 0, 16),
-		queued:   make([]jobQueueEntry, 0, 16),
-		cond:     sync.NewTimeoutCond(sync.NewMutex()),
+		queued:   utils.NewSortableChannel[jobQueueEntry](),
+		progress: utils.NewSortableChannel[jobQueueEntry](),
 	}
 }
 
+func nameComparer(jqe1, jqe2 jobQueueEntry) int {
+	return strings.Compare(jqe1.name, jqe2.name)
+}
+
+func sizeComparer(jqe1, jqe2 jobQueueEntry) int {
+	return int(jqe1.size) - int(jqe2.size)
+}
+
+func inverseSizeComparer(jqe1, jqe2 jobQueueEntry) int {
+	return sizeComparer(jqe2, jqe1)
+}
+
+func modifiedDateComparer(jqe1, jqe2 jobQueueEntry) int {
+	return jqe1.modified.Compare(jqe2.modified)
+}
+
+func inverseModifiedDateComparer(jqe1, jqe2 jobQueueEntry) int {
+	return modifiedDateComparer(jqe2, jqe1)
+}
+
+func dummy1(deltaBytes int64, done bool) {}
+
 func (q *jobQueue) PushIfNew(file string, size int64, modified time.Time, fn jobQueueProgressFn) bool {
-	q.cond.L.Lock()
-	defer q.cond.L.Unlock()
-	for i := range q.queued {
-		if q.queued[i].name == file {
-			return false
-		}
-	}
-	// The range of UnixNano covers a range of reasonable timestamps.
-	q.queued = append(q.queued, jobQueueEntry{file, size, modified.UnixNano(), fn})
-	q.cond.Broadcast()
+	q.queued.PushIfNew(jobQueueEntry{file, size, modified, fn}, nameComparer)
 	return true
 }
 
 func (q *jobQueue) Push(file string, size int64, modified time.Time) {
-	q.cond.L.Lock()
-	defer q.cond.L.Unlock()
-	// The range of UnixNano covers a range of reasonable timestamps.
-	q.queued = append(q.queued, jobQueueEntry{file, size, modified.UnixNano(), func(deltaBytes int64, done bool) {}})
-	q.cond.Broadcast()
-}
-
-func (q *jobQueue) popIntern() (*jobQueueEntry, error) {
-	if q.queued == nil {
-		return nil, context.Canceled
-	}
-
-	if len(q.queued) == 0 {
-		return nil, nil
-	}
-
-	f := q.queued[0]
-	q.queued = q.queued[1:]
-	q.progress = append(q.progress, f)
-
-	return &f, nil
+	q.queued.Push(jobQueueEntry{file, size, modified, dummy1})
 }
 
 func (q *jobQueue) Pop() (jobQueueEntry, bool) {
-	q.cond.L.Lock()
-	defer q.cond.L.Unlock()
-
-	job, err := q.popIntern()
-	if err != nil {
-		return jobQueueEntry{}, false
+	job, ok := q.queued.Pop()
+	if ok {
+		q.progress.Push(job)
 	}
 
-	if job == nil {
-		return jobQueueEntry{}, false
-	}
-
-	return *job, true
+	return job, ok
 }
 
 func (q *jobQueue) tryPopWithTimeout(duration time.Duration) (*jobQueueEntry, error) {
-	q.cond.L.Lock()
-	defer q.cond.L.Unlock()
-
-	for {
-		job, err := q.popIntern()
-		if err != nil {
-			return nil, err
-		}
-
-		if job != nil {
-			return job, nil
-		}
-
-		waiter := q.cond.SetupWait(duration)
-		if waiter.Wait() {
-			continue
-		} else {
-			return nil, nil
-		}
+	var job jobQueueEntry
+	ok, err := q.queued.TryPopWithTimeout(&job, duration)
+	if err != nil {
+		return nil, err
 	}
+
+	if !ok {
+		return nil, nil
+	}
+
+	q.progress.Push(job)
+
+	return &job, nil
 }
 
 func (q *jobQueue) BringToFront(filename string) {
-	q.cond.L.Lock()
-	defer q.cond.L.Unlock()
-
-	for i, cur := range q.queued {
-		if cur.name == filename {
-			if i > 0 {
-				// Shift the elements before the selected element one step to
-				// the right, overwriting the selected element
-				copy(q.queued[1:i+1], q.queued[0:])
-				// Put the selected element at the front
-				q.queued[0] = cur
-			}
-			return
-		}
-	}
+	q.queued.BringToFront(jobQueueEntry{name: filename}, nameComparer)
 }
 
 func (q *jobQueue) Done(file string) {
-	q.cond.L.Lock()
-	defer q.cond.L.Unlock()
-
-	for i := range q.progress {
-		toCheck := &q.progress[i]
-		if toCheck.name == file {
-			toCheck.progressCallback(0, true)
-			copy(q.progress[i:], q.progress[i+1:])
-			q.progress = q.progress[:len(q.progress)-1]
-			return
-		}
-	}
+	q.progress.Remove(jobQueueEntry{name: file}, nameComparer)
 }
 
 // Jobs returns a paginated list of file currently being pulled and files queued
 // to be pulled. It also returns how many items were skipped.
-func (q *jobQueue) Jobs(page, perpage int) ([]string, []string, int) {
-	q.cond.L.Lock()
-	defer q.cond.L.Unlock()
-
-	toSkip := (page - 1) * perpage
-	plen := len(q.progress)
-	qlen := len(q.queued)
-
-	if tot := plen + qlen; tot <= toSkip {
-		return nil, nil, tot
+func (q *jobQueue) Jobs(page, perpage uint) ([]string, []string, uint) {
+	if page < 1 {
+		return nil, nil, 0
 	}
+	pageEndOffset := int(page * perpage)
+	pageSize := int(perpage)
 
-	if plen >= toSkip+perpage {
-		progress := lo.Map(q.progress[:perpage], func(j jobQueueEntry, i int) string { return j.name })
-		return progress, nil, toSkip
+	progressPage, progressSkipped := q.progress.GetPage(uint(pageEndOffset-pageSize), uint(pageSize))
+	progressPageNamesOnly := lo.Map(progressPage, func(j jobQueueEntry, i int) string { return j.name })
+	pageSize -= len(progressPage)
+	pageEndOffset -= int(progressSkipped) + len(progressPage)
+	if (pageSize <= 0) || (pageEndOffset-pageSize < 0) {
+		return progressPageNamesOnly, nil, progressSkipped
 	}
+	queuedPage, queuedSkipped := q.queued.GetPage(uint(pageEndOffset-pageSize), uint(pageSize))
+	queuedPageNamesOnly := lo.Map(queuedPage, func(j jobQueueEntry, i int) string { return j.name })
 
-	var progress []string
-	if plen > toSkip {
-		progress = lo.Map(q.progress[toSkip:plen], func(j jobQueueEntry, i int) string { return j.name })
-		toSkip = 0
-	} else {
-		toSkip -= plen
-	}
-
-	var queued []string
-	if qlen-toSkip < perpage-len(progress) {
-		queued = make([]string, qlen-toSkip)
-	} else {
-		queued = make([]string, perpage-len(progress))
-	}
-	for i := range queued {
-		queued[i] = q.queued[i+toSkip].name
-	}
-
-	return progress, queued, (page - 1) * perpage
+	return progressPageNamesOnly, queuedPageNamesOnly, progressSkipped + queuedSkipped
 }
 
 func (q *jobQueue) Shuffle() {
-	q.cond.L.Lock()
-	defer q.cond.L.Unlock()
-
-	rand.Shuffle(q.queued)
-}
-
-func (q *jobQueue) Reset() {
-	q.cond.L.Lock()
-	defer q.cond.L.Unlock()
-	q.progress = nil
-	q.queued = nil
+	q.queued.Shuffle()
 }
 
 func (q *jobQueue) lenQueued() int {
-	q.cond.L.Lock()
-	defer q.cond.L.Unlock()
-	return len(q.queued)
+	return q.queued.LenQueued()
 }
 
 func (q *jobQueue) lenProgress() int {
-	q.cond.L.Lock()
-	defer q.cond.L.Unlock()
-	return len(q.progress)
+	return q.progress.LenQueued()
 }
 
 func (q *jobQueue) Close() {
-	q.cond.L.Lock()
-	defer q.cond.L.Unlock()
-
-	for _, job := range q.queued {
-		job.progressCallback(0, true)
-	}
-	q.queued = nil
-	q.cond.Broadcast()
+	q.queued.AbortAndClose()
+	q.progress.AbortAndClose()
 }
 
 func (q *jobQueue) SortAccordingToConfig(Order config.PullOrder) {
@@ -245,43 +157,17 @@ func (q *jobQueue) SortAccordingToConfig(Order config.PullOrder) {
 }
 
 func (q *jobQueue) SortSmallestFirst() {
-	q.cond.L.Lock()
-	defer q.cond.L.Unlock()
-
-	sort.Sort(smallestFirst(q.queued))
+	q.queued.Sort(sizeComparer)
 }
 
 func (q *jobQueue) SortLargestFirst() {
-	q.cond.L.Lock()
-	defer q.cond.L.Unlock()
-
-	sort.Sort(sort.Reverse(smallestFirst(q.queued)))
+	q.queued.Sort(inverseSizeComparer)
 }
 
 func (q *jobQueue) SortOldestFirst() {
-	q.cond.L.Lock()
-	defer q.cond.L.Unlock()
-
-	sort.Sort(oldestFirst(q.queued))
+	q.queued.Sort(modifiedDateComparer)
 }
 
 func (q *jobQueue) SortNewestFirst() {
-	q.cond.L.Lock()
-	defer q.cond.L.Unlock()
-
-	sort.Sort(sort.Reverse(oldestFirst(q.queued)))
+	q.queued.Sort(inverseModifiedDateComparer)
 }
-
-// The usual sort.Interface boilerplate
-
-type smallestFirst []jobQueueEntry
-
-func (q smallestFirst) Len() int           { return len(q) }
-func (q smallestFirst) Less(a, b int) bool { return q[a].size < q[b].size }
-func (q smallestFirst) Swap(a, b int)      { q[a], q[b] = q[b], q[a] }
-
-type oldestFirst []jobQueueEntry
-
-func (q oldestFirst) Len() int           { return len(q) }
-func (q oldestFirst) Less(a, b int) bool { return q[a].modified < q[b].modified }
-func (q oldestFirst) Swap(a, b int)      { q[a], q[b] = q[b], q[a] }

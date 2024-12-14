@@ -241,25 +241,17 @@ func (f *runningVirtualFolderSyncthingService) RequestBackgroundDownload(filenam
 }
 
 func (f *runningVirtualFolderSyncthingService) serve_backgroundDownloadTask() {
-	myChan := make(chan *jobQueueEntry)
 	for {
-		go func() {
-			job, err := f.backgroundDownloadQueue.tryPopWithTimeout(time.Minute)
-			if err != nil {
-				close(myChan)
-				return
-			}
-
-			if job != nil {
-				myChan <- job
-			}
-		}()
-
-		job, ok := <-myChan
-		if !ok {
+		jobPtr, err := f.backgroundDownloadQueue.tryPopWithTimeout(time.Minute)
+		if err != nil {
 			return
 		}
-		createVirtualFolderFilePullerAndPull(f, *job)
+
+		if jobPtr == nil {
+			continue
+		}
+
+		createVirtualFolderFilePullerAndPull(f, *jobPtr)
 	}
 }
 
@@ -331,11 +323,11 @@ func (f *virtualFolderSyncthingService) ScheduleScan() {
 }
 
 // model.service API
-func (f *virtualFolderSyncthingService) Jobs(page, per_page int) ([]string, []string, int) {
+func (f *virtualFolderSyncthingService) Jobs(page, per_page uint) ([]string, []string, uint) {
 	if f.running == nil {
 		return []string{}, []string{}, 0
 	}
-	return f.running.backgroundDownloadQueue.Jobs(page, per_page)
+	return f.running.backgroundDownloadQueue.Jobs(uint(page), uint(per_page))
 }
 
 // model.service API

@@ -310,7 +310,7 @@ func (f *sendReceiveFolder) pullerIteration(scanChan chan<- string) (int, error)
 	close(dbUpdateChan)
 	updateWg.Wait()
 
-	f.queue.Reset()
+	f.queue = newJobQueue()
 
 	return changed, err
 }
@@ -1637,7 +1637,7 @@ func (f *sendReceiveFolder) BringToFront(filename string) {
 	f.queue.BringToFront(filename)
 }
 
-func (f *sendReceiveFolder) Jobs(page, perpage int) ([]string, []string, int) {
+func (f *sendReceiveFolder) Jobs(page, perpage uint) ([]string, []string, uint) {
 	return f.queue.Jobs(page, perpage)
 }
 

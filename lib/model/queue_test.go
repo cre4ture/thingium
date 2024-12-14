@@ -62,7 +62,7 @@ func TestJobQueue(t *testing.T) {
 		}
 	}
 
-	if len(q.progress) > 0 || len(q.queued) != 4 {
+	if q.progress.LenQueued() > 0 || q.queued.LenQueued() != 4 {
 		t.Fatal("Wrong length")
 	}
 
@@ -97,7 +97,7 @@ func TestJobQueue(t *testing.T) {
 	}
 
 	_, ok := q.Pop()
-	if len(q.progress) != 4 || ok {
+	if q.progress.LenQueued() != 4 || ok {
 		t.Fatal("Wrong length")
 	}
 
@@ -108,7 +108,7 @@ func TestJobQueue(t *testing.T) {
 	q.Done("f5") // Does not exist
 
 	_, ok = q.Pop()
-	if len(q.progress) != 0 || ok {
+	if q.progress.LenQueued() != 0 || ok {
 		t.Fatal("Wrong length")
 	}
 
@@ -413,16 +413,21 @@ func TestWaitForJob(t *testing.T) {
 	q.Push("A", 10, time.Now())
 	q.Push("B", 20, time.Now())
 
-	j1, success1 := q.tryPopWithTimeout(time.Millisecond)
-	j2, success2 := q.tryPopWithTimeout(time.Millisecond)
-	j3, success3 := q.tryPopWithTimeout(time.Millisecond)
+	j1, err1 := q.tryPopWithTimeout(time.Millisecond)
+	j2, err2 := q.tryPopWithTimeout(time.Millisecond)
+	j3, err3 := q.tryPopWithTimeout(time.Millisecond)
 
+	assert.Equal(t, nil, err1)
+	assert.True(t, j1 != nil)
 	assert.Equal(t, "A", j1.name)
-	assert.Equal(t, true, success1)
+
+	assert.Equal(t, nil, err2)
+	assert.True(t, j2 != nil)
 	assert.Equal(t, "B", j2.name)
-	assert.Equal(t, true, success2)
-	assert.Equal(t, "", j3.name)
-	assert.Equal(t, false, success3)
+
+	assert.Equal(t, nil, err3)
+	assert.True(t, j3 == nil)
+
 }
 
 func TestWaitForJob2(t *testing.T) {
@@ -434,12 +439,12 @@ func TestWaitForJob2(t *testing.T) {
 
 	workerFn := func() {
 		defer wg.Done()
-		job, success := q.tryPopWithTimeout(time.Second)
-		if success {
+		jobPtr, err := q.tryPopWithTimeout(time.Second)
+		if (err == nil) && (jobPtr != nil) {
 			mut.Lock()
 			defer mut.Unlock()
-			j = append(j, job)
-			q.Done(job.name)
+			j = append(j, *jobPtr)
+			q.Done(jobPtr.name)
 		}
 	}
 

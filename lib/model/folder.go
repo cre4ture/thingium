@@ -392,7 +392,7 @@ func (f *folderBase) SchedulePull() {
 	}
 }
 
-func (*folder) Jobs(_, _ int) ([]string, []string, int) {
+func (*folder) Jobs(_, _ uint) ([]string, []string, uint) {
 	return nil, nil, 0
 }
 
