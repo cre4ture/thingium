@@ -61,4 +61,6 @@ func TestParallelLeases(t *testing.T) {
 			assert.Equal(t, 1000+int(i), <-ch[i][1])
 		}
 	}
+
+	pl.WaitAllDone()
 }
