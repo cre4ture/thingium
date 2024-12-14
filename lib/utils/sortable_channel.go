@@ -149,18 +149,20 @@ func (q *SortableChannel[T]) BringToFront(entry T, cmpFn func(T, T) int) {
 	}
 }
 
-func (q *SortableChannel[T]) Remove(entry T, cmpFn func(T, T) int) {
+func (q *SortableChannel[T]) Remove(entry T, cmpFn func(T, T) int) *T {
 	q.cond.L.Lock()
 	defer q.cond.L.Unlock()
 
 	for i := range q.queued {
-		toCheck := &q.queued[i]
-		if cmpFn(*toCheck, entry) == 0 {
+		toCheck := q.queued[i]
+		if cmpFn(toCheck, entry) == 0 {
 			copy(q.queued[i:], q.queued[i+1:])
 			q.queued = q.queued[:len(q.queued)-1]
-			return
+			return &toCheck
 		}
 	}
+
+	return nil
 }
 
 // Jobs returns a paginated list of file currently being pulled and files queued

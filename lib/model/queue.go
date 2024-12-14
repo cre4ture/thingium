@@ -97,7 +97,10 @@ func (q *jobQueue) BringToFront(filename string) {
 }
 
 func (q *jobQueue) Done(file string) {
-	q.progress.Remove(jobQueueEntry{name: file}, nameComparer)
+	removed := q.progress.Remove(jobQueueEntry{name: file}, nameComparer)
+	if removed != nil {
+		removed.progressCallback(0, true)
+	}
 }
 
 // Jobs returns a paginated list of file currently being pulled and files queued
