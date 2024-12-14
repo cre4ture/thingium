@@ -7,6 +7,7 @@
 package model
 
 import (
+	"context"
 	"sort"
 	"time"
 
@@ -59,40 +60,53 @@ func (q *jobQueue) Push(file string, size int64, modified time.Time) {
 	q.cond.Broadcast()
 }
 
-func (q *jobQueue) popIntern() (jobQueueEntry, bool) {
+func (q *jobQueue) popIntern() (*jobQueueEntry, error) {
+	if q.queued == nil {
+		return nil, context.Canceled
+	}
+
 	if len(q.queued) == 0 {
-		return jobQueueEntry{}, false
+		return nil, nil
 	}
 
 	f := q.queued[0]
 	q.queued = q.queued[1:]
 	q.progress = append(q.progress, f)
 
-	return f, true
+	return &f, nil
 }
 
 func (q *jobQueue) Pop() (jobQueueEntry, bool) {
 	q.cond.L.Lock()
 	defer q.cond.L.Unlock()
 
-	return q.popIntern()
+	job, err := q.popIntern()
+	if err != nil {
+		return jobQueueEntry{}, false
+	} else {
+		return *job, true
+	}
 }
 
-func (q *jobQueue) tryPopWithTimeout(duration time.Duration) (jobQueueEntry, bool) {
+func (q *jobQueue) tryPopWithTimeout(duration time.Duration) (*jobQueueEntry, error) {
 	q.cond.L.Lock()
 	defer q.cond.L.Unlock()
 
 	for {
-		job, success := q.popIntern()
-		if success {
-			return job, true
+		job, err := q.popIntern()
+		if err != nil {
+			return nil, err
+		}
+
+		if job != nil {
+			return job, nil
 		}
 
 		waiter := q.cond.SetupWait(duration)
 		if waiter.Wait() {
 			continue
 		} else {
-			return jobQueueEntry{}, false
+			return nil, nil
 		}
 	}
 }
@@ -204,6 +218,7 @@ func (q *jobQueue) Close() {
 		job.progressCallback(0, true)
 	}
 	q.queued = nil
+	q.cond.Broadcast()
 }
 
 func (q *jobQueue) SortAccordingToConfig(Order config.PullOrder) {

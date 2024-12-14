@@ -244,21 +244,20 @@ func (f *runningVirtualFolderSyncthingService) serve_backgroundDownloadTask() {
 	myChan := make(chan *jobQueueEntry)
 	for {
 		go func() {
-			job, success := f.backgroundDownloadQueue.tryPopWithTimeout(time.Minute)
-			if success {
-				myChan <- &job
-			} else {
-				myChan <- nil
+			job, err := f.backgroundDownloadQueue.tryPopWithTimeout(time.Minute)
+			if job != nil {
+				myChan <- job
+			} else if err != nil {
+				close(myChan)
 			}
 		}()
 
 		select {
-		case <-f.serviceRunningCtx.Done():
-			return
-		case job := <-myChan:
-			if job != nil {
-				createVirtualFolderFilePullerAndPull(f, *job)
+		case job, ok := <-myChan:
+			if !ok {
+				return
 			}
+			createVirtualFolderFilePullerAndPull(f, *job)
 		}
 	}
 }
