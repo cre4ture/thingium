@@ -85,9 +85,13 @@ func (q *jobQueue) Pop() (jobQueueEntry, bool) {
 	job, err := q.popIntern()
 	if err != nil {
 		return jobQueueEntry{}, false
-	} else {
-		return *job, true
 	}
+
+	if job == nil {
+		return jobQueueEntry{}, false
+	}
+
+	return *job, true
 }
 
 func (q *jobQueue) tryPopWithTimeout(duration time.Duration) (*jobQueueEntry, error) {
