@@ -15,7 +15,7 @@ import (
 
 type VirtualFolderFilePuller struct {
 	sharedPullerStateBase
-	job                     jobQueueEntry
+	job                     *jobQueueEntry
 	snap                    *db.Snapshot
 	folderService           *virtualFolderSyncthingService
 	backgroundDownloadQueue *jobQueue
@@ -23,7 +23,7 @@ type VirtualFolderFilePuller struct {
 	ctx                     context.Context
 }
 
-func createVirtualFolderFilePullerAndPull(f *runningVirtualFolderSyncthingService, job jobQueueEntry) {
+func createVirtualFolderFilePullerAndPull(f *runningVirtualFolderSyncthingService, job *jobQueueEntry) {
 	defer f.backgroundDownloadQueue.Done(job.name)
 
 	now := time.Now()
@@ -95,7 +95,7 @@ func (f *VirtualFolderFilePuller) doPull() {
 				case GET_BLOCK_FAILED:
 				}
 
-				f.job.progressCallback(int64(bi.Size), false)
+				f.job.progressCb(int64(bi.Size), false)
 			})
 
 			if utils.IsDone(f.ctx) {
