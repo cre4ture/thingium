@@ -50,6 +50,7 @@ func (pl *ParallelLeases) AsyncRunOneWithDoneFn(name string, fn func(doneFn func
 		pl.cond.L.Lock()
 		defer pl.cond.L.Unlock()
 		pl.freeLeases += 1
+		pl.cond.Broadcast()
 		logger.DefaultLogger.Infof("DONE[%v, %v] leases free: %v/%v", pl.jobGroupName, name, currentlyFree, pl.count)
 	})
 }
