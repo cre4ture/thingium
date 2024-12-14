@@ -34,7 +34,9 @@ type jobQueueEntry struct {
 
 func newJobQueue() *jobQueue {
 	return &jobQueue{
-		cond: sync.NewTimeoutCond(sync.NewMutex()),
+		progress: make([]jobQueueEntry, 0, 16),
+		queued:   make([]jobQueueEntry, 0, 16),
+		cond:     sync.NewTimeoutCond(sync.NewMutex()),
 	}
 }
 

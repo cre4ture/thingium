@@ -245,20 +245,21 @@ func (f *runningVirtualFolderSyncthingService) serve_backgroundDownloadTask() {
 	for {
 		go func() {
 			job, err := f.backgroundDownloadQueue.tryPopWithTimeout(time.Minute)
+			if err != nil {
+				close(myChan)
+				return
+			}
+
 			if job != nil {
 				myChan <- job
-			} else if err != nil {
-				close(myChan)
 			}
 		}()
 
-		select {
-		case job, ok := <-myChan:
-			if !ok {
-				return
-			}
-			createVirtualFolderFilePullerAndPull(f, *job)
+		job, ok := <-myChan
+		if !ok {
+			return
 		}
+		createVirtualFolderFilePullerAndPull(f, *job)
 	}
 }
 
