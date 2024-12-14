@@ -145,7 +145,7 @@ func (q *jobQueue) Jobs(page, perpage int) ([]string, []string, int) {
 	}
 
 	if plen >= toSkip+perpage {
-		progress := lo.Map(q.progress, func(j jobQueueEntry, i int) string { return j.name })
+		progress := lo.Map(q.progress[:perpage], func(j jobQueueEntry, i int) string { return j.name })
 		return progress, nil, toSkip
 	}
 

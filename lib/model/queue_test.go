@@ -14,6 +14,8 @@ import (
 	"time"
 
 	"github.com/d4l3k/messagediff"
+	"github.com/stretchr/testify/assert"
+	"github.com/syncthing/syncthing/lib/sync"
 )
 
 func TestJobQueue(t *testing.T) {
@@ -31,7 +33,7 @@ func TestJobQueue(t *testing.T) {
 
 	for i := 1; i < 5; i++ {
 		n, ok := q.Pop()
-		if !ok || n != fmt.Sprintf("f%d", i) {
+		if !ok || n.name != fmt.Sprintf("f%d", i) {
 			t.Fatal("Wrong element")
 		}
 		progress, queued, _ = q.Jobs(1, 100)
@@ -41,13 +43,13 @@ func TestJobQueue(t *testing.T) {
 			t.Fatal("Wrong length")
 		}
 
-		q.Done(n)
+		q.Done(n.name)
 		progress, queued, _ = q.Jobs(1, 100)
 		if len(progress) != 0 || len(queued) != 3 {
 			t.Fatal("Wrong length", len(progress), len(queued))
 		}
 
-		q.Push(n, 0, time.Time{})
+		q.Push(n.name, 0, time.Time{})
 		progress, queued, _ = q.Jobs(1, 100)
 		if len(progress) != 0 || len(queued) != 4 {
 			t.Fatal("Wrong length")
@@ -79,7 +81,7 @@ func TestJobQueue(t *testing.T) {
 		}
 
 		n, ok := q.Pop()
-		if !ok || n != s {
+		if !ok || n.name != s {
 			t.Fatal("Wrong element")
 		}
 		progress, queued, _ = q.Jobs(1, 100)
@@ -280,7 +282,7 @@ func BenchmarkJobQueuePushPopDone10k(b *testing.B) {
 		}
 		for range files {
 			n, _ := q.Pop()
-			q.Done(n)
+			q.Done(n.name)
 		}
 	}
 }
@@ -326,7 +328,7 @@ func TestQueuePagination(t *testing.T) {
 	}
 
 	n, ok := q.Pop()
-	if !ok || n != names[0] {
+	if !ok || n.name != names[0] {
 		t.Fatal("Wrong element")
 	}
 
@@ -365,7 +367,7 @@ func TestQueuePagination(t *testing.T) {
 
 	for i := 1; i < 8; i++ {
 		n, ok := q.Pop()
-		if !ok || n != names[i] {
+		if !ok || n.name != names[i] {
 			t.Fatal("Wrong element")
 		}
 	}
@@ -404,4 +406,52 @@ func TestQueuePagination(t *testing.T) {
 	if len(progress) != 0 || len(queued) != 0 || skip != 10 {
 		t.Error("Wrong length", len(progress), len(queued), 0)
 	}
+}
+
+func TestWaitForJob(t *testing.T) {
+	q := newJobQueue()
+	q.Push("A", 10, time.Now())
+	q.Push("B", 20, time.Now())
+
+	j1, success1 := q.tryPopWithTimeout(time.Millisecond)
+	j2, success2 := q.tryPopWithTimeout(time.Millisecond)
+	j3, success3 := q.tryPopWithTimeout(time.Millisecond)
+
+	assert.Equal(t, "A", j1.name)
+	assert.Equal(t, true, success1)
+	assert.Equal(t, "B", j2.name)
+	assert.Equal(t, true, success2)
+	assert.Equal(t, "", j3.name)
+	assert.Equal(t, false, success3)
+}
+
+func TestWaitForJob2(t *testing.T) {
+	q := newJobQueue()
+
+	mut := sync.NewMutex()
+	j := make([]jobQueueEntry, 0)
+	wg := sync.NewWaitGroup()
+
+	workerFn := func() {
+		defer wg.Done()
+		job, success := q.tryPopWithTimeout(time.Second)
+		if success {
+			mut.Lock()
+			defer mut.Unlock()
+			j = append(j, job)
+			q.Done(job.name)
+		}
+	}
+
+	wg.Add(3)
+	go workerFn()
+	go workerFn()
+	go workerFn()
+
+	q.Push("A", 10, time.Now())
+	q.Push("B", 20, time.Now())
+
+	wg.Wait()
+
+	assert.Equal(t, 2, len(j))
 }
