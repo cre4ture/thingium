@@ -78,8 +78,10 @@ func (f *VirtualFolderFilePuller) doPull() {
 			//logger.DefaultLogger.Debugf("check block info #%v: %+v", i, bi)
 
 			leases.AsyncRunOne(fmt.Sprintf("%v:%v", f.job.name, i), func() {
-				f.pullStarted()
-				_, ok, variant := f.folderService.GetBlockDataFromCacheOrDownload(f.snap, f.file, bi, true)
+				_, ok, variant := f.folderService.GetBlockDataFromCacheOrDownload(
+					f.snap, f.file, bi, func() {
+						f.pullStarted()
+					})
 				if !ok {
 					all_ok.Store(false)
 				}
