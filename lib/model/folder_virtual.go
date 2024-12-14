@@ -164,8 +164,6 @@ func (vf *virtualFolderSyncthingService) runVirtualFolderServiceCoroutine(
 		defer deleteService.Close()
 
 		jobQ := newJobQueue()
-		defer jobQ.Close()
-
 		rvf := &runningVirtualFolderSyncthingService{
 			parent:                  vf,
 			blockCache:              vf.blockCache,
@@ -187,6 +185,7 @@ func (vf *virtualFolderSyncthingService) runVirtualFolderServiceCoroutine(
 				vf.running.serve_backgroundDownloadTask()
 			}()
 		}
+		defer jobQ.Close()
 
 		if vf.mountPath != "" {
 			stVF := &syncthingVirtualFolderFuseAdapter{
