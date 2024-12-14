@@ -448,6 +448,8 @@ func TestWaitForJob2(t *testing.T) {
 	go workerFn()
 	go workerFn()
 
+	time.Sleep(time.Millisecond * 50)
+
 	q.Push("A", 10, time.Now())
 	q.Push("B", 20, time.Now())
 

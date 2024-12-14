@@ -438,18 +438,19 @@ func (vf *runningVirtualFolderSyncthingService) pullOrScan_x(ctx context.Context
 	defer asyncNotifier.Stop()
 	defer logger.DefaultLogger.Infof("pull_x END b")
 
-	leases := utils.NewParallelLeases(60, 1)
+	doScan := checkMap != nil
+	actionName := "Pull"
+	if doScan {
+		actionName = "Scan"
+	}
+
+	leases := utils.NewParallelLeases(60, actionName)
 	defer leases.WaitAllDone()
 
 	isAbortOrErr := false
 	pullF := func(f protocol.FileIntf) bool /* true to continue */ {
 		myFileSize := f.FileSize()
-		leases.AsyncRunOneWithDoneFn(func(doneFn func()) {
-			doScan := checkMap != nil
-			actionName := "Pull"
-			if doScan {
-				actionName = "Scan"
-			}
+		leases.AsyncRunOneWithDoneFn(f.FileName(), func(doneFn func()) {
 			if !doScan {
 				logger.DefaultLogger.Infof("%v ONE - START, size: %v", actionName, myFileSize)
 			}

@@ -71,13 +71,13 @@ func (f *VirtualFolderFilePuller) doPull() {
 	all_ok := atomic.Bool{}
 	all_ok.Store(true)
 	func() {
-		leases := utils.NewParallelLeases(10, 2)
+		leases := utils.NewParallelLeases(10, "vPuller.doPull")
 		defer leases.WaitAllDone()
 
-		for _, bi := range f.file.Blocks {
+		for i, bi := range f.file.Blocks {
 			//logger.DefaultLogger.Debugf("check block info #%v: %+v", i, bi)
 
-			leases.AsyncRunOne(func() {
+			leases.AsyncRunOne(fmt.Sprintf("%v:%v", f.job.name, i), func() {
 				f.pullStarted()
 				_, ok, variant := f.folderService.GetBlockDataFromCacheOrDownload(f.snap, f.file, bi)
 				if !ok {
