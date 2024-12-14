@@ -11,6 +11,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io/fs"
 	"log"
 	"math"
@@ -131,7 +132,7 @@ func newVirtualFolder(
 
 	lifetimeCtx, lifetimeCtxCancel := context.WithCancel(context.Background())
 	var blockCache blockstorage.HashBlockStorageI = blockstorage.NewGoCloudUrlStorage(
-		lifetimeCtx, blobUrl, folderBase.model.id.String())
+		lifetimeCtx, blobUrl, folderBase.ownDeviceIdString())
 
 	if folderBase.Type.IsReceiveEncrypted() {
 		blockCache = blockstorage.NewEncryptedHashBlockStorage(blockCache)
@@ -478,7 +479,7 @@ func (vf *runningVirtualFolderSyncthingService) pullOrScan_x(ctx context.Context
 			if checkMap != nil {
 				vf.scanOne(snap, f, checkMap, progressFn)
 			} else {
-				vf.pullOne(snap, f, false, progressFn)
+				vf.pullOne(snap, f, progressFn)
 			}
 		}
 		leases.AsyncRunOneWithDoneFn(f.FileName(), workF)
@@ -559,7 +560,7 @@ func (vf *runningVirtualFolderSyncthingService) cleanupUnneededReservations(chec
 }
 
 func (vf *runningVirtualFolderSyncthingService) pullOne(
-	snap *db.Snapshot, f protocol.FileIntf, synchronous bool, fn jobQueueProgressFn,
+	snap *db.Snapshot, f protocol.FileIntf, fn jobQueueProgressFn,
 ) {
 
 	vf.parent.evLogger.Log(events.ItemStarted, map[string]string{
@@ -589,14 +590,28 @@ func (vf *runningVirtualFolderSyncthingService) pullOne(
 		// no work to do for directories. directly take over:
 		fi, ok := snap.GetGlobal(f.FileName())
 		if ok {
-			vf.parent.fset.UpdateOne(protocol.LocalDeviceID, &fi)
-			vf.parent.ReceivedFile(fi.Name, fi.IsDeleted())
-			vf.parent.emitDiskChangeEvents([]protocol.FileInfo{fi}, events.RemoteChangeDetected)
+			vf.parent.updateOneLocalFileInfo(&fi, events.RemoteChangeDetected)
 		}
 		fn2(f.FileSize(), true)
 	} else {
 		vf.RequestBackgroundDownload(f.FileName(), f.FileSize(), f.ModTime(), fn2)
 	}
+}
+
+func (vf *virtualFolderSyncthingService) updateOneLocalFileInfo(fi *protocol.FileInfo, typeOfEvent events.EventType) {
+	vf.fset.UpdateOne(protocol.LocalDeviceID, fi)
+	vf.ReceivedFile(fi.Name, fi.IsDeleted())
+	vf.emitDiskChangeEvents([]protocol.FileInfo{*fi}, typeOfEvent)
+
+	fiData, err := fi.Marshal()
+	if err != nil {
+		logger.DefaultLogger.Warnf("VFolder: failed to serialize file info. Err: %+v", err)
+		return
+	}
+
+	metaKey := fmt.Sprintf("%v/%v/%v", blockstorage.LOCAL_HAVE_FI_META_PREFIX, vf.ownDeviceIdString(), fi.Name)
+	vf.blockCache.SetMeta(metaKey, fiData)
+	logger.DefaultLogger.Debugf("VFolder: Stored file info (size: %v) to %v", len(fiData), metaKey)
 }
 
 func (vf *runningVirtualFolderSyncthingService) scanOne(snap *db.Snapshot, f protocol.FileIntf, checkMap blockstorage.HashBlockStateMap, fn jobQueueProgressFn) {
@@ -645,6 +660,8 @@ func (vf *runningVirtualFolderSyncthingService) scanOne(snap *db.Snapshot, f pro
 				// changes.
 				fi.Version = protocol.Vector{}
 				vf.parent.fset.UpdateOne(protocol.LocalDeviceID, &fi)
+				// as this is NOT usual case, we don't store this to the meta data of block storage
+				// NOT: updateOneLocalFileInfo(&fi)
 			}
 
 		}()

@@ -114,9 +114,7 @@ func (f *VirtualFolderFilePuller) doPull() {
 	// note: this also handles deletes
 	// as the deleted file will not have any blocks,
 	// the loop before is just skipped
-	f.fset.UpdateOne(protocol.LocalDeviceID, &f.file)
-	f.folderService.ReceivedFile(f.file.Name, f.file.Deleted)
-	f.folderService.emitDiskChangeEvents([]protocol.FileInfo{f.file}, events.RemoteChangeDetected)
+	f.folderService.updateOneLocalFileInfo(&f.file, events.RemoteChangeDetected)
 
 	seq := f.fset.Sequence(protocol.LocalDeviceID)
 	f.folderService.evLogger.Log(events.LocalIndexUpdated, map[string]interface{}{

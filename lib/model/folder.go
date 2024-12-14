@@ -76,6 +76,10 @@ func newFolderBase(
 	}
 }
 
+func (f *folderBase) ownDeviceIdString() string {
+	return f.model.id.String()
+}
+
 func (f *folderBase) pullBlockBase(
 	handleBlockData func([]byte),
 	snap *db.Snapshot,

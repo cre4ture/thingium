@@ -17,6 +17,7 @@ import (
 	ffs "github.com/hanwen/go-fuse/v2/fs"
 	"github.com/hanwen/go-fuse/v2/fuse"
 	"github.com/syncthing/syncthing/lib/db"
+	"github.com/syncthing/syncthing/lib/events"
 	"github.com/syncthing/syncthing/lib/logger"
 	"github.com/syncthing/syncthing/lib/protocol"
 	"github.com/syncthing/syncthing/lib/scanner"
@@ -125,7 +126,7 @@ func (stf *syncthingVirtualFolderFuseAdapter) createFile(
 	}
 
 	fi := createNewVirtualFileInfo(stf.model.shortID, Permissions, name)
-	stf.fset.UpdateOne(protocol.LocalDeviceID, &fi)
+	stf.vFSS.updateOneLocalFileInfo(&fi, events.LocalChangeDetected)
 
 	snap, err := stf.fset.Snapshot()
 	if err != nil {
@@ -232,7 +233,7 @@ func (stf *syncthingVirtualFolderFuseAdapter) writeFile(
 		fi.Version = fi.Version.Update(fi.ModifiedBy)
 
 		stf.vFSS.blockCache.ReserveAndSet(biNew.Hash, blockData)
-		stf.fset.UpdateOne(protocol.LocalDeviceID, &fi)
+		stf.vFSS.updateOneLocalFileInfo(&fi, events.LocalChangeDetected)
 
 		blockIdx += 1
 		inputPos = inputPosNext
@@ -267,7 +268,7 @@ func (stf *syncthingVirtualFolderFuseAdapter) deleteFile(ctx context.Context, pa
 	fi.Size = 0
 	fi.Blocks = nil
 	fi.Version = fi.Version.Update(stf.model.shortID)
-	stf.fset.UpdateOne(protocol.LocalDeviceID, &fi)
+	stf.vFSS.updateOneLocalFileInfo(&fi, events.LocalChangeDetected)
 
 	return 0
 }
@@ -286,7 +287,7 @@ func (stf *syncthingVirtualFolderFuseAdapter) createDir(ctx context.Context, pat
 	fi := createNewVirtualFileInfo(stf.model.shortID, nil, path)
 	fi.Type = protocol.FileInfoTypeDirectory
 	fi.Blocks = nil
-	stf.fset.UpdateOne(protocol.LocalDeviceID, &fi)
+	stf.vFSS.updateOneLocalFileInfo(&fi, events.LocalChangeDetected)
 	return 0
 }
 
@@ -317,7 +318,7 @@ func (stf *syncthingVirtualFolderFuseAdapter) deleteDir(ctx context.Context, pat
 	fi.Size = 0
 	fi.Blocks = []protocol.BlockInfo{}
 	fi.Version = fi.Version.Update(stf.model.shortID)
-	stf.fset.UpdateOne(protocol.LocalDeviceID, &fi)
+	stf.vFSS.updateOneLocalFileInfo(&fi, events.LocalChangeDetected)
 
 	return 0
 }
@@ -350,7 +351,7 @@ func (stf *syncthingVirtualFolderFuseAdapter) renameFileOrDir(
 	fi.ModifiedBy = stf.model.shortID
 	fi.Name = newPath
 	fi.Version = fi.Version.Update(stf.model.shortID)
-	stf.fset.UpdateOne(protocol.LocalDeviceID, &fi)
+	stf.vFSS.updateOneLocalFileInfo(&fi, events.LocalChangeDetected)
 
 	return stf.deleteFile(ctx, existingPath)
 }
@@ -415,7 +416,8 @@ func (stf *syncthingVirtualFolderFuseAdapter) createSymlink(
 	fi.Type = protocol.FileInfoTypeSymlink
 	fi.Blocks = nil
 	fi.SymlinkTarget = target
-	stf.fset.UpdateOne(protocol.LocalDeviceID, &fi)
+
+	stf.vFSS.updateOneLocalFileInfo(&fi, events.LocalChangeDetected)
 	return 0
 }
 

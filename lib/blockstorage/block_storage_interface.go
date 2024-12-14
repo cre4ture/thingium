@@ -11,6 +11,8 @@ import (
 	"io"
 )
 
+const LOCAL_HAVE_FI_META_PREFIX = "LocalHaveMeta"
+
 type HashBlockState struct {
 	dataExists       bool
 	reservedByMe     bool
