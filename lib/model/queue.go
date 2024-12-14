@@ -196,6 +196,16 @@ func (q *jobQueue) lenProgress() int {
 	return len(q.progress)
 }
 
+func (q *jobQueue) Close() {
+	q.cond.L.Lock()
+	defer q.cond.L.Unlock()
+
+	for _, job := range q.queued {
+		job.progressCallback(0, true)
+	}
+	q.queued = nil
+}
+
 func (q *jobQueue) SortAccordingToConfig(Order config.PullOrder) {
 	switch Order {
 	case config.PullOrderRandom:

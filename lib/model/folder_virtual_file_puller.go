@@ -55,7 +55,7 @@ func createVirtualFolderFilePullerAndPull(f *runningVirtualFolderSyncthingServic
 		job:                     job,
 		snap:                    snap,
 		folderService:           f.parent,
-		backgroundDownloadQueue: &f.backgroundDownloadQueue,
+		backgroundDownloadQueue: f.backgroundDownloadQueue,
 		fset:                    f.parent.fset,
 		ctx:                     f.serviceRunningCtx,
 	}

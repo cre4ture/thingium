@@ -59,7 +59,7 @@ type runningVirtualFolderSyncthingService struct {
 	serviceRunningCtx context.Context
 	deleteService     *blockstorage.AsyncCheckedDeleteService
 
-	backgroundDownloadQueue jobQueue
+	backgroundDownloadQueue *jobQueue
 
 	initialScanState InitialScanState
 	InitialScanDone  chan struct{}
@@ -163,12 +163,15 @@ func (vf *virtualFolderSyncthingService) runVirtualFolderServiceCoroutine(
 		deleteService := blockstorage.NewAsyncCheckedDeleteService(serviceRunningCtx, vf.blockCache)
 		defer deleteService.Close()
 
+		jobQ := newJobQueue()
+		defer jobQ.Close()
+
 		rvf := &runningVirtualFolderSyncthingService{
 			parent:                  vf,
 			blockCache:              vf.blockCache,
 			serviceRunningCtx:       serviceRunningCtx,
 			deleteService:           deleteService,
-			backgroundDownloadQueue: *newJobQueue(),
+			backgroundDownloadQueue: jobQ,
 			initialScanState:        INITIAL_SCAN_IDLE,
 			InitialScanDone:         make(chan struct{}, 1),
 		}
