@@ -79,7 +79,7 @@ func (f *VirtualFolderFilePuller) doPull() {
 
 			leases.AsyncRunOne(fmt.Sprintf("%v:%v", f.job.name, i), func() {
 				f.pullStarted()
-				_, ok, variant := f.folderService.GetBlockDataFromCacheOrDownload(f.snap, f.file, bi)
+				_, ok, variant := f.folderService.GetBlockDataFromCacheOrDownload(f.snap, f.file, bi, true)
 				if !ok {
 					all_ok.Store(false)
 				}

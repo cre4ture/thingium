@@ -78,11 +78,12 @@ func (vFSS *virtualFolderSyncthingService) GetBlockDataFromCacheOrDownload(
 	snap *db.Snapshot,
 	file protocol.FileInfo,
 	block protocol.BlockInfo,
+	checkOnly bool,
 ) ([]byte, bool, GetBlockDataResult) {
 	logger.DefaultLogger.Infof("GetBlockDataFromCacheOrDownload(%v:%v): START", file.Name, block.Offset/int64(file.BlockSize()))
 	defer logger.DefaultLogger.Infof("GetBlockDataFromCacheOrDownload(%v:%v): RETURN", file.Name, block.Offset/int64(file.BlockSize()))
 
-	data, ok := vFSS.blockCache.ReserveAndGet(block.Hash, true)
+	data, ok := vFSS.blockCache.ReserveAndGet(block.Hash, !checkOnly)
 	if ok {
 		return data, true, GET_BLOCK_CACHED
 	}
