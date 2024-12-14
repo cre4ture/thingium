@@ -17,6 +17,7 @@ import (
 
 type SortableChannel[T any] struct {
 	queued      []T
+	closed      bool
 	cond        *sync.TimeoutCond
 	readerCh    chan T
 	readerChMut sync.Mutex
@@ -25,6 +26,7 @@ type SortableChannel[T any] struct {
 func NewSortableChannel[T any]() *SortableChannel[T] {
 	return &SortableChannel[T]{
 		queued:      make([]T, 0, 2),
+		closed:      false,
 		cond:        sync.NewTimeoutCond(sync.NewMutex()),
 		readerCh:    nil,
 		readerChMut: sync.NewMutex(),
@@ -53,11 +55,11 @@ func (q *SortableChannel[T]) Push(entry T) {
 }
 
 func (q *SortableChannel[T]) popIntern(out *T) (bool, error) {
-	if q.queued == nil {
-		return false, context.Canceled
-	}
 
 	if len(q.queued) == 0 {
+		if q.closed {
+			return false, context.Canceled
+		}
 		return false, nil
 	}
 
@@ -195,11 +197,11 @@ func (q *SortableChannel[T]) LenQueued() int {
 	return len(q.queued)
 }
 
-func (q *SortableChannel[T]) AbortAndClose() {
+func (q *SortableChannel[T]) Close() {
 	q.cond.L.Lock()
 	defer q.cond.L.Unlock()
 
-	q.queued = nil
+	q.closed = true
 	q.cond.Broadcast()
 }
 

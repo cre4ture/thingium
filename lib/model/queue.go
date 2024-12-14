@@ -135,8 +135,8 @@ func (q *jobQueue) lenProgress() int {
 }
 
 func (q *jobQueue) Close() {
-	q.queued.AbortAndClose()
-	q.progress.AbortAndClose()
+	q.queued.Close()
+	q.progress.Close()
 }
 
 func (q *jobQueue) SortAccordingToConfig(Order config.PullOrder) {

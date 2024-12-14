@@ -251,7 +251,13 @@ func (f *runningVirtualFolderSyncthingService) serve_backgroundDownloadTask() {
 			continue
 		}
 
-		createVirtualFolderFilePullerAndPull(f, *jobPtr)
+		if utils.IsDone(f.serviceRunningCtx) {
+			// empty queue as quick as possible
+			f.backgroundDownloadQueue.Done(jobPtr.name)
+			jobPtr.progressCallback(jobPtr.size, true)
+		} else {
+			createVirtualFolderFilePullerAndPull(f, *jobPtr)
+		}
 	}
 }
 
