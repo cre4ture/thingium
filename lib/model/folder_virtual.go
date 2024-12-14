@@ -78,11 +78,15 @@ func (vFSS *virtualFolderSyncthingService) GetBlockDataFromCacheOrDownload(
 	file protocol.FileInfo,
 	block protocol.BlockInfo,
 ) ([]byte, bool, GetBlockDataResult) {
+	logger.DefaultLogger.Infof("GetBlockDataFromCacheOrDownload(%v:%v): START", file.Name, block.Index())
+	defer logger.DefaultLogger.Infof("GetBlockDataFromCacheOrDownload(%v:%v): RETURN", file.Name, block.Index())
+
 	data, ok := vFSS.blockCache.ReserveAndGet(block.Hash, true)
 	if ok {
 		return data, true, GET_BLOCK_CACHED
 	}
 
+	defer logger.DefaultLogger.Infof("GetBlockDataFromCacheOrDownload(%v:%v): start pull", file.Name, block.Index())
 	err := vFSS.pullBlockBase(func(blockData []byte) {
 		data = blockData
 	}, snap, file, block)
@@ -91,6 +95,7 @@ func (vFSS *virtualFolderSyncthingService) GetBlockDataFromCacheOrDownload(
 		return nil, false, GET_BLOCK_FAILED
 	}
 
+	defer logger.DefaultLogger.Infof("GetBlockDataFromCacheOrDownload(%v:%v): set to block storage", file.Name, block.Index())
 	vFSS.blockCache.ReserveAndSet(block.Hash, data)
 
 	return data, true, GET_BLOCK_DOWNLOAD

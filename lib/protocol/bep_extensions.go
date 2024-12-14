@@ -458,6 +458,10 @@ func (b BlockInfo) String() string {
 	return fmt.Sprintf("Block{%d/%d/%d/%x}", b.Offset, b.Size, b.WeakHash, b.Hash)
 }
 
+func (b BlockInfo) Index() uint64 {
+	return uint64(b.Offset) / uint64(b.Size)
+}
+
 // IsEmpty returns true if the block is a full block of zeroes.
 func (b BlockInfo) IsEmpty() bool {
 	if v, ok := sha256OfEmptyBlock[int(b.Size)]; ok {
