@@ -21,8 +21,9 @@ type PendingDelete struct {
 	hash []byte
 }
 
-const MAX_PENDING_DELETES = 10        // this needs to be limited to keep timing constrains of pending deletes
-const TIME_CONSTANT = time.Minute / 3 // grace period + deletion window + another grace period
+const MAX_PENDING_DELETES = 10 // this needs to be limited to keep timing constrains of pending deletes
+const TIME_CONSTANT_BASE = time.Minute
+const TIME_CONSTANT = TIME_CONSTANT_BASE / 3 // grace period + deletion window + another grace period
 
 func NewAsyncCheckedDeleteService(ctx context.Context, hbs HashBlockStorageI) *AsyncCheckedDeleteService {
 	myCtx, cancel := context.WithCancel(ctx)

@@ -27,7 +27,7 @@ import (
 
 const BlockDataSubFolder = "blocks"
 const MetaDataSubFolder = "meta"
-const BLOCK_DELETE_TAG = "deletion-by" // delete tags need to be alphabetically before use tags
+const BLOCK_DELETE_TAG = "deletion-by"
 const BLOCK_USE_TAG = "used-by"
 
 type HashBlockStorageMapBuilder struct {
@@ -261,9 +261,6 @@ func (hm *GoCloudUrlStorage) GetBlockHashState(hash []byte) HashBlockState {
 //}
 
 func (hm *GoCloudUrlStorage) reserveAndCheckExistence(hash []byte) (ok bool, retry bool) {
-	DELETE_TAG := "." + BLOCK_DELETE_TAG + "." // delete tags need to be alphabetically before use tags
-	USE_TAG := "." + BLOCK_USE_TAG + "."
-
 	hashKey := getBlockStringKey(hash)
 	// force existence of use-tag with our ID
 	err := hm.putATag(hash, BLOCK_USE_TAG, false)
@@ -286,10 +283,12 @@ func (hm *GoCloudUrlStorage) reserveAndCheckExistence(hash []byte) (ok bool, ret
 		suffix, _ := strings.CutPrefix(entry.Key, opts.Prefix)
 		if len(suffix) == 0 {
 			dataEntry = entry
-		} else if deviceId, ok := strings.CutPrefix(suffix, USE_TAG); ok {
+		} else if deviceId, ok := strings.CutPrefix(suffix, "."+BLOCK_USE_TAG+"."); ok {
 			usesMap[deviceId] = entry
-		} else if deviceId, ok := strings.CutPrefix(suffix, DELETE_TAG); ok {
-			deletesMap[deviceId] = entry
+		} else if deviceId, ok := strings.CutPrefix(suffix, "."+BLOCK_DELETE_TAG+"."); ok {
+			if time.Since(entry.ModTime) < TIME_CONSTANT_BASE {
+				deletesMap[deviceId] = entry
+			}
 		} else {
 			//logger.DefaultLogger.Debugf("Object with unknown suffix(key, tag): %v, %v", entry.Key, suffix)
 		}
@@ -501,7 +500,7 @@ func (hm *GoCloudUrlStorage) IterateBlocksInternal(
 					iterator.addUse(hashString, deviceId)
 				} else if tp == BLOCK_DELETE_TAG {
 					// ignore deletes that are older than a minute as they are outdated/left overs, TODO: use constant
-					if time.Since(obj.ModTime) < time.Minute {
+					if time.Since(obj.ModTime) < TIME_CONSTANT_BASE {
 						iterator.addDelete(hashString)
 					}
 				}
