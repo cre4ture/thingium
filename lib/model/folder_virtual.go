@@ -13,6 +13,7 @@ import (
 	"errors"
 	"io/fs"
 	"log"
+	"math"
 	"os"
 	"strings"
 	"time"
@@ -449,13 +450,18 @@ func (vf *runningVirtualFolderSyncthingService) pullOrScan_x(ctx context.Context
 		actionName = "Scan"
 	}
 
-	leases := utils.NewParallelLeases(60, actionName)
+	leaseCnt := uint(60)
+	if !doScan {
+		// unlimited for pull
+		leaseCnt = math.MaxUint
+	}
+	leases := utils.NewParallelLeases(leaseCnt, actionName)
 	defer leases.WaitAllDone()
 
 	isAbortOrErr := false
 	pullF := func(f protocol.FileIntf) bool /* true to continue */ {
 		myFileSize := f.FileSize()
-		leases.AsyncRunOneWithDoneFn(f.FileName(), func(doneFn func()) {
+		workF := func(doneFn func()) {
 			if !doScan {
 				logger.DefaultLogger.Infof("%v ONE - START, size: %v", actionName, myFileSize)
 			}
@@ -473,7 +479,8 @@ func (vf *runningVirtualFolderSyncthingService) pullOrScan_x(ctx context.Context
 			} else {
 				vf.pullOne(snap, f, false, progressFn)
 			}
-		})
+		}
+		leases.AsyncRunOneWithDoneFn(f.FileName(), workF)
 
 		select {
 		case <-vf.serviceRunningCtx.Done():
