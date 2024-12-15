@@ -82,7 +82,15 @@ func (c *CLI) Run() error {
 
 	folderLabel := "offline-folder-mount"
 
-	fsetRO := &OfflineDbFileSetRead{blockStorage: blockStorage}
+	prefix := blockstorage.MetaDataSubFolder + "/" +
+		blockstorage.LOCAL_HAVE_FI_META_PREFIX + "/" +
+		c.DeviceID + "/" +
+		c.FolderID + "/"
+
+	fsetRO := &OfflineDbFileSetRead{
+		prefix:       prefix,
+		blockStorage: blockStorage,
+	}
 	fsetRW := &OfflineDbFileSetWrite{}
 	dataAccess := &OfflineBlockDataAccess{blockStorage: blockStorage}
 
