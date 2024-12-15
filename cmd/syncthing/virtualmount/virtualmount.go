@@ -82,13 +82,12 @@ func (c *CLI) Run() error {
 
 	folderLabel := "offline-folder-mount"
 
-	prefix := blockstorage.MetaDataSubFolder + "/" +
-		blockstorage.LOCAL_HAVE_FI_META_PREFIX + "/" +
+	metaPrefix := blockstorage.LOCAL_HAVE_FI_META_PREFIX + "/" +
 		c.DeviceID + "/" +
 		c.FolderID + "/"
 
 	fsetRO := &OfflineDbFileSetRead{
-		prefix:       prefix,
+		metaPrefix:   metaPrefix,
 		blockStorage: blockStorage,
 	}
 	fsetRW := &OfflineDbFileSetWrite{}
@@ -207,24 +206,24 @@ func (o *OfflineDbFileSetWrite) UpdateOneLocalFileInfoLocalChangeDetected(fi *pr
 }
 
 type OfflineDbFileSetRead struct {
-	prefix       string
+	metaPrefix   string
 	blockStorage *blockstorage.GoCloudUrlStorage
 }
 
 // SnapshotI implements model.DbFileSetReadI.
 func (o *OfflineDbFileSetRead) SnapshotI() (db.DbSnapshotI, error) {
-	return &OfflineDbSnapshotI{o.prefix, o.blockStorage}, nil
+	return &OfflineDbSnapshotI{o.metaPrefix, o.blockStorage}, nil
 }
 
 type OfflineDbSnapshotI struct {
-	prefix       string
+	metaPrefix   string
 	blockStorage *blockstorage.GoCloudUrlStorage
 }
 
 // GetGlobal implements db.DbSnapshotI.
 func (o *OfflineDbSnapshotI) GetGlobal(file string) (protocol.FileInfo, bool) {
 	var fi protocol.FileInfo
-	fullUrl := o.prefix + file
+	fullUrl := o.metaPrefix + file
 	data, ok := o.blockStorage.GetMeta(fullUrl)
 	logger.DefaultLogger.Debugf("GetGlobal(%v): %v, ok:%v, data len:%v", file, fullUrl, ok, len(data))
 	if !ok {
@@ -276,9 +275,10 @@ func (o *OfflineDbSnapshotI) Release() {
 // WithPrefixedGlobalTruncated implements db.DbSnapshotI.
 func (o *OfflineDbSnapshotI) WithPrefixedGlobalTruncated(prefix string, fn db.Iterator) {
 	logger.DefaultLogger.Debugf("WithPrefixedGlobalTruncated(%v)", prefix)
-	fullPrefix := o.prefix + prefix
+	rootPrefix := blockstorage.MetaDataSubFolder + "/" + o.metaPrefix
+	fullPrefix := rootPrefix + prefix
 	iterateSubdirs(o.blockStorage, fullPrefix, "" /* treat as flat */, func(e *blob.ListObject) {
-		name, _ := strings.CutPrefix(e.Key, o.prefix)
+		name, _ := strings.CutPrefix(e.Key, rootPrefix)
 		logger.DefaultLogger.Debugf("WithPrefixedGlobalTruncated(%v): %v", prefix, name)
 		fi, ok := o.GetGlobal(name)
 		logger.DefaultLogger.Debugf("WithPrefixedGlobalTruncated(%v): %v, ok:%v: %+v", prefix, ok, fi)
