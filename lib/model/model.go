@@ -2823,12 +2823,16 @@ func SnapshotGlobalDirectoryTree(snap db.DbSnapshotI, prefix string, levels int,
 	snap.WithPrefixedGlobalTruncated(prefix, func(fi protocol.FileIntf) bool {
 		f := fi
 
+		logger.DefaultLogger.Infof("SnapshotGlobalDirectoryTree(%v) - %s, full: %v", prefix, fi.FileName())
+
 		// Don't include the prefix itself.
 		if f.IsInvalid() || f.IsDeleted() || strings.HasPrefix(prefix, f.FileName()) {
 			return true
 		}
 
 		fName := strings.Replace(f.FileName(), prefix, "", 1)
+
+		logger.DefaultLogger.Infof("SnapshotGlobalDirectoryTree(%v) - %s, replaced: %v", prefix, fName)
 
 		dir := filepath.Dir(fName)
 		base := filepath.Base(fName)
