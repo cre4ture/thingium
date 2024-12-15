@@ -2821,19 +2821,19 @@ func SnapshotGlobalDirectoryTree(snap db.DbSnapshotI, prefix string, levels int,
 
 	var err error = nil
 	snap.WithPrefixedGlobalTruncated(prefix, func(fi protocol.FileIntf) bool {
-		f := fi.(db.FileInfoTruncated)
+		f := fi
 
 		// Don't include the prefix itself.
-		if f.IsInvalid() || f.IsDeleted() || strings.HasPrefix(prefix, f.Name) {
+		if f.IsInvalid() || f.IsDeleted() || strings.HasPrefix(prefix, f.FileName()) {
 			return true
 		}
 
-		f.Name = strings.Replace(f.Name, prefix, "", 1)
+		fName := strings.Replace(f.FileName(), prefix, "", 1)
 
-		dir := filepath.Dir(f.Name)
-		base := filepath.Base(f.Name)
+		dir := filepath.Dir(fName)
+		base := filepath.Base(fName)
 
-		if levels > -1 && strings.Count(f.Name, sep) > levels {
+		if levels > -1 && strings.Count(fName, sep) > levels {
 			return true
 		}
 
@@ -2842,7 +2842,7 @@ func SnapshotGlobalDirectoryTree(snap db.DbSnapshotI, prefix string, levels int,
 			for _, path := range strings.Split(dir, sep) {
 				child := findByName(parent.Children, path)
 				if child == nil {
-					err = fmt.Errorf("could not find child '%s' for path '%s' in parent '%s'", path, f.Name, parent.Name)
+					err = fmt.Errorf("could not find child '%s' for path '%s' in parent '%s'", path, fName, parent.Name)
 					return false
 				}
 				parent = child
@@ -2855,7 +2855,7 @@ func SnapshotGlobalDirectoryTree(snap db.DbSnapshotI, prefix string, levels int,
 
 		parent.Children = append(parent.Children, &TreeEntry{
 			Name:    base,
-			Type:    f.Type,
+			Type:    f.FileType(),
 			ModTime: f.ModTime(),
 			Size:    f.FileSize(),
 		})
