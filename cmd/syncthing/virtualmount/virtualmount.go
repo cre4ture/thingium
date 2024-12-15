@@ -308,6 +308,7 @@ func (o *OfflineDbSnapshotI) WithPrefixedGlobalTruncated(prefix string, fn db.It
 		if !ok {
 			return
 		}
+		fi.Name, _ = strings.CutPrefix(fi.Name, prefix)
 		fn(fi)
 	})
 }
