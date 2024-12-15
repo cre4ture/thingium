@@ -224,8 +224,9 @@ type OfflineDbSnapshotI struct {
 // GetGlobal implements db.DbSnapshotI.
 func (o *OfflineDbSnapshotI) GetGlobal(file string) (protocol.FileInfo, bool) {
 	var fi protocol.FileInfo
-	data, ok := o.blockStorage.GetMeta(o.prefix + file)
-	logger.DefaultLogger.Debugf("GetGlobal(%v): %v, ok:%v, data len:%v", file, ok, len(data))
+	fullUrl := o.prefix + file
+	data, ok := o.blockStorage.GetMeta(fullUrl)
+	logger.DefaultLogger.Debugf("GetGlobal(%v): %v, ok:%v, data len:%v", file, fullUrl, ok, len(data))
 	if !ok {
 		return fi, false
 	}
