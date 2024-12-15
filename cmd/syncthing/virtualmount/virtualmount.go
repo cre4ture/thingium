@@ -222,18 +222,19 @@ func NewOfflineDbFileSetRead(
 
 // SnapshotI implements model.DbFileSetReadI.
 func (o *OfflineDbFileSetRead) SnapshotI() (db.DbSnapshotI, error) {
-	return &OfflineDbSnapshotI{o.metaPrefix, o.blockStorage, o.cache}, nil
+	return &OfflineDbSnapshotI{o.metaPrefix, o.blockStorage, &o.cache}, nil
 }
 
 type OfflineDbSnapshotI struct {
 	metaPrefix   string
 	blockStorage *blockstorage.GoCloudUrlStorage
-	cache        map[string]*protocol.FileInfo
+	cache        *map[string]*protocol.FileInfo
 }
 
 // GetGlobal implements db.DbSnapshotI.
 func (o *OfflineDbSnapshotI) GetGlobal(file string) (protocol.FileInfo, bool) {
-	fi, ok := o.cache[file]
+	fi, ok := (*o.cache)[file]
+	logger.DefaultLogger.Debugf("GetGlobal(%v): cache-ok:%v, data len:%v", file, ok, fi)
 	if ok {
 		return *fi, true
 	}
@@ -248,12 +249,12 @@ func (o *OfflineDbSnapshotI) GetGlobal(file string) (protocol.FileInfo, bool) {
 	}
 
 	err := fi.Unmarshal(data)
-	logger.DefaultLogger.Debugf("GetGlobal(%v): unmarshal-err: %+v. fi: %+v", err, fi)
+	logger.DefaultLogger.Debugf("GetGlobal(%v): unmarshal-err: %+v. fi: %+v", file, err, fi)
 	if err != nil {
 		return *fi, false
 	}
 
-	o.cache[file] = fi
+	(*o.cache)[file] = fi
 
 	return *fi, true
 }
