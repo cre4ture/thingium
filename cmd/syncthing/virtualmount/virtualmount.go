@@ -86,10 +86,8 @@ func (c *CLI) Run() error {
 		c.DeviceID + "/" +
 		c.FolderID + "/"
 
-	fsetRO := &OfflineDbFileSetRead{
-		metaPrefix:   metaPrefix,
-		blockStorage: blockStorage,
-	}
+	fsetRO := NewOfflineDbFileSetRead(metaPrefix, blockStorage)
+
 	fsetRW := &OfflineDbFileSetWrite{}
 	dataAccess := &OfflineBlockDataAccess{blockStorage: blockStorage}
 
@@ -208,35 +206,56 @@ func (o *OfflineDbFileSetWrite) UpdateOneLocalFileInfoLocalChangeDetected(fi *pr
 type OfflineDbFileSetRead struct {
 	metaPrefix   string
 	blockStorage *blockstorage.GoCloudUrlStorage
+	cache        map[string]*protocol.FileInfo
+}
+
+func NewOfflineDbFileSetRead(
+	metaPrefix string,
+	blockStorage *blockstorage.GoCloudUrlStorage,
+) *OfflineDbFileSetRead {
+	return &OfflineDbFileSetRead{
+		metaPrefix:   metaPrefix,
+		blockStorage: blockStorage,
+		cache:        make(map[string]*protocol.FileInfo),
+	}
 }
 
 // SnapshotI implements model.DbFileSetReadI.
 func (o *OfflineDbFileSetRead) SnapshotI() (db.DbSnapshotI, error) {
-	return &OfflineDbSnapshotI{o.metaPrefix, o.blockStorage}, nil
+	return &OfflineDbSnapshotI{o.metaPrefix, o.blockStorage, o.cache}, nil
 }
 
 type OfflineDbSnapshotI struct {
 	metaPrefix   string
 	blockStorage *blockstorage.GoCloudUrlStorage
+	cache        map[string]*protocol.FileInfo
 }
 
 // GetGlobal implements db.DbSnapshotI.
 func (o *OfflineDbSnapshotI) GetGlobal(file string) (protocol.FileInfo, bool) {
-	var fi protocol.FileInfo
+	fi, ok := o.cache[file]
+	if ok {
+		return *fi, true
+	}
+
+	fi = &protocol.FileInfo{}
+
 	fullUrl := o.metaPrefix + file
 	data, ok := o.blockStorage.GetMeta(fullUrl)
 	logger.DefaultLogger.Debugf("GetGlobal(%v): %v, ok:%v, data len:%v", file, fullUrl, ok, len(data))
 	if !ok {
-		return fi, false
+		return *fi, false
 	}
 
 	err := fi.Unmarshal(data)
 	logger.DefaultLogger.Debugf("GetGlobal(%v): unmarshal-err: %+v. fi: %+v", err, fi)
 	if err != nil {
-		return fi, false
+		return *fi, false
 	}
 
-	return fi, true
+	o.cache[file] = fi
+
+	return *fi, true
 }
 
 // GetGlobalTruncated implements db.DbSnapshotI.
