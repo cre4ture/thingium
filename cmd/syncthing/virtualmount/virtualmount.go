@@ -92,10 +92,10 @@ func (c *CLI) Run() error {
 	fsetRO := NewOfflineDbFileSetRead(metaPrefix, blockStorage)
 
 	fsetRW := &OfflineDbFileSetWrite{}
-	cache := cache.New(5*time.Minute, 1*time.Minute)
+	dataCache := cache.New(5*time.Minute, 1*time.Minute)
 	dataAccess := &OfflineBlockDataAccess{
 		blockStorage:   blockStorage,
-		blockDataCache: cache,
+		blockDataCache: NewProtected(dataCache),
 	}
 
 	stVF := model.NewSyncthingVirtualFolderFuseAdapter(
@@ -177,7 +177,13 @@ func listSubdirs(storage *blockstorage.GoCloudUrlStorage, prefix string, delimit
 
 type OfflineBlockDataAccess struct {
 	blockStorage   *blockstorage.GoCloudUrlStorage
-	blockDataCache *cache.Cache
+	blockDataCache *Protected[*cache.Cache]
+}
+
+type CachedBlock struct {
+	data   []byte
+	ok     bool
+	result model.GetBlockDataResult
 }
 
 // GetBlockDataFromCacheOrDownloadI implements model.BlockDataAccessI.
@@ -186,19 +192,39 @@ func (o *OfflineBlockDataAccess) GetBlockDataFromCacheOrDownloadI(
 ) ([]byte, bool, model.GetBlockDataResult) {
 
 	cacheKey := hashutil.HashToStringMapKey(block.Hash)
-	cachedData, ok := o.blockDataCache.Get(cacheKey)
+	var dataBuffer *CachedBlock = nil
+	var pCD *Protected[CachedBlock] = nil
+	ok := false
+	func() {
+		cachemap := o.blockDataCache.Lock()
+		defer o.blockDataCache.Unlock()
+
+		var cachedData interface{}
+		cachedData, ok = (*cachemap).Get(cacheKey)
+		if ok {
+			pCD = cachedData.(*Protected[CachedBlock])
+		} else {
+			pCD = NewProtected(CachedBlock{})
+			(*cachemap).Set(cacheKey, pCD, 0)
+		}
+		dataBuffer = pCD.Lock() // lock before o.blockDataCache.Unlock()
+	}()
+	defer pCD.Unlock()
+
 	if ok {
-		return cachedData.([]byte), true, model.GET_BLOCK_CACHED
+		return dataBuffer.data, dataBuffer.ok, dataBuffer.result
 	}
 
 	data, ok := o.blockStorage.ReserveAndGet(block.Hash, true)
+	dataBuffer.data = data
+	dataBuffer.ok = ok
 	if !ok {
-		return nil, false, model.GET_BLOCK_FAILED
+		dataBuffer.result = model.GET_BLOCK_FAILED
+	} else {
+		dataBuffer.result = model.GET_BLOCK_CACHED
 	}
 
-	o.blockDataCache.Set(cacheKey, data, 0)
-
-	return data, true, model.GET_BLOCK_CACHED
+	return dataBuffer.data, dataBuffer.ok, dataBuffer.result
 }
 
 // RequestBackgroundDownloadI implements model.BlockDataAccessI.
@@ -369,6 +395,7 @@ func (o *OfflineDbSnapshotI) WithPrefixedGlobalTruncated(prefix string, fn db.It
 	}
 
 	var pChilds *Protected[[]*protocol.FileInfo] = nil
+	var childs *[]*protocol.FileInfo = nil
 	ok := false
 	func() {
 		cache := o.caches.dirCache.Lock()
@@ -378,25 +405,40 @@ func (o *OfflineDbSnapshotI) WithPrefixedGlobalTruncated(prefix string, fn db.It
 			pChilds = NewProtected([]*protocol.FileInfo{})
 			(*cache)[prefix] = pChilds
 		}
+		childs = pChilds.Lock()
 	}()
 
 	func() {
-		childs := pChilds.Lock()
 		defer pChilds.Unlock()
-
 		if !ok {
+			ch := make(chan *protocol.FileInfo, 10)
+			wg := sync.WaitGroup{}
+
 			fullPrefix := rootPrefix + prefix
 			iterateSubdirs(o.blockStorage, fullPrefix, "/", func(e *blob.ListObject) {
-				name, _ := strings.CutPrefix(e.Key, rootPrefix)
-				logger.DefaultLogger.Debugf("WithPrefixedGlobalTruncated(%v): %v", prefix, name)
-				fi, ok := o.GetGlobal(name)
-				logger.DefaultLogger.Debugf("WithPrefixedGlobalTruncated(%v): %v, ok:%v: %+v", prefix, ok, fi)
-				if !ok {
-					return
-				}
-				fi.Name, _ = strings.CutPrefix(fi.Name, prefix)
-				*childs = append(*childs, &fi)
+				wg.Add(1)
+				go func() {
+					defer wg.Done()
+					name, _ := strings.CutPrefix(e.Key, rootPrefix)
+					logger.DefaultLogger.Debugf("WithPrefixedGlobalTruncated(%v): %v", prefix, name)
+					fi, ok := o.GetGlobal(name)
+					logger.DefaultLogger.Debugf("WithPrefixedGlobalTruncated(%v): %v, ok:%v: %+v", prefix, ok, fi)
+					if !ok {
+						return
+					}
+					fi.Name, _ = strings.CutPrefix(fi.Name, prefix)
+					ch <- &fi
+				}()
 			})
+
+			go func() {
+				wg.Wait()
+				close(ch)
+			}()
+
+			for fi := range ch {
+				*childs = append(*childs, fi)
+			}
 		}
 
 		for _, child := range *childs {
