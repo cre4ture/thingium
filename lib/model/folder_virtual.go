@@ -11,7 +11,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io/fs"
 	"log"
 	"math"
@@ -649,13 +648,16 @@ func (vf *virtualFolderSyncthingService) updateOneLocalFileInfo(fi *protocol.Fil
 		return
 	}
 
-	metaKey := fmt.Sprintf("%v/%v/%v", blockstorage.LOCAL_HAVE_FI_META_PREFIX, vf.ownDeviceIdString(), fi.Name)
+	metaKey := blockstorage.LOCAL_HAVE_FI_META_PREFIX + "/" +
+		vf.ownDeviceIdString() + "/" +
+		vf.folderID + "/" +
+		fi.Name
 	vf.blockCache.SetMeta(metaKey, fiData)
 	logger.DefaultLogger.Debugf("VFolder: Stored file info (size: %v) to %v", len(fiData), metaKey)
 }
 
 func (vf *virtualFolderSyncthingService) Update(fs []protocol.FileInfo) {
-	vf.fset.Update(protocol.LocalDeviceID, fs)
+	vf.fset.Update(protocol.LocalDeviceID, fs) // TODO: check if store to blockCache meta needed
 }
 
 func (vf *virtualFolderSyncthingService) UpdateOneLocalFileInfoLocalChangeDetected(fi *protocol.FileInfo) {
