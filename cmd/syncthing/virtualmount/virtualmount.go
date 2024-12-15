@@ -206,7 +206,8 @@ func (o *OfflineDbFileSetWrite) UpdateOneLocalFileInfoLocalChangeDetected(fi *pr
 type OfflineDbFileSetRead struct {
 	metaPrefix   string
 	blockStorage *blockstorage.GoCloudUrlStorage
-	cache        map[string]*protocol.FileInfo
+	fileCache    map[string]*protocol.FileInfo
+	dirCache     map[string][]*protocol.FileInfo
 }
 
 func NewOfflineDbFileSetRead(
@@ -216,24 +217,26 @@ func NewOfflineDbFileSetRead(
 	return &OfflineDbFileSetRead{
 		metaPrefix:   metaPrefix,
 		blockStorage: blockStorage,
-		cache:        make(map[string]*protocol.FileInfo),
+		fileCache:    make(map[string]*protocol.FileInfo),
+		dirCache:     make(map[string][]*protocol.FileInfo),
 	}
 }
 
 // SnapshotI implements model.DbFileSetReadI.
 func (o *OfflineDbFileSetRead) SnapshotI() (db.DbSnapshotI, error) {
-	return &OfflineDbSnapshotI{o.metaPrefix, o.blockStorage, &o.cache}, nil
+	return &OfflineDbSnapshotI{o.metaPrefix, o.blockStorage, &o.fileCache, &o.dirCache}, nil
 }
 
 type OfflineDbSnapshotI struct {
 	metaPrefix   string
 	blockStorage *blockstorage.GoCloudUrlStorage
-	cache        *map[string]*protocol.FileInfo
+	fileCache    *map[string]*protocol.FileInfo
+	dirCache     *map[string][]*protocol.FileInfo
 }
 
 // GetGlobal implements db.DbSnapshotI.
 func (o *OfflineDbSnapshotI) GetGlobal(file string) (protocol.FileInfo, bool) {
-	fi, ok := (*o.cache)[file]
+	fi, ok := (*o.fileCache)[file]
 	logger.DefaultLogger.Debugf("GetGlobal(%v): cache-ok:%v, data len:%v", file, ok, fi)
 	if ok {
 		return *fi, true
@@ -254,7 +257,7 @@ func (o *OfflineDbSnapshotI) GetGlobal(file string) (protocol.FileInfo, bool) {
 		return *fi, false
 	}
 
-	(*o.cache)[file] = fi
+	(*o.fileCache)[file] = fi
 
 	return *fi, true
 }
@@ -299,16 +302,28 @@ func (o *OfflineDbSnapshotI) WithPrefixedGlobalTruncated(prefix string, fn db.It
 	if (len(prefix) != 0) && !strings.HasSuffix(prefix, "/") {
 		prefix = prefix + "/"
 	}
-	fullPrefix := rootPrefix + prefix
-	iterateSubdirs(o.blockStorage, fullPrefix, "/", func(e *blob.ListObject) {
-		name, _ := strings.CutPrefix(e.Key, rootPrefix)
-		logger.DefaultLogger.Debugf("WithPrefixedGlobalTruncated(%v): %v", prefix, name)
-		fi, ok := o.GetGlobal(name)
-		logger.DefaultLogger.Debugf("WithPrefixedGlobalTruncated(%v): %v, ok:%v: %+v", prefix, ok, fi)
-		if !ok {
-			return
-		}
-		fi.Name, _ = strings.CutPrefix(fi.Name, prefix)
-		fn(fi)
-	})
+
+	childs, ok := (*o.dirCache)[prefix]
+	if !ok {
+		childs = make([]*protocol.FileInfo, 0)
+
+		fullPrefix := rootPrefix + prefix
+		iterateSubdirs(o.blockStorage, fullPrefix, "/", func(e *blob.ListObject) {
+			name, _ := strings.CutPrefix(e.Key, rootPrefix)
+			logger.DefaultLogger.Debugf("WithPrefixedGlobalTruncated(%v): %v", prefix, name)
+			fi, ok := o.GetGlobal(name)
+			logger.DefaultLogger.Debugf("WithPrefixedGlobalTruncated(%v): %v, ok:%v: %+v", prefix, ok, fi)
+			if !ok {
+				return
+			}
+			fi.Name, _ = strings.CutPrefix(fi.Name, prefix)
+			childs = append(childs, &fi)
+		})
+
+		(*o.dirCache)[prefix] = childs
+	}
+
+	for _, child := range childs {
+		fn(child)
+	}
 }
