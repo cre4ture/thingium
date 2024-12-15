@@ -154,6 +154,9 @@ func listSubdirs(storage *blockstorage.GoCloudUrlStorage, prefix string, delimit
 	names := make([]string, 0)
 	iterateSubdirs(storage, prefix, delimiter, func(e *blob.ListObject) {
 		name, _ := strings.CutPrefix(e.Key, prefix)
+		if delimiter != "" {
+			name, _ = strings.CutSuffix(e.Key, delimiter)
+		}
 		names = append(names, name)
 	})
 	return names, nil
