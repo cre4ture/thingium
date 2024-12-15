@@ -277,22 +277,29 @@ func (o *OfflineDbSnapshotI) GetGlobal(file string) (protocol.FileInfo, bool) {
 
 	logger.DefaultLogger.Debugf("GetGlobal(%v): cache-ok:%v, data len:%v", file, ok, fi)
 	if ok {
+		if fi == nil {
+			return protocol.FileInfo{}, false
+		}
 		return *fi, true
 	}
-
-	fi = &protocol.FileInfo{}
 
 	fullUrl := o.metaPrefix + file
 	data, ok := o.blockStorage.GetMeta(fullUrl)
 	logger.DefaultLogger.Debugf("GetGlobal(%v): %v, ok:%v, data len:%v", file, fullUrl, ok, len(data))
 	if !ok {
-		return *fi, false
+		func() {
+			cache := o.caches.fileCache.Lock()
+			defer o.caches.fileCache.Unlock()
+			(*cache)[file] = nil
+		}()
+		return protocol.FileInfo{}, false
 	}
 
+	fi = &protocol.FileInfo{}
 	err := fi.Unmarshal(data)
 	logger.DefaultLogger.Debugf("GetGlobal(%v): unmarshal-err: %+v. fi: %+v", file, err, fi)
 	if err != nil {
-		return *fi, false
+		return protocol.FileInfo{}, false
 	}
 
 	func() {
