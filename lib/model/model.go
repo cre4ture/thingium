@@ -2797,9 +2797,6 @@ func (m *model) GlobalDirectoryTree(folder, prefix string, levels int, dirsOnly 
 		return nil, ErrFolderMissing
 	}
 
-	root := &TreeEntry{
-		Children: make([]*TreeEntry, 0),
-	}
 	sep := string(filepath.Separator)
 	prefix = osutil.NativeFilename(prefix)
 
@@ -2812,6 +2809,17 @@ func (m *model) GlobalDirectoryTree(folder, prefix string, levels int, dirsOnly 
 		return nil, err
 	}
 	defer snap.Release()
+
+	return SnapshotGlobalDirectoryTree(snap, prefix, levels, dirsOnly)
+}
+
+func SnapshotGlobalDirectoryTree(snap db.DbSnapshotI, prefix string, levels int, dirsOnly bool) ([]*TreeEntry, error) {
+	sep := string(filepath.Separator)
+	root := &TreeEntry{
+		Children: make([]*TreeEntry, 0),
+	}
+
+	var err error = nil
 	snap.WithPrefixedGlobalTruncated(prefix, func(fi protocol.FileIntf) bool {
 		f := fi.(db.FileInfoTruncated)
 
@@ -2854,6 +2862,7 @@ func (m *model) GlobalDirectoryTree(folder, prefix string, levels int, dirsOnly 
 
 		return true
 	})
+
 	if err != nil {
 		return nil, err
 	}

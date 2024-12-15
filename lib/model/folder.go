@@ -89,7 +89,7 @@ func (f *folderBase) pullBlockBase(
 	logger.DefaultLogger.Infof("pullBlockBase(%v) - START", b)
 	defer logger.DefaultLogger.Infof("pullBlockBase(%v) - RETURN", b)
 
-	candidates := f.model.availabilityInSnapshot(f.FolderConfiguration, snap, b.File, b.Block)
+	candidates := f.model.availabilityInSnapshot(f.FolderConfiguration, snap, *b.File, b.Block)
 
 	for {
 		logger.DefaultLogger.Infof("pullBlockBase(%v) - LOOP", b)

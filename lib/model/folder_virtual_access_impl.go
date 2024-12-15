@@ -16,8 +16,8 @@ import (
 
 	ffs "github.com/hanwen/go-fuse/v2/fs"
 	"github.com/hanwen/go-fuse/v2/fuse"
+	"github.com/syncthing/syncthing/lib/config"
 	"github.com/syncthing/syncthing/lib/db"
-	"github.com/syncthing/syncthing/lib/events"
 	"github.com/syncthing/syncthing/lib/logger"
 	"github.com/syncthing/syncthing/lib/protocol"
 	"github.com/syncthing/syncthing/lib/scanner"
@@ -27,10 +27,12 @@ import (
 )
 
 type syncthingVirtualFolderFuseAdapter struct {
-	vFSS     *virtualFolderSyncthingService
-	folderID string
-	model    *model
-	fset     *db.FileSet
+	folderType config.FolderType
+	folderID   string
+	modelID    protocol.ShortID
+	fset       DbFileSetReadI
+	fsetRW     DbFileSetWriteI
+	dataAccess BlockDataAccessI
 
 	// ino mapping
 	ino_mu      sync.Mutex
@@ -43,6 +45,47 @@ type syncthingVirtualFolderFuseAdapter struct {
 }
 
 var _ = (SyncthingVirtualFolderAccessI)((*syncthingVirtualFolderFuseAdapter)(nil))
+
+type DbFileSetReadI interface {
+	SnapshotI() (db.DbSnapshotI, error)
+}
+
+type DbFileSetWriteI interface {
+	Update(fs []protocol.FileInfo)
+	UpdateOneLocalFileInfoLocalChangeDetected(fi *protocol.FileInfo)
+}
+
+type BlockDataAccessI interface {
+	GetBlockDataFromCacheOrDownloadI(
+		file *protocol.FileInfo,
+		block protocol.BlockInfo,
+	) ([]byte, bool, GetBlockDataResult)
+	ReserveAndSetI(hash []byte, data []byte)
+	RequestBackgroundDownloadI(filename string, size int64, modified time.Time)
+}
+
+func NewSyncthingVirtualFolderFuseAdapter(
+	modelID protocol.ShortID,
+	folderID string,
+	folderType config.FolderType,
+	fset DbFileSetReadI,
+	fsetRW DbFileSetWriteI,
+	dataAccess BlockDataAccessI,
+) *syncthingVirtualFolderFuseAdapter {
+	return &syncthingVirtualFolderFuseAdapter{
+		folderType:     folderType,
+		folderID:       folderID,
+		modelID:        modelID,
+		fset:           fset,
+		fsetRW:         fsetRW,
+		dataAccess:     dataAccess,
+		ino_mu:         sync.NewMutex(),
+		next_ino_nr:    1,
+		ino_mapping:    make(map[string]uint64),
+		directories_mu: sync.NewMutex(),
+		directories:    make(map[string]*TreeEntry),
+	}
+}
 
 func (r *syncthingVirtualFolderFuseAdapter) getInoOf(path string) uint64 {
 	r.ino_mu.Lock()
@@ -57,7 +100,7 @@ func (r *syncthingVirtualFolderFuseAdapter) getInoOf(path string) uint64 {
 }
 
 func (stf *syncthingVirtualFolderFuseAdapter) lookupFile(path string) (info *db.FileInfoTruncated, eno syscall.Errno) {
-	snap, err := stf.fset.Snapshot()
+	snap, err := stf.fset.SnapshotI()
 	if err != nil {
 		//stf..log()
 		return nil, syscall.EFAULT
@@ -66,7 +109,7 @@ func (stf *syncthingVirtualFolderFuseAdapter) lookupFile(path string) (info *db.
 
 	fi, ok := snap.GetGlobalTruncated(path)
 	if !ok {
-		if stf.vFSS.Type.IsReceiveEncrypted() {
+		if stf.folderType.IsReceiveEncrypted() {
 			stf.directories_mu.Lock()
 			defer stf.directories_mu.Unlock()
 			logger.DefaultLogger.Infof("ENC VIRT lookup %s - %+v", path, stf.directories)
@@ -121,14 +164,14 @@ func (stf *syncthingVirtualFolderFuseAdapter) createFile(
 	Permissions *uint32, name string,
 ) (info *db.FileInfoTruncated, eno syscall.Errno) {
 
-	if stf.vFSS.Type.IsReceiveOnly() {
+	if stf.folderType.IsReceiveOnly() {
 		return nil, syscall.EACCES
 	}
 
-	fi := createNewVirtualFileInfo(stf.model.shortID, Permissions, name)
-	stf.vFSS.updateOneLocalFileInfo(&fi, events.LocalChangeDetected)
+	fi := createNewVirtualFileInfo(stf.modelID, Permissions, name)
+	stf.fsetRW.UpdateOneLocalFileInfoLocalChangeDetected(&fi)
 
-	snap, err := stf.fset.Snapshot()
+	snap, err := stf.fset.SnapshotI()
 	if err != nil {
 		return nil, syscall.EAGAIN
 	}
@@ -159,11 +202,11 @@ func (stf *syncthingVirtualFolderFuseAdapter) writeFile(
 	ctx context.Context, name string, offset uint64, inputData []byte,
 ) syscall.Errno {
 
-	if stf.vFSS.Type.IsReceiveOnly() {
+	if stf.folderType.IsReceiveOnly() {
 		return syscall.EACCES
 	}
 
-	snap, err := stf.fset.Snapshot()
+	snap, err := stf.fset.SnapshotI()
 	if err != nil {
 		//stf..log()
 		return syscall.EFAULT
@@ -199,10 +242,10 @@ func (stf *syncthingVirtualFolderFuseAdapter) writeFile(
 		var blockData = []byte{}
 		if blockIdx < len(fi.Blocks) {
 			bi := fi.Blocks[blockIdx]
-			blockData, ok = stf.vFSS.blockCache.ReserveAndGet(bi.Hash, true)
+			blockData, ok, _ = stf.dataAccess.GetBlockDataFromCacheOrDownloadI(&fi, bi)
 		}
 		if !ok {
-			// allocate new block:
+			// allocate new block: // TODO: what in case of temporary connection issue?
 			blockData = make([]byte, writeEndInBlock)
 		}
 
@@ -226,14 +269,14 @@ func (stf *syncthingVirtualFolderFuseAdapter) writeFile(
 			fi.Size = writeEndInFile
 		}
 		changeTime := time.Now()
-		fi.ModifiedBy = stf.model.shortID
+		fi.ModifiedBy = stf.modelID
 		fi.ModifiedS = changeTime.Unix()
 		fi.ModifiedNs = changeTime.Nanosecond()
 		fi.InodeChangeNs = changeTime.UnixNano()
 		fi.Version = fi.Version.Update(fi.ModifiedBy)
 
-		stf.vFSS.blockCache.ReserveAndSet(biNew.Hash, blockData)
-		stf.vFSS.updateOneLocalFileInfo(&fi, events.LocalChangeDetected)
+		stf.dataAccess.ReserveAndSetI(biNew.Hash, blockData)
+		stf.fsetRW.UpdateOneLocalFileInfoLocalChangeDetected(&fi)
 
 		blockIdx += 1
 		inputPos = inputPosNext
@@ -247,11 +290,11 @@ func (stf *syncthingVirtualFolderFuseAdapter) writeFile(
 
 func (stf *syncthingVirtualFolderFuseAdapter) deleteFile(ctx context.Context, path string) syscall.Errno {
 
-	if stf.vFSS.Type.IsReceiveOnly() {
+	if stf.folderType.IsReceiveOnly() {
 		return syscall.EACCES
 	}
 
-	snap, err := stf.fset.Snapshot()
+	snap, err := stf.fset.SnapshotI()
 	if err != nil {
 		//stf..log()
 		return syscall.EFAULT
@@ -263,19 +306,19 @@ func (stf *syncthingVirtualFolderFuseAdapter) deleteFile(ctx context.Context, pa
 		return syscall.ENOENT
 	}
 
-	fi.ModifiedBy = stf.model.shortID
+	fi.ModifiedBy = stf.modelID
 	fi.Deleted = true
 	fi.Size = 0
 	fi.Blocks = nil
-	fi.Version = fi.Version.Update(stf.model.shortID)
-	stf.vFSS.updateOneLocalFileInfo(&fi, events.LocalChangeDetected)
+	fi.Version = fi.Version.Update(stf.modelID)
+	stf.fsetRW.UpdateOneLocalFileInfoLocalChangeDetected(&fi)
 
 	return 0
 }
 
 func (stf *syncthingVirtualFolderFuseAdapter) createDir(ctx context.Context, path string) syscall.Errno {
 
-	if stf.vFSS.Type.IsReceiveOnly() {
+	if stf.folderType.IsReceiveOnly() {
 		return syscall.EACCES
 	}
 
@@ -284,20 +327,20 @@ func (stf *syncthingVirtualFolderFuseAdapter) createDir(ctx context.Context, pat
 		return syscall.EEXIST
 	}
 
-	fi := createNewVirtualFileInfo(stf.model.shortID, nil, path)
+	fi := createNewVirtualFileInfo(stf.modelID, nil, path)
 	fi.Type = protocol.FileInfoTypeDirectory
 	fi.Blocks = nil
-	stf.vFSS.updateOneLocalFileInfo(&fi, events.LocalChangeDetected)
+	stf.fsetRW.UpdateOneLocalFileInfoLocalChangeDetected(&fi)
 	return 0
 }
 
 func (stf *syncthingVirtualFolderFuseAdapter) deleteDir(ctx context.Context, path string) syscall.Errno {
 
-	if stf.vFSS.Type.IsReceiveOnly() {
+	if stf.folderType.IsReceiveOnly() {
 		return syscall.EACCES
 	}
 
-	snap, err := stf.fset.Snapshot()
+	snap, err := stf.fset.SnapshotI()
 	if err != nil {
 		//stf..log()
 		return syscall.EFAULT
@@ -313,12 +356,12 @@ func (stf *syncthingVirtualFolderFuseAdapter) deleteDir(ctx context.Context, pat
 		return syscall.ENOTDIR
 	}
 
-	fi.ModifiedBy = stf.model.shortID
+	fi.ModifiedBy = stf.modelID
 	fi.Deleted = true
 	fi.Size = 0
 	fi.Blocks = []protocol.BlockInfo{}
-	fi.Version = fi.Version.Update(stf.model.shortID)
-	stf.vFSS.updateOneLocalFileInfo(&fi, events.LocalChangeDetected)
+	fi.Version = fi.Version.Update(stf.modelID)
+	stf.fsetRW.UpdateOneLocalFileInfoLocalChangeDetected(&fi)
 
 	return 0
 }
@@ -327,11 +370,11 @@ func (stf *syncthingVirtualFolderFuseAdapter) renameFileOrDir(
 	ctx context.Context, existingPath string, newPath string,
 ) syscall.Errno {
 
-	if stf.vFSS.Type.IsReceiveOnly() {
+	if stf.folderType.IsReceiveOnly() {
 		return syscall.EACCES
 	}
 
-	snap, err := stf.fset.Snapshot()
+	snap, err := stf.fset.SnapshotI()
 	if err != nil {
 		//stf..log()
 		return syscall.EFAULT
@@ -348,10 +391,10 @@ func (stf *syncthingVirtualFolderFuseAdapter) renameFileOrDir(
 		return syscall.EEXIST
 	}
 
-	fi.ModifiedBy = stf.model.shortID
+	fi.ModifiedBy = stf.modelID
 	fi.Name = newPath
-	fi.Version = fi.Version.Update(stf.model.shortID)
-	stf.vFSS.updateOneLocalFileInfo(&fi, events.LocalChangeDetected)
+	fi.Version = fi.Version.Update(stf.modelID)
+	stf.fsetRW.UpdateOneLocalFileInfoLocalChangeDetected(&fi)
 
 	return stf.deleteFile(ctx, existingPath)
 }
@@ -360,11 +403,11 @@ func (stf *syncthingVirtualFolderFuseAdapter) renameExchangeFileOrDir(
 	ctx context.Context, path1 string, path2 string,
 ) syscall.Errno {
 
-	if stf.vFSS.Type.IsReceiveOnly() {
+	if stf.folderType.IsReceiveOnly() {
 		return syscall.EACCES
 	}
 
-	snap, err := stf.fset.Snapshot()
+	snap, err := stf.fset.SnapshotI()
 	if err != nil {
 		//stf..log()
 		return syscall.EFAULT
@@ -381,20 +424,20 @@ func (stf *syncthingVirtualFolderFuseAdapter) renameExchangeFileOrDir(
 		return syscall.ENOENT
 	}
 
-	fi1.ModifiedBy = stf.model.shortID
-	fi2.ModifiedBy = stf.model.shortID
+	fi1.ModifiedBy = stf.modelID
+	fi2.ModifiedBy = stf.modelID
 
 	origFi1Name := fi1.Name
 	fi1.Name = fi2.Name
 	fi2.Name = origFi1Name
 
 	origFi1Version := fi1.Version
-	fi1.Version = fi2.Version.Update(stf.model.shortID)
-	fi2.Version = origFi1Version.Update(stf.model.shortID)
+	fi1.Version = fi2.Version.Update(stf.modelID)
+	fi2.Version = origFi1Version.Update(stf.modelID)
 
 	fiList := append([]protocol.FileInfo{}, fi1, fi2)
 
-	stf.fset.Update(protocol.LocalDeviceID, fiList)
+	stf.fsetRW.Update(fiList)
 
 	return 0
 }
@@ -403,7 +446,7 @@ func (stf *syncthingVirtualFolderFuseAdapter) createSymlink(
 	ctx context.Context, path, target string,
 ) syscall.Errno {
 
-	if stf.vFSS.Type.IsReceiveOnly() {
+	if stf.folderType.IsReceiveOnly() {
 		return syscall.EACCES
 	}
 
@@ -412,12 +455,12 @@ func (stf *syncthingVirtualFolderFuseAdapter) createSymlink(
 		return syscall.EEXIST
 	}
 
-	fi := createNewVirtualFileInfo(stf.model.shortID, nil, path)
+	fi := createNewVirtualFileInfo(stf.modelID, nil, path)
 	fi.Type = protocol.FileInfoTypeSymlink
 	fi.Blocks = nil
 	fi.SymlinkTarget = target
 
-	stf.vFSS.updateOneLocalFileInfo(&fi, events.LocalChangeDetected)
+	stf.fsetRW.UpdateOneLocalFileInfoLocalChangeDetected(&fi)
 	return 0
 }
 
@@ -464,17 +507,18 @@ func (f *syncthingVirtualFolderFuseAdapter) readDir(path string) (stream ffs.Dir
 	var err error = nil
 	children := []*TreeEntry{}
 	levels := 0
-	if f.vFSS.Type.IsReceiveEncrypted() {
+
+	snap, err := f.fset.SnapshotI()
+	if err != nil {
+		return nil, syscall.EFAULT
+	}
+	defer snap.Release()
+
+	if f.folderType.IsReceiveEncrypted() {
 
 		if path != "" && !strings.HasSuffix(path, "/") {
 			path = path + "/"
 		}
-
-		snap, err := f.fset.Snapshot()
-		if err != nil {
-			return nil, syscall.EFAULT
-		}
-		defer snap.Release()
 
 		fileMap := make(map[string]*TreeEntry)
 		snap.WithPrefixedGlobalTruncated(path, func(child protocol.FileIntf) bool {
@@ -512,7 +556,7 @@ func (f *syncthingVirtualFolderFuseAdapter) readDir(path string) (stream ffs.Dir
 		logger.DefaultLogger.Infof("ENC VIRT before, after - %+v [->] %+v", children, newChildren)
 		children = newChildren
 	} else {
-		children, err = f.model.GlobalDirectoryTree(f.folderID, path, levels, false)
+		children, err = SnapshotGlobalDirectoryTree(snap, path, levels, false)
 		if err != nil {
 			logger.DefaultLogger.Infof("ENC VIRT err -> %v", err)
 			return nil, syscall.EFAULT
@@ -528,7 +572,7 @@ func (f *syncthingVirtualFolderFuseAdapter) readDir(path string) (stream ffs.Dir
 
 type VirtualFileReadResult struct {
 	f           *syncthingVirtualFolderFuseAdapter
-	snap        *db.Snapshot
+	snap        db.DbSnapshotI
 	fi          *protocol.FileInfo
 	offset      uint64
 	maxToBeRead int
@@ -567,7 +611,7 @@ func (vf *VirtualFileReadResult) readOneBlock(offset uint64, remainingToRead int
 		return nil, 0
 	}
 
-	inputData, ok, _ := vf.f.vFSS.GetBlockDataFromCacheOrDownload(vf.snap, *vf.fi, block, nil)
+	inputData, ok, _ := vf.f.dataAccess.GetBlockDataFromCacheOrDownloadI(vf.fi, block)
 	if !ok {
 		return nil, fuse.Status(syscall.EAGAIN)
 	}
@@ -620,10 +664,8 @@ func (vf *VirtualFileReadResult) Bytes(outBuf []byte) ([]byte, fuse.Status) {
 
 	if nextOutBufWriteBegin != 0 {
 
-		if vf.f.vFSS.running != nil {
-			// request download of remaining file data:
-			vf.f.vFSS.running.RequestBackgroundDownload(vf.fi.Name, vf.fi.Size, vf.fi.ModTime(), func(deltaBytes int64, done bool) {})
-		}
+		// request download of remaining file data:
+		vf.f.dataAccess.RequestBackgroundDownloadI(vf.fi.Name, vf.fi.Size, vf.fi.ModTime())
 
 		return outBuf[:nextOutBufWriteBegin], 0
 	} else {
@@ -643,7 +685,7 @@ func (vf *VirtualFileReadResult) Done() {
 func (f *syncthingVirtualFolderFuseAdapter) readFile(
 	path string, buf []byte, off int64,
 ) (res fuse.ReadResult, errno syscall.Errno) {
-	snap, err := f.fset.Snapshot()
+	snap, err := f.fset.SnapshotI()
 	if err != nil {
 		//stf..log()
 		return nil, syscall.EFAULT

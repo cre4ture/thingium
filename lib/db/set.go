@@ -170,6 +170,10 @@ type Snapshot struct {
 	fatalError func(error, string)
 }
 
+func (s *FileSet) SnapshotI() (DbSnapshotI, error) {
+	return s.Snapshot()
+}
+
 func (s *FileSet) Snapshot() (*Snapshot, error) {
 	opStr := fmt.Sprintf("%s Snapshot()", s.folder)
 	l.Debugf(opStr)

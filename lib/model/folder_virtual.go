@@ -75,9 +75,15 @@ const (
 	GET_BLOCK_DOWNLOAD GetBlockDataResult = iota
 )
 
+func (vFSS *virtualFolderSyncthingService) GetBlockDataFromCacheOrDownloadI(
+	file *protocol.FileInfo,
+	block protocol.BlockInfo,
+) ([]byte, bool, GetBlockDataResult) {
+	return vFSS.GetBlockDataFromCacheOrDownload(file, block, nil)
+}
+
 func (vFSS *virtualFolderSyncthingService) GetBlockDataFromCacheOrDownload(
-	snap *db.Snapshot,
-	file protocol.FileInfo,
+	file *protocol.FileInfo,
 	block protocol.BlockInfo,
 	checkOnly func(), // set to nil when no check only
 ) ([]byte, bool, GetBlockDataResult) {
@@ -92,7 +98,13 @@ func (vFSS *virtualFolderSyncthingService) GetBlockDataFromCacheOrDownload(
 	defer logger.DefaultLogger.Infof("GetBlockDataFromCacheOrDownload(%v:%v): start pull", file.Name, block.Offset/int64(file.BlockSize()))
 	checkOnly()
 
-	err := vFSS.pullBlockBase(func(blockData []byte) {
+	snap, err := vFSS.fset.Snapshot()
+	if err != nil {
+		return nil, false, GET_BLOCK_FAILED
+	}
+	defer snap.Release()
+
+	err = vFSS.pullBlockBase(func(blockData []byte) {
 		data = blockData
 	}, snap, protocol.BlockOfFile{File: file, Block: block})
 
@@ -104,6 +116,10 @@ func (vFSS *virtualFolderSyncthingService) GetBlockDataFromCacheOrDownload(
 	vFSS.blockCache.ReserveAndSet(block.Hash, data)
 
 	return data, true, GET_BLOCK_DOWNLOAD
+}
+
+func (vFSS *virtualFolderSyncthingService) ReserveAndSetI(hash []byte, data []byte) {
+	vFSS.blockCache.ReserveAndSet(hash, data)
 }
 
 func newVirtualFolder(
@@ -197,17 +213,15 @@ func (vf *virtualFolderSyncthingService) runVirtualFolderServiceCoroutine(
 		defer jobQ.Close()
 
 		if vf.mountPath != "" {
-			stVF := &syncthingVirtualFolderFuseAdapter{
-				vFSS:           vf,
-				folderID:       vf.ID,
-				model:          vf.model,
-				fset:           vf.fset,
-				ino_mu:         sync.NewMutex(),
-				next_ino_nr:    1,
-				ino_mapping:    make(map[string]uint64),
-				directories_mu: sync.NewMutex(),
-				directories:    make(map[string]*TreeEntry),
-			}
+			stVF := NewSyncthingVirtualFolderFuseAdapter(
+				vf.model.shortID,
+				vf.ID,
+				vf.Type,
+				vf.fset,
+				vf,
+				vf,
+			)
+
 			mount, err := NewVirtualFolderMount(vf.mountPath, vf.ID, vf.Label, stVF)
 			if err != nil {
 				return err
@@ -241,10 +255,30 @@ func (vf *virtualFolderSyncthingService) runVirtualFolderServiceCoroutine(
 	logger.DefaultLogger.Infof("Service coroutine shutdown - send DONE signal")
 }
 
-func (f *runningVirtualFolderSyncthingService) RequestBackgroundDownload(filename string, size int64, modified time.Time, fn jobQueueProgressFn) {
+func (f *virtualFolderSyncthingService) RequestBackgroundDownloadI(
+	filename string, size int64, modified time.Time,
+) {
+	if f.running == nil {
+		return
+	}
+
+	f.running.RequestBackgroundDownloadI(filename, size, modified)
+}
+
+func (f *runningVirtualFolderSyncthingService) RequestBackgroundDownloadI(
+	filename string, size int64, modified time.Time,
+) {
+	f.RequestBackgroundDownload(filename, size, modified, nil)
+}
+
+func (f *runningVirtualFolderSyncthingService) RequestBackgroundDownload(
+	filename string, size int64, modified time.Time, fn jobQueueProgressFn,
+) {
 	wasNew := f.backgroundDownloadQueue.PushIfNew(filename, size, modified, fn)
 	if !wasNew {
-		fn(size, true)
+		if fn != nil {
+			fn(size, true)
+		}
 		return
 	}
 }
@@ -618,6 +652,14 @@ func (vf *virtualFolderSyncthingService) updateOneLocalFileInfo(fi *protocol.Fil
 	metaKey := fmt.Sprintf("%v/%v/%v", blockstorage.LOCAL_HAVE_FI_META_PREFIX, vf.ownDeviceIdString(), fi.Name)
 	vf.blockCache.SetMeta(metaKey, fiData)
 	logger.DefaultLogger.Debugf("VFolder: Stored file info (size: %v) to %v", len(fiData), metaKey)
+}
+
+func (vf *virtualFolderSyncthingService) Update(fs []protocol.FileInfo) {
+	vf.fset.Update(protocol.LocalDeviceID, fs)
+}
+
+func (vf *virtualFolderSyncthingService) UpdateOneLocalFileInfoLocalChangeDetected(fi *protocol.FileInfo) {
+	vf.updateOneLocalFileInfo(fi, events.LocalChangeDetected)
 }
 
 func (vf *runningVirtualFolderSyncthingService) scanOne(snap *db.Snapshot, f protocol.FileIntf, checkMap blockstorage.HashBlockStateMap, fn jobQueueProgressFn) {
