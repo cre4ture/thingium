@@ -64,8 +64,7 @@ func inverseModifiedDateComparer(jqe1, jqe2 *jobQueueEntry) int {
 }
 
 func (q *jobQueue) PushIfNew(file string, size int64, modified time.Time, fn jobQueueProgressFn) bool {
-	q.queued.PushIfNew(&jobQueueEntry{file, size, modified, fn}, nameComparer)
-	return true
+	return q.queued.PushIfNew(&jobQueueEntry{file, size, modified, fn}, nameComparer)
 }
 
 func (q *jobQueue) Push(file string, size int64, modified time.Time) {
