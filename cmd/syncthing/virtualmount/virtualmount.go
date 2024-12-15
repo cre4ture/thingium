@@ -296,7 +296,7 @@ func (o *OfflineDbSnapshotI) Release() {
 func (o *OfflineDbSnapshotI) WithPrefixedGlobalTruncated(prefix string, fn db.Iterator) {
 	logger.DefaultLogger.Debugf("WithPrefixedGlobalTruncated(%v)", prefix)
 	rootPrefix := blockstorage.MetaDataSubFolder + "/" + o.metaPrefix
-	if !strings.HasSuffix(prefix, "/") {
+	if (len(prefix) != 0) && !strings.HasSuffix(prefix, "/") {
 		prefix = prefix + "/"
 	}
 	fullPrefix := rootPrefix + prefix
