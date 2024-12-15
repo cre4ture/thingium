@@ -17,9 +17,11 @@ import (
 	"sync"
 	"time"
 
+	"github.com/patrickmn/go-cache"
 	"github.com/syncthing/syncthing/lib/blockstorage"
 	"github.com/syncthing/syncthing/lib/config"
 	"github.com/syncthing/syncthing/lib/db"
+	"github.com/syncthing/syncthing/lib/hashutil"
 	"github.com/syncthing/syncthing/lib/logger"
 	"github.com/syncthing/syncthing/lib/model"
 	"github.com/syncthing/syncthing/lib/protocol"
@@ -30,7 +32,7 @@ type CLI struct {
 	DeviceID  string `help:"Device ID of the virtual folder, if it cannot be determined automatically"`
 	FolderID  string `help:"Folder ID of the virtual folder, if it cannot be determined automatically"`
 	URL       string `arg:"" required:"1" help:"URL to virtual folder. Excluding \":virtual:\""`
-	MountPath string `xor:"mode" placeholder:"PATH" help:"Directory where to mount the virtual folder"`
+	MountPath string `required:"1" xor:"mode" placeholder:"PATH" help:"Directory where to mount the virtual folder"`
 }
 
 func (c *CLI) Run() error {
@@ -48,13 +50,13 @@ func (c *CLI) Run() error {
 	}
 
 	if len(devices) == 0 {
-		return errors.New("This URL doesn't list any syncthing devices. Abort.")
+		return errors.New("this URL doesn't list any syncthing devices. Abort")
 	}
 
 	if c.DeviceID == "" {
 		// by default, take the only device
 		if len(devices) > 1 {
-			return errors.New("This URL lists multiple syncthing devices. You need to specify which one. Abort.")
+			return errors.New("this URL lists multiple syncthing devices. You need to specify which one. Abort")
 		}
 		c.DeviceID = devices[0]
 	}
@@ -70,13 +72,13 @@ func (c *CLI) Run() error {
 	}
 
 	if len(folders) == 0 {
-		return errors.New("This URL doesn't list any syncthing folders for specified device. Abort.")
+		return errors.New("this URL doesn't list any syncthing folders for specified device. Abort")
 	}
 
 	if c.FolderID == "" {
 		// by default, take the only folder
 		if len(folders) > 1 {
-			return errors.New("This URL lists multiple syncthing folders for specified device. You need to specify which one. Abort.")
+			return errors.New("this URL lists multiple syncthing folders for specified device. You need to specify which one. Abort")
 		}
 		c.FolderID = folders[0]
 	}
@@ -90,7 +92,11 @@ func (c *CLI) Run() error {
 	fsetRO := NewOfflineDbFileSetRead(metaPrefix, blockStorage)
 
 	fsetRW := &OfflineDbFileSetWrite{}
-	dataAccess := &OfflineBlockDataAccess{blockStorage: blockStorage}
+	cache := cache.New(5*time.Minute, 1*time.Minute)
+	dataAccess := &OfflineBlockDataAccess{
+		blockStorage:   blockStorage,
+		blockDataCache: cache,
+	}
 
 	stVF := model.NewSyncthingVirtualFolderFuseAdapter(
 		protocol.ShortID(0),
@@ -170,17 +176,27 @@ func listSubdirs(storage *blockstorage.GoCloudUrlStorage, prefix string, delimit
 }
 
 type OfflineBlockDataAccess struct {
-	blockStorage *blockstorage.GoCloudUrlStorage
+	blockStorage   *blockstorage.GoCloudUrlStorage
+	blockDataCache *cache.Cache
 }
 
 // GetBlockDataFromCacheOrDownloadI implements model.BlockDataAccessI.
 func (o *OfflineBlockDataAccess) GetBlockDataFromCacheOrDownloadI(
 	file *protocol.FileInfo, block protocol.BlockInfo,
 ) ([]byte, bool, model.GetBlockDataResult) {
+
+	cacheKey := hashutil.HashToStringMapKey(block.Hash)
+	cachedData, ok := o.blockDataCache.Get(cacheKey)
+	if ok {
+		return cachedData.([]byte), true, model.GET_BLOCK_CACHED
+	}
+
 	data, ok := o.blockStorage.ReserveAndGet(block.Hash, true)
 	if !ok {
 		return nil, false, model.GET_BLOCK_FAILED
 	}
+
+	o.blockDataCache.Set(cacheKey, data, 0)
 
 	return data, true, model.GET_BLOCK_CACHED
 }
