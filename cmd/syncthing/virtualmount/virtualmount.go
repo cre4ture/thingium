@@ -14,6 +14,7 @@ import (
 	"os"
 	"os/signal"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/syncthing/syncthing/lib/blockstorage"
@@ -210,8 +211,7 @@ func (o *OfflineDbFileSetWrite) UpdateOneLocalFileInfoLocalChangeDetected(fi *pr
 type OfflineDbFileSetRead struct {
 	metaPrefix   string
 	blockStorage *blockstorage.GoCloudUrlStorage
-	fileCache    map[string]*protocol.FileInfo
-	dirCache     map[string][]*protocol.FileInfo
+	caches       *Caches
 }
 
 func NewOfflineDbFileSetRead(
@@ -221,26 +221,60 @@ func NewOfflineDbFileSetRead(
 	return &OfflineDbFileSetRead{
 		metaPrefix:   metaPrefix,
 		blockStorage: blockStorage,
-		fileCache:    make(map[string]*protocol.FileInfo),
-		dirCache:     make(map[string][]*protocol.FileInfo),
+		caches: &Caches{
+			fileCache: NewProtected[map[string]*protocol.FileInfo](make(map[string]*protocol.FileInfo)),
+			dirCache:  NewProtected[map[string]*Protected[[]*protocol.FileInfo]](make(map[string]*Protected[[]*protocol.FileInfo])),
+		},
 	}
 }
 
 // SnapshotI implements model.DbFileSetReadI.
 func (o *OfflineDbFileSetRead) SnapshotI() (db.DbSnapshotI, error) {
-	return &OfflineDbSnapshotI{o.metaPrefix, o.blockStorage, &o.fileCache, &o.dirCache}, nil
+	return &OfflineDbSnapshotI{o.metaPrefix, o.blockStorage, o.caches}, nil
+}
+
+type Protected[T any] struct {
+	t   *T
+	mut sync.Mutex
+}
+
+func NewProtected[T any](value T) *Protected[T] {
+	return &Protected[T]{
+		t:   &value,
+		mut: sync.Mutex{},
+	}
+}
+
+func (p *Protected[T]) Lock() *T {
+	p.mut.Lock()
+	return p.t
+}
+
+func (p *Protected[T]) Unlock() {
+	p.mut.Unlock()
+}
+
+type Caches struct {
+	fileCache *Protected[map[string]*protocol.FileInfo]
+	dirCache  *Protected[map[string]*Protected[[]*protocol.FileInfo]]
 }
 
 type OfflineDbSnapshotI struct {
 	metaPrefix   string
 	blockStorage *blockstorage.GoCloudUrlStorage
-	fileCache    *map[string]*protocol.FileInfo
-	dirCache     *map[string][]*protocol.FileInfo
+	caches       *Caches
 }
 
 // GetGlobal implements db.DbSnapshotI.
 func (o *OfflineDbSnapshotI) GetGlobal(file string) (protocol.FileInfo, bool) {
-	fi, ok := (*o.fileCache)[file]
+	var fi *protocol.FileInfo = nil
+	var ok bool = false
+	func() {
+		cache := o.caches.fileCache.Lock()
+		defer o.caches.fileCache.Unlock()
+		fi, ok = (*cache)[file]
+	}()
+
 	logger.DefaultLogger.Debugf("GetGlobal(%v): cache-ok:%v, data len:%v", file, ok, fi)
 	if ok {
 		return *fi, true
@@ -261,7 +295,11 @@ func (o *OfflineDbSnapshotI) GetGlobal(file string) (protocol.FileInfo, bool) {
 		return *fi, false
 	}
 
-	(*o.fileCache)[file] = fi
+	func() {
+		cache := o.caches.fileCache.Lock()
+		defer o.caches.fileCache.Unlock()
+		(*cache)[file] = fi
+	}()
 
 	return *fi, true
 }
@@ -307,27 +345,39 @@ func (o *OfflineDbSnapshotI) WithPrefixedGlobalTruncated(prefix string, fn db.It
 		prefix = prefix + "/"
 	}
 
-	childs, ok := (*o.dirCache)[prefix]
-	if !ok {
-		childs = make([]*protocol.FileInfo, 0)
+	var pChilds *Protected[[]*protocol.FileInfo] = nil
+	ok := false
+	func() {
+		cache := o.caches.dirCache.Lock()
+		defer o.caches.dirCache.Unlock()
+		pChilds, ok = (*cache)[prefix]
+		if !ok {
+			pChilds = NewProtected([]*protocol.FileInfo{})
+			(*cache)[prefix] = pChilds
+		}
+	}()
 
-		fullPrefix := rootPrefix + prefix
-		iterateSubdirs(o.blockStorage, fullPrefix, "/", func(e *blob.ListObject) {
-			name, _ := strings.CutPrefix(e.Key, rootPrefix)
-			logger.DefaultLogger.Debugf("WithPrefixedGlobalTruncated(%v): %v", prefix, name)
-			fi, ok := o.GetGlobal(name)
-			logger.DefaultLogger.Debugf("WithPrefixedGlobalTruncated(%v): %v, ok:%v: %+v", prefix, ok, fi)
-			if !ok {
-				return
-			}
-			fi.Name, _ = strings.CutPrefix(fi.Name, prefix)
-			childs = append(childs, &fi)
-		})
+	func() {
+		childs := pChilds.Lock()
+		defer pChilds.Unlock()
 
-		(*o.dirCache)[prefix] = childs
-	}
+		if !ok {
+			fullPrefix := rootPrefix + prefix
+			iterateSubdirs(o.blockStorage, fullPrefix, "/", func(e *blob.ListObject) {
+				name, _ := strings.CutPrefix(e.Key, rootPrefix)
+				logger.DefaultLogger.Debugf("WithPrefixedGlobalTruncated(%v): %v", prefix, name)
+				fi, ok := o.GetGlobal(name)
+				logger.DefaultLogger.Debugf("WithPrefixedGlobalTruncated(%v): %v, ok:%v: %+v", prefix, ok, fi)
+				if !ok {
+					return
+				}
+				fi.Name, _ = strings.CutPrefix(fi.Name, prefix)
+				*childs = append(*childs, &fi)
+			})
+		}
 
-	for _, child := range childs {
-		fn(child)
-	}
+		for _, child := range *childs {
+			fn(child)
+		}
+	}()
 }
