@@ -8,6 +8,7 @@ package blockstorage
 
 import (
 	"context"
+	"errors"
 	"log"
 	"strconv"
 	"strings"
@@ -102,12 +103,24 @@ type GoCloudUrlStorage struct {
 	myDeviceId string
 }
 
+func (hm *GoCloudUrlStorage) RawAccess() *blob.Bucket {
+	return hm.bucket
+}
+
+func (hm *GoCloudUrlStorage) IsReadOnly() bool {
+	return hm.myDeviceId == ""
+}
+
 func (hm *GoCloudUrlStorage) getATag(hash []byte, tag string) string {
 	hashKey := getBlockStringKey(hash)
 	return hashKey + "." + tag + "." + hm.myDeviceId
 }
 
 func (hm *GoCloudUrlStorage) putATag(hash []byte, tag string, updateTime bool) error {
+	if hm.IsReadOnly() {
+		return errors.New("putATag: read only")
+	}
+
 	hashDeviceTagKey := hm.getATag(hash, tag)
 	// force existence of stag with our ID
 	existsAlready := false
@@ -128,6 +141,10 @@ func (hm *GoCloudUrlStorage) putATag(hash []byte, tag string, updateTime bool) e
 }
 
 func (hm *GoCloudUrlStorage) removeATag(hash []byte, tag string) error {
+	if hm.IsReadOnly() {
+		return errors.New("removeATag: read only")
+	}
+
 	reservationKey := getBlockStringKey(hash) + "." + tag + "." + hm.myDeviceId
 	// logger.DefaultLogger.Debugf("removing tag %v: %v", tag, reservationKey)
 	return hm.bucket.Delete(hm.ctx, reservationKey)
@@ -145,6 +162,10 @@ func (hm *GoCloudUrlStorage) DeAnnounceDelete(hash []byte) error {
 
 // UncheckedDelete implements HashBlockStorageI.
 func (hm *GoCloudUrlStorage) UncheckedDelete(hash []byte) error {
+	if hm.IsReadOnly() {
+		return errors.New("UncheckedDelete: read only")
+	}
+
 	stringKey := getBlockStringKey(hash)
 	return hm.bucket.Delete(hm.ctx, stringKey)
 }
@@ -340,6 +361,11 @@ func (hm *GoCloudUrlStorage) ReserveAndGet(hash []byte, downloadData bool) (data
 }
 
 func (hm *GoCloudUrlStorage) ReserveAndSet(hash []byte, data []byte) {
+	if hm.IsReadOnly() {
+		logger.DefaultLogger.Warnf("ReserveAndSet: read only")
+		return
+	}
+
 	// force existence of use-tag with our ID
 	err := hm.putATag(hash, BLOCK_USE_TAG, false)
 	if err != nil {
@@ -380,9 +406,19 @@ func (hm *GoCloudUrlStorage) GetMeta(name string) (data []byte, ok bool) {
 	return data, true
 }
 func (hm *GoCloudUrlStorage) SetMeta(name string, data []byte) {
+	if hm.IsReadOnly() {
+		logger.DefaultLogger.Warnf("SetMeta: read only")
+		return
+	}
+
 	hm.bucket.WriteAll(hm.ctx, getMetadataStringKey(name), data, nil)
 }
 func (hm *GoCloudUrlStorage) DeleteMeta(name string) {
+	if hm.IsReadOnly() {
+		logger.DefaultLogger.Warnf("SetMeta: read only")
+		return
+	}
+
 	hm.bucket.Delete(hm.ctx, getMetadataStringKey(name))
 }
 

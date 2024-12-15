@@ -38,6 +38,7 @@ import (
 	"github.com/syncthing/syncthing/cmd/syncthing/cmdutil"
 	"github.com/syncthing/syncthing/cmd/syncthing/decrypt"
 	"github.com/syncthing/syncthing/cmd/syncthing/generate"
+	"github.com/syncthing/syncthing/cmd/syncthing/virtualmount"
 	"github.com/syncthing/syncthing/lib/build"
 	"github.com/syncthing/syncthing/lib/config"
 	"github.com/syncthing/syncthing/lib/db"
@@ -132,6 +133,7 @@ var entrypoint struct {
 	Serve              serveOptions                 `cmd:"" help:"Run Syncthing"`
 	Generate           generate.CLI                 `cmd:"" help:"Generate key and config, then exit"`
 	Decrypt            decrypt.CLI                  `cmd:"" help:"Decrypt or verify an encrypted folder"`
+	VirtualMount       virtualmount.CLI             `cmd:"" help:"Mount an offline virtual folder"`
 	Cli                cli.CLI                      `cmd:"" help:"Command line interface for Syncthing"`
 	InstallCompletions kongplete.InstallCompletions `cmd:"" help:"Print commands to install shell completions"`
 }
