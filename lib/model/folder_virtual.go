@@ -180,7 +180,11 @@ func (vf *virtualFolderSyncthingService) runVirtualFolderServiceCoroutine(
 		}
 		vf.running = rvf
 
-		backgroundDownloadTasks := 5
+		backgroundDownloadTasks := vf.Copiers
+		if backgroundDownloadTasks == 0 {
+			backgroundDownloadTasks = 5
+		}
+
 		backgroundDownloadTaskWaitGroup := sync.NewWaitGroup()
 		defer backgroundDownloadTaskWaitGroup.Wait()
 		for i := 0; i < backgroundDownloadTasks; i++ {
