@@ -283,10 +283,13 @@ func (hm *GoCloudUrlStorage) GetBlockHashState(hash []byte) HashBlockState {
 
 func (hm *GoCloudUrlStorage) reserveAndCheckExistence(hash []byte) (ok bool, retry bool) {
 	hashKey := getBlockStringKey(hash)
-	// force existence of use-tag with our ID
-	err := hm.putATag(hash, BLOCK_USE_TAG, false)
-	if err != nil {
-		return false, false
+
+	if !hm.IsReadOnly() {
+		// force existence of use-tag with our ID
+		err := hm.putATag(hash, BLOCK_USE_TAG, false)
+		if err != nil {
+			return false, false
+		}
 	}
 
 	perPageCount := 10 // want to see any "delete" token as well.

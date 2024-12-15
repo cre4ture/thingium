@@ -177,7 +177,11 @@ func (o *OfflineBlockDataAccess) GetBlockDataFromCacheOrDownloadI(
 	file *protocol.FileInfo, block protocol.BlockInfo,
 ) ([]byte, bool, model.GetBlockDataResult) {
 	data, ok := o.blockStorage.ReserveAndGet(block.Hash, true)
-	return data, ok, model.GET_BLOCK_CACHED
+	if !ok {
+		return nil, false, model.GET_BLOCK_FAILED
+	}
+
+	return data, true, model.GET_BLOCK_CACHED
 }
 
 // RequestBackgroundDownloadI implements model.BlockDataAccessI.
