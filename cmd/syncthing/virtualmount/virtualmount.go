@@ -19,6 +19,7 @@ import (
 	"github.com/syncthing/syncthing/lib/blockstorage"
 	"github.com/syncthing/syncthing/lib/config"
 	"github.com/syncthing/syncthing/lib/db"
+	"github.com/syncthing/syncthing/lib/logger"
 	"github.com/syncthing/syncthing/lib/model"
 	"github.com/syncthing/syncthing/lib/protocol"
 	"gocloud.dev/blob"
@@ -263,10 +264,13 @@ func (o *OfflineDbSnapshotI) Release() {
 
 // WithPrefixedGlobalTruncated implements db.DbSnapshotI.
 func (o *OfflineDbSnapshotI) WithPrefixedGlobalTruncated(prefix string, fn db.Iterator) {
+	logger.DefaultLogger.Debugf("WithPrefixedGlobalTruncated(%v)", prefix)
 	fullPrefix := o.prefix + prefix
 	iterateSubdirs(o.blockStorage, fullPrefix, "" /* treat as flat */, func(e *blob.ListObject) {
 		name, _ := strings.CutPrefix(e.Key, o.prefix)
+		logger.DefaultLogger.Debugf("WithPrefixedGlobalTruncated(%v): %v", prefix, name)
 		fi, ok := o.GetGlobal(name)
+		logger.DefaultLogger.Debugf("WithPrefixedGlobalTruncated(%v): %v, ok:%v: %+v", prefix, ok, fi)
 		if !ok {
 			return
 		}
