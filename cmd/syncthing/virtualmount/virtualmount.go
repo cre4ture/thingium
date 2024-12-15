@@ -277,7 +277,7 @@ func (o *OfflineDbSnapshotI) WithPrefixedGlobalTruncated(prefix string, fn db.It
 	logger.DefaultLogger.Debugf("WithPrefixedGlobalTruncated(%v)", prefix)
 	rootPrefix := blockstorage.MetaDataSubFolder + "/" + o.metaPrefix
 	fullPrefix := rootPrefix + prefix
-	iterateSubdirs(o.blockStorage, fullPrefix, "" /* treat as flat */, func(e *blob.ListObject) {
+	iterateSubdirs(o.blockStorage, fullPrefix, "/", func(e *blob.ListObject) {
 		name, _ := strings.CutPrefix(e.Key, rootPrefix)
 		logger.DefaultLogger.Debugf("WithPrefixedGlobalTruncated(%v): %v", prefix, name)
 		fi, ok := o.GetGlobal(name)
