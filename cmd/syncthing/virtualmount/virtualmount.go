@@ -206,12 +206,13 @@ func (o *OfflineBlockDataAccess) GetBlockDataFromCacheOrDownloadI(
 		} else {
 			pCD = NewProtected(CachedBlock{})
 			(*cachemap).Set(cacheKey, pCD, 0)
+			dataBuffer = pCD.Lock() // lock before o.blockDataCache.Unlock()
 		}
-		dataBuffer = pCD.Lock() // lock before o.blockDataCache.Unlock()
 	}()
 	defer pCD.Unlock()
 
 	if ok {
+		dataBuffer = pCD.Lock()
 		return dataBuffer.data, dataBuffer.ok, dataBuffer.result
 	}
 
@@ -404,12 +405,16 @@ func (o *OfflineDbSnapshotI) WithPrefixedGlobalTruncated(prefix string, fn db.It
 		if !ok {
 			pChilds = NewProtected([]*protocol.FileInfo{})
 			(*cache)[prefix] = pChilds
+			childs = pChilds.Lock() // prevent anybody else
 		}
-		childs = pChilds.Lock()
 	}()
 
 	func() {
+		if ok {
+			childs = pChilds.Lock() // here it doesn't matter
+		}
 		defer pChilds.Unlock()
+
 		if !ok {
 			ch := make(chan *protocol.FileInfo, 10)
 			wg := sync.WaitGroup{}
