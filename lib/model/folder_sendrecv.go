@@ -325,21 +325,19 @@ func (f *sendReceiveFolder) processNeeded(snap *db.Snapshot, dbUpdateChan chan<-
 	// Regular files to pull goes into the file queue, everything else
 	// (directories, symlinks and deletes) goes into the "process directly"
 	// pile.
-	snap.WithNeed(protocol.LocalDeviceID, func(intf protocol.FileIntf) bool {
+	snap.WithNeed(protocol.LocalDeviceID, func(file protocol.FileInfo) bool {
 		select {
 		case <-f.ctx.Done():
 			return false
 		default:
 		}
 
-		if f.IgnoreDelete && intf.IsDeleted() {
-			l.Debugln(f, "ignore file deletion (config)", intf.FileName())
+		if f.IgnoreDelete && file.IsDeleted() {
+			l.Debugln(f, "ignore file deletion (config)", file.FileName())
 			return true
 		}
 
 		changed++
-
-		file := intf.(protocol.FileInfo)
 
 		switch {
 		case f.ignores.Match(file.Name).IsIgnored():
@@ -491,13 +489,10 @@ nextFile:
 			continue nextFile
 		}
 
-		devices := snap.Availability(fileName)
-		for _, dev := range devices {
-			if f.model.ConnectedTo(dev) {
-				// Handle the file normally, by copying and pulling, etc.
-				f.handleFile(fi, snap, copyChan)
-				continue nextFile
-			}
+		devices := f.model.fileAvailability(f.FolderConfiguration, snap, fi)
+		if len(devices) > 0 {
+			f.handleFile(fi, snap, copyChan)
+			continue
 		}
 		f.newPullError(fileName, errNotAvailable)
 		f.queue.Done(fileName)
@@ -1010,13 +1005,13 @@ func (f *sendReceiveFolder) renameFile(cur, source, target protocol.FileInfo, sn
 	if f.versioner != nil {
 		err = f.CheckAvailableSpace(uint64(source.Size))
 		if err == nil {
-			err = osutil.Copy(f.CopyRangeMethod, f.mtimefs, f.mtimefs, source.Name, tempName)
+			err = osutil.Copy(f.CopyRangeMethod.ToFS(), f.mtimefs, f.mtimefs, source.Name, tempName)
 			if err == nil {
 				err = f.inWritableDir(f.versioner.Archive, source.Name)
 			}
 		}
 	} else {
-		err = osutil.RenameOrCopy(f.CopyRangeMethod, f.mtimefs, f.mtimefs, source.Name, tempName)
+		err = osutil.RenameOrCopy(f.CopyRangeMethod.ToFS(), f.mtimefs, f.mtimefs, source.Name, tempName)
 	}
 	if err != nil {
 		return err
@@ -1376,11 +1371,11 @@ func (f *sendReceiveFolder) copierRoutine(in <-chan copyBlocksState, pullChan ch
 						}
 					}
 
-					if f.CopyRangeMethod != fs.CopyRangeMethodStandard {
+					if f.CopyRangeMethod != config.CopyRangeMethodStandard {
 						err = f.withLimiter(func() error {
 							dstFd.mut.Lock()
 							defer dstFd.mut.Unlock()
-							return fs.CopyRange(f.CopyRangeMethod, fd, dstFd.fd, srcOffset, block.Offset, int64(block.Size))
+							return fs.CopyRange(f.CopyRangeMethod.ToFS(), fd, dstFd.fd, srcOffset, block.Offset, int64(block.Size))
 						})
 					} else {
 						err = f.limitedWriteAt(dstFd, buf, block.Offset)
@@ -1578,7 +1573,7 @@ func (f *sendReceiveFolder) performFinish(file, curFile protocol.FileInfo, hasCu
 
 	// Replace the original content with the new one. If it didn't work,
 	// leave the temp file in place for reuse.
-	if err := osutil.RenameOrCopy(f.CopyRangeMethod, f.mtimefs, f.mtimefs, tempName, file.Name); err != nil {
+	if err := osutil.RenameOrCopy(f.CopyRangeMethod.ToFS(), f.mtimefs, f.mtimefs, tempName, file.Name); err != nil {
 		return fmt.Errorf("replacing file: %w", err)
 	}
 

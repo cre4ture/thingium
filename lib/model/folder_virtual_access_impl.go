@@ -99,7 +99,7 @@ func (r *syncthingVirtualFolderFuseAdapter) getInoOf(path string) uint64 {
 	return ino
 }
 
-func (stf *syncthingVirtualFolderFuseAdapter) lookupFile(path string) (info *db.FileInfoTruncated, eno syscall.Errno) {
+func (stf *syncthingVirtualFolderFuseAdapter) lookupFile(path string) (info *protocol.FileInfo, eno syscall.Errno) {
 	snap, err := stf.fset.SnapshotI()
 	if err != nil {
 		//stf..log()
@@ -115,7 +115,7 @@ func (stf *syncthingVirtualFolderFuseAdapter) lookupFile(path string) (info *db.
 			logger.DefaultLogger.Infof("ENC VIRT lookup %s - %+v", path, stf.directories)
 			entry, exists := stf.directories[path]
 			if exists {
-				return &db.FileInfoTruncated{
+				return &protocol.FileInfo{
 					Name: entry.Name,
 					Type: protocol.FileInfoTypeDirectory,
 				}, 0
@@ -146,7 +146,7 @@ func createNewVirtualFileInfo(creator protocol.ShortID, Permissions *uint32, nam
 	if Permissions != nil {
 		fi.Permissions = *Permissions
 	}
-	fi.ModifiedNs = creationTime.Nanosecond()
+	fi.ModifiedNs = int32(creationTime.Nanosecond())
 	// fi.RawBlockSize
 	// fi.Platform
 	// fi.LocalFlags
@@ -162,7 +162,7 @@ func createNewVirtualFileInfo(creator protocol.ShortID, Permissions *uint32, nam
 
 func (stf *syncthingVirtualFolderFuseAdapter) createFile(
 	Permissions *uint32, name string,
-) (info *db.FileInfoTruncated, eno syscall.Errno) {
+) (info *protocol.FileInfo, eno syscall.Errno) {
 
 	if stf.folderType.IsReceiveOnly() {
 		return nil, syscall.EACCES
@@ -235,7 +235,7 @@ func (stf *syncthingVirtualFolderFuseAdapter) writeFile(
 	}
 
 	for {
-		writeEndInBlock := clamp(writeStartInBlock+len(inputData), writeStartInBlock, fi.RawBlockSize)
+		writeEndInBlock := clamp(writeStartInBlock+len(inputData), writeStartInBlock, int(fi.RawBlockSize))
 		writeLenInBlock := writeEndInBlock - writeStartInBlock
 
 		ok := false
@@ -271,7 +271,7 @@ func (stf *syncthingVirtualFolderFuseAdapter) writeFile(
 		changeTime := time.Now()
 		fi.ModifiedBy = stf.modelID
 		fi.ModifiedS = changeTime.Unix()
-		fi.ModifiedNs = changeTime.Nanosecond()
+		fi.ModifiedNs = int32(changeTime.Nanosecond())
 		fi.InodeChangeNs = changeTime.UnixNano()
 		fi.Version = fi.Version.Update(fi.ModifiedBy)
 
@@ -521,7 +521,7 @@ func (f *syncthingVirtualFolderFuseAdapter) readDir(path string) (stream ffs.Dir
 		}
 
 		fileMap := make(map[string]*TreeEntry)
-		snap.WithPrefixedGlobalTruncated(path, func(child protocol.FileIntf) bool {
+		snap.WithPrefixedGlobalTruncated(path, func(child protocol.FileInfo) bool {
 			childPath := child.FileName()
 			childPath = strings.TrimPrefix(childPath, path)
 			logger.DefaultLogger.Infof("ENC VIRT path - %s, full: %v", childPath, child.FileName())

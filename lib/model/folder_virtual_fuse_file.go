@@ -17,8 +17,8 @@ import (
 
 	ffs "github.com/hanwen/go-fuse/v2/fs"
 	"github.com/hanwen/go-fuse/v2/fuse"
-	"github.com/syncthing/syncthing/lib/db"
 	"github.com/syncthing/syncthing/lib/logger"
+	"github.com/syncthing/syncthing/lib/protocol"
 )
 
 func NewVirtualFile(rel_name string, ino uint64, sVF SyncthingVirtualFolderAccessI) ffs.FileHandle {
@@ -31,10 +31,10 @@ type virtualFuseFile struct {
 	rel_name string // relative filepath
 
 	fileInfo_mu sync.Mutex
-	fileInfo    *db.FileInfoTruncated
+	fileInfo    *protocol.FileInfo
 }
 
-func (f *virtualFuseFile) getFileInfo() (*db.FileInfoTruncated, syscall.Errno) {
+func (f *virtualFuseFile) getFileInfo() (*protocol.FileInfo, syscall.Errno) {
 	f.fileInfo_mu.Lock()
 	defer f.fileInfo_mu.Unlock()
 
@@ -231,7 +231,7 @@ func (f *virtualFuseFile) setAttr(ctx context.Context, in *fuse.SetAttrIn) sysca
 
 var _ = (ffs.FileGetattrer)((*virtualFuseFile)(nil))
 
-func FileInfoToFuseAttrOut(fi *db.FileInfoTruncated, ino uint64, a *fuse.AttrOut) syscall.Errno {
+func FileInfoToFuseAttrOut(fi *protocol.FileInfo, ino uint64, a *fuse.AttrOut) syscall.Errno {
 
 	a.SetTimeout(time.Second)
 	a.Blksize = uint32(fi.BlockSize())

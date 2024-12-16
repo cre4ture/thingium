@@ -16,7 +16,6 @@ import (
 
 	ffs "github.com/hanwen/go-fuse/v2/fs"
 	"github.com/hanwen/go-fuse/v2/fuse"
-	"github.com/syncthing/syncthing/lib/db"
 	"github.com/syncthing/syncthing/lib/logger"
 	"github.com/syncthing/syncthing/lib/protocol"
 )
@@ -81,7 +80,7 @@ func (n *VirtualNode) fullPath() string {
 }
 
 func dbInfoToFuseEntryOut(
-	info *db.FileInfoTruncated, ino uint64, name string, out *fuse.EntryOut, ctx context.Context,
+	info *protocol.FileInfo, ino uint64, name string, out *fuse.EntryOut, ctx context.Context,
 ) {
 	st := syscall.Stat_t{}
 	st.Mode = syscall.S_IFREG
@@ -111,7 +110,7 @@ var _ = (ffs.NodeLookuper)((*VirtualNode)(nil))
 func (n *VirtualNode) Lookup(ctx context.Context, name string, out *fuse.EntryOut) (*ffs.Inode, syscall.Errno) {
 
 	var eno syscall.Errno = 0
-	var info *db.FileInfoTruncated = nil
+	var info *protocol.FileInfo = nil
 	p := filepath.Join(n.fullPath(), name)
 	if p != "" {
 		info, eno = n.RootData.st_folder.lookupFile(p)

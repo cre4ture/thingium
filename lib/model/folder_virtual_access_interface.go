@@ -12,15 +12,15 @@ import (
 
 	ffs "github.com/hanwen/go-fuse/v2/fs"
 	"github.com/hanwen/go-fuse/v2/fuse"
-	"github.com/syncthing/syncthing/lib/db"
+	"github.com/syncthing/syncthing/lib/protocol"
 )
 
 type SyncthingVirtualFolderAccessI interface {
 	getInoOf(path string) uint64
-	lookupFile(path string) (info *db.FileInfoTruncated, eno syscall.Errno)
+	lookupFile(path string) (info *protocol.FileInfo, eno syscall.Errno)
 	readDir(path string) (stream ffs.DirStream, eno syscall.Errno)
 	readFile(path string, buf []byte, off int64) (res fuse.ReadResult, errno syscall.Errno)
-	createFile(Permissions *uint32, path string) (info *db.FileInfoTruncated, eno syscall.Errno)
+	createFile(Permissions *uint32, path string) (info *protocol.FileInfo, eno syscall.Errno)
 	writeFile(ctx context.Context, path string, offset uint64, inputData []byte) syscall.Errno
 	deleteFile(ctx context.Context, path string) syscall.Errno
 	createDir(ctx context.Context, path string) syscall.Errno

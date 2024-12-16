@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/patrickmn/go-cache"
+	"github.com/syncthing/syncthing/internal/gen/bep"
 	"github.com/syncthing/syncthing/lib/blockstorage"
 	"github.com/syncthing/syncthing/lib/config"
 	"github.com/syncthing/syncthing/lib/db"
@@ -26,6 +27,7 @@ import (
 	"github.com/syncthing/syncthing/lib/model"
 	"github.com/syncthing/syncthing/lib/protocol"
 	"gocloud.dev/blob"
+	"google.golang.org/protobuf/proto"
 )
 
 type CLI struct {
@@ -338,8 +340,10 @@ func (o *OfflineDbSnapshotI) GetGlobal(file string) (protocol.FileInfo, bool) {
 		return protocol.FileInfo{}, false
 	}
 
-	fi = &protocol.FileInfo{}
-	err := fi.Unmarshal(data)
+	wireFi := &bep.FileInfo{}
+	err := proto.Unmarshal(data, wireFi)
+	fiCpy := protocol.FileInfoFromWire(wireFi)
+	fi = &fiCpy
 	logger.DefaultLogger.Debugf("GetGlobal(%v): unmarshal-err: %+v. fi: %+v", file, err, fi)
 	if err != nil {
 		return protocol.FileInfo{}, false
@@ -355,31 +359,8 @@ func (o *OfflineDbSnapshotI) GetGlobal(file string) (protocol.FileInfo, bool) {
 }
 
 // GetGlobalTruncated implements db.DbSnapshotI.
-func (o *OfflineDbSnapshotI) GetGlobalTruncated(file string) (db.FileInfoTruncated, bool) {
-	fi, ok := o.GetGlobal(file)
-	out := db.FileInfoTruncated{
-		Name:          fi.Name,
-		Size:          fi.Size,
-		ModifiedS:     fi.ModifiedS,
-		ModifiedBy:    fi.ModifiedBy,
-		Version:       fi.Version,
-		Sequence:      fi.Sequence,
-		SymlinkTarget: fi.SymlinkTarget,
-		BlocksHash:    fi.BlocksHash,
-		Encrypted:     fi.Encrypted,
-		Type:          fi.Type,
-		Permissions:   fi.Permissions,
-		ModifiedNs:    fi.ModifiedNs,
-		RawBlockSize:  fi.RawBlockSize,
-		Platform:      fi.Platform,
-		LocalFlags:    fi.LocalFlags,
-		VersionHash:   fi.VersionHash,
-		InodeChangeNs: fi.InodeChangeNs,
-		Deleted:       fi.Deleted,
-		RawInvalid:    fi.RawInvalid,
-		NoPermissions: fi.NoPermissions,
-	}
-	return out, ok
+func (o *OfflineDbSnapshotI) GetGlobalTruncated(file string) (protocol.FileInfo, bool) {
+	return o.GetGlobal(file)
 }
 
 // Release implements db.DbSnapshotI.
@@ -447,7 +428,7 @@ func (o *OfflineDbSnapshotI) WithPrefixedGlobalTruncated(prefix string, fn db.It
 		}
 
 		for _, child := range *childs {
-			fn(child)
+			fn(*child)
 		}
 	}()
 }

@@ -30,6 +30,7 @@ import (
 	"github.com/syncthing/syncthing/lib/sync"
 	"github.com/syncthing/syncthing/lib/utils"
 	"github.com/syncthing/syncthing/lib/versioner"
+	"google.golang.org/protobuf/proto"
 )
 
 func init() {
@@ -459,7 +460,7 @@ func (vf *runningVirtualFolderSyncthingService) pullOrScan_x(ctx context.Context
 	jobs := newJobQueue()
 	totalBytes := uint64(0)
 	{
-		prepareFn := func(f protocol.FileIntf) bool {
+		prepareFn := func(f protocol.FileInfo) bool {
 			totalBytes += uint64(f.FileSize())
 			jobs.Push(f.FileName(), f.FileSize(), f.ModTime())
 			return true
@@ -500,7 +501,7 @@ func (vf *runningVirtualFolderSyncthingService) pullOrScan_x(ctx context.Context
 	defer leases.WaitAllDone()
 
 	isAbortOrErr := false
-	pullF := func(f protocol.FileIntf) bool /* true to continue */ {
+	pullF := func(f protocol.FileInfo) bool /* true to continue */ {
 		myFileSize := f.FileSize()
 		workF := func(doneFn func()) {
 			if !doScan {
@@ -570,7 +571,7 @@ func (vf *runningVirtualFolderSyncthingService) cleanupUnneededReservations(chec
 
 	dummyValue := struct{}{}
 	usedBlockHashes := map[string]struct{}{}
-	snap.WithHave(protocol.LocalDeviceID, func(f protocol.FileIntf) bool {
+	snap.WithHave(protocol.LocalDeviceID, func(f protocol.FileInfo) bool {
 		fi, ok := snap.Get(protocol.LocalDeviceID, f.FileName())
 		if !ok {
 			log.Panicf("cleanupUnneeded: inconsistent snapshot! %v", f.FileName())
@@ -599,7 +600,7 @@ func (vf *runningVirtualFolderSyncthingService) cleanupUnneededReservations(chec
 }
 
 func (vf *runningVirtualFolderSyncthingService) pullOne(
-	snap *db.Snapshot, f protocol.FileIntf, fn jobQueueProgressFn,
+	snap *db.Snapshot, f protocol.FileInfo, fn jobQueueProgressFn,
 ) {
 
 	vf.parent.evLogger.Log(events.ItemStarted, map[string]string{
@@ -642,7 +643,8 @@ func (vf *virtualFolderSyncthingService) updateOneLocalFileInfo(fi *protocol.Fil
 	vf.ReceivedFile(fi.Name, fi.IsDeleted())
 	vf.emitDiskChangeEvents([]protocol.FileInfo{*fi}, typeOfEvent)
 
-	fiData, err := fi.Marshal()
+	wireFi := fi.ToWire(false)
+	fiData, err := proto.Marshal(wireFi)
 	if err != nil {
 		logger.DefaultLogger.Warnf("VFolder: failed to serialize file info. Err: %+v", err)
 		return
@@ -664,7 +666,7 @@ func (vf *virtualFolderSyncthingService) UpdateOneLocalFileInfoLocalChangeDetect
 	vf.updateOneLocalFileInfo(fi, events.LocalChangeDetected)
 }
 
-func (vf *runningVirtualFolderSyncthingService) scanOne(snap *db.Snapshot, f protocol.FileIntf, checkMap blockstorage.HashBlockStateMap, fn jobQueueProgressFn) {
+func (vf *runningVirtualFolderSyncthingService) scanOne(snap *db.Snapshot, f protocol.FileInfo, checkMap blockstorage.HashBlockStateMap, fn jobQueueProgressFn) {
 
 	if f.IsDirectory() {
 		// no work to do for directories.
