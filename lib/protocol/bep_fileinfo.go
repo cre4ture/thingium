@@ -870,5 +870,5 @@ type BlockOfFile struct {
 }
 
 func (b *BlockOfFile) String() string {
-	return fmt.Sprintf("block: %v:%v", b.File, b.Block.Offset/int64(b.File.BlockSize()))
+	return fmt.Sprintf("block: %v:%v", b.File.Name, b.Block.Offset/int64(b.File.BlockSize()))
 }
