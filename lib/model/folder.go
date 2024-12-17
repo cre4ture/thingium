@@ -33,6 +33,7 @@ import (
 	"github.com/syncthing/syncthing/lib/stringutil"
 	"github.com/syncthing/syncthing/lib/svcutil"
 	"github.com/syncthing/syncthing/lib/sync"
+	"github.com/syncthing/syncthing/lib/utils"
 	"github.com/syncthing/syncthing/lib/versioner"
 	"github.com/syncthing/syncthing/lib/watchaggregator"
 )
@@ -87,12 +88,14 @@ func (f *folderBase) pullBlockBase(
 ) error {
 	var lastError error
 	logger.DefaultLogger.Infof("pullBlockBase(%v) - START", b)
-	defer logger.DefaultLogger.Infof("pullBlockBase(%v) - RETURN", b)
+	watch := utils.PerformanceStopWatchStart()
+	defer watch.LastStep("pullBlockBase", "FINAL")
 
 	candidates := f.model.blockAvailability(f.FolderConfiguration, snap, *b.File, b.Block)
 
+	watch.Step("candidates")
+
 	for {
-		logger.DefaultLogger.Infof("pullBlockBase(%v) - LOOP", b)
 		select {
 		case <-f.ctx.Done():
 			return fmt.Errorf("folder stopped: %w", f.ctx.Err())
@@ -103,7 +106,6 @@ func (f *folderBase) pullBlockBase(
 		// feasible device at all, fail the block (and in the long run, the
 		// file).
 		found := activity.leastBusy(candidates)
-		logger.DefaultLogger.Infof("pullBlockBase(%v) - least busy", b)
 		if found == -1 {
 			if lastError != nil {
 				return fmt.Errorf("pull: %w", lastError)
@@ -112,7 +114,8 @@ func (f *folderBase) pullBlockBase(
 			}
 		}
 
-		logger.DefaultLogger.Infof("pullBlockBase(%v) - selected", b)
+		watch.Step("least-busy")
+
 		selected := candidates[found]
 		candidates[found] = candidates[len(candidates)-1]
 		candidates = candidates[:len(candidates)-1]
@@ -122,13 +125,14 @@ func (f *folderBase) pullBlockBase(
 		activity.using(selected)
 		var buf []byte
 		blockNo := int(b.Block.Offset / int64(b.File.BlockSize()))
-		logger.DefaultLogger.Infof("pullBlockBase(%v) - request global", b)
 		buf, lastError = f.model.RequestGlobal(f.ctx, selected.ID, f.folderID, b.File.Name, blockNo, b.Block.Offset, int(b.Block.Size), b.Block.Hash, b.Block.WeakHash, selected.FromTemporary)
 		activity.done(selected)
 		if lastError != nil {
 			l.Debugln("request:", f.folderID, b.File.Name, b.Block.Offset, b.Block.Size, selected.ID.Short(), "returned error:", lastError)
 			continue
 		}
+
+		watch.Step("request-glbl")
 
 		// Verify that the received block matches the desired hash, if not
 		// try pulling it from another device.
@@ -144,8 +148,11 @@ func (f *folderBase) pullBlockBase(
 			continue
 		}
 
-		logger.DefaultLogger.Infof("pullBlockBase(%v) - handle block data", b)
+		watch.Step("verify")
+
 		handleBlockData(buf)
+
+		watch.Step("handled")
 		return nil
 	}
 }
