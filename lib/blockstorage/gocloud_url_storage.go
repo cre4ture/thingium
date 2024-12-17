@@ -9,6 +9,7 @@ package blockstorage
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log"
 	"strconv"
 	"strings"
@@ -369,11 +370,17 @@ func (hm *GoCloudUrlStorage) ReserveAndSet(hash []byte, data []byte) {
 		return
 	}
 
+	grp := fmt.Sprintf("ReserveAndSet(*,size:%d)", len(data))
+	sw := utils.PerformanceStopWatchStart()
+	defer sw.LastStep(grp, "FINAL")
+
 	// force existence of use-tag with our ID
 	err := hm.putATag(hash, BLOCK_USE_TAG, false)
 	if err != nil {
 		log.Panicf("writing to block storage failed! Put reservation. %+v", err)
 	}
+
+	sw.Step("ptTg")
 
 	//existsAlready, err := hm.bucket.Exists(hm.ctx, stringKey)
 	//if err != nil {
@@ -389,6 +396,8 @@ func (hm *GoCloudUrlStorage) ReserveAndSet(hash []byte, data []byte) {
 	if err != nil {
 		log.Panicf("writing to block storage failed! Write. %+v", err)
 	}
+
+	sw.Step("wrtAll")
 }
 
 func (hm *GoCloudUrlStorage) DeleteReservation(hash []byte) {
