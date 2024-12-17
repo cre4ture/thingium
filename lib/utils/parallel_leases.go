@@ -2,8 +2,6 @@ package utils
 
 import (
 	"sync"
-
-	"github.com/syncthing/syncthing/lib/logger"
 )
 
 type ParallelLeases struct {
@@ -44,14 +42,15 @@ func (pl *ParallelLeases) AsyncRunOneWithDoneFn(name string, fn func(doneFn func
 		pl.cond.Wait()
 	}
 
-	logger.DefaultLogger.Infof("START[%v, %v] leases free: %v/%v", pl.jobGroupName, name, currentlyFree, pl.count)
+	_ = currentlyFree
+	//logger.DefaultLogger.Infof("START[%v, %v] leases free: %v/%v", pl.jobGroupName, name, currentlyFree, pl.count)
 	go fn(func() {
 		// return lease
 		pl.cond.L.Lock()
 		defer pl.cond.L.Unlock()
 		pl.freeLeases += 1
 		pl.cond.Broadcast()
-		logger.DefaultLogger.Infof("DONE[%v, %v] leases free: %v/%v", pl.jobGroupName, name, currentlyFree, pl.count)
+		//logger.DefaultLogger.Infof("DONE[%v, %v] leases free: %v/%v", pl.jobGroupName, name, currentlyFree, pl.count)
 	})
 }
 
@@ -63,7 +62,7 @@ func (pl *ParallelLeases) AsyncRunOne(name string, fn func()) {
 }
 
 func (pl *ParallelLeases) WaitAllDone() {
-	defer logger.DefaultLogger.Infof("PULL_X: wait for async operations to complete - DONE")
+	//defer logger.DefaultLogger.Infof("PULL_X: wait for async operations to complete - DONE")
 	pl.cond.L.Lock()
 	defer pl.cond.L.Unlock()
 
@@ -71,8 +70,7 @@ func (pl *ParallelLeases) WaitAllDone() {
 
 	// wait for async operations to complete
 	for {
-		logger.DefaultLogger.Infof("PULL_X: wait for async operations to complete ... %v/%v",
-			pl.freeLeases, pl.count)
+		//logger.DefaultLogger.Infof("PULL_X: wait for async operations to complete ... %v/%v", pl.freeLeases, pl.count)
 		if pl.freeLeases == pl.count {
 			return
 		}
