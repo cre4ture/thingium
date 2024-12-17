@@ -11,6 +11,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io/fs"
 	"log"
 	"math"
@@ -87,9 +88,9 @@ func (vFSS *virtualFolderSyncthingService) GetBlockDataFromCacheOrDownload(
 	block protocol.BlockInfo,
 	checkOnly func(), // set to nil when no check only
 ) ([]byte, bool, GetBlockDataResult) {
-	logger.DefaultLogger.Infof("GetBlockDataFromCacheOrDownload(%v:%v): START", file.Name, block.Offset/int64(file.BlockSize()))
+	grp := fmt.Sprintf("GetBlockDataFromCacheOrDownload(%v:%v): START", file.Name, block.Offset/int64(file.BlockSize()))
 	watch := utils.PerformanceStopWatchStart()
-	defer watch.LastStep("GetBlockDataFromCacheOrDownload", "FINAL")
+	defer watch.LastStep(grp, "FINAL")
 
 	data, ok := vFSS.blockCache.ReserveAndGet(block.Hash, checkOnly == nil)
 	if ok {
@@ -118,7 +119,6 @@ func (vFSS *virtualFolderSyncthingService) GetBlockDataFromCacheOrDownload(
 
 	watch.Step("pull")
 
-	defer logger.DefaultLogger.Infof("GetBlockDataFromCacheOrDownload(%v:%v): set to block storage", file.Name, block.Offset/int64(file.BlockSize()))
 	vFSS.blockCache.ReserveAndSet(block.Hash, data)
 
 	watch.Step("rsvAndSt")
