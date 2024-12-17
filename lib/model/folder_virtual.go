@@ -88,14 +88,16 @@ func (vFSS *virtualFolderSyncthingService) GetBlockDataFromCacheOrDownload(
 	checkOnly func(), // set to nil when no check only
 ) ([]byte, bool, GetBlockDataResult) {
 	logger.DefaultLogger.Infof("GetBlockDataFromCacheOrDownload(%v:%v): START", file.Name, block.Offset/int64(file.BlockSize()))
-	defer logger.DefaultLogger.Infof("GetBlockDataFromCacheOrDownload(%v:%v): RETURN", file.Name, block.Offset/int64(file.BlockSize()))
+	watch := utils.PerformanceStopWatchStart()
+	defer watch.LastStep("GetBlockDataFromCacheOrDownload", "FINAL")
 
 	data, ok := vFSS.blockCache.ReserveAndGet(block.Hash, checkOnly == nil)
 	if ok {
 		return data, true, GET_BLOCK_CACHED
 	}
 
-	defer logger.DefaultLogger.Infof("GetBlockDataFromCacheOrDownload(%v:%v): start pull", file.Name, block.Offset/int64(file.BlockSize()))
+	watch.Step("rsvAndGt")
+
 	checkOnly()
 
 	snap, err := vFSS.fset.Snapshot()
@@ -103,6 +105,8 @@ func (vFSS *virtualFolderSyncthingService) GetBlockDataFromCacheOrDownload(
 		return nil, false, GET_BLOCK_FAILED
 	}
 	defer snap.Release()
+
+	watch.Step("snap")
 
 	err = vFSS.pullBlockBase(func(blockData []byte) {
 		data = blockData
@@ -112,8 +116,12 @@ func (vFSS *virtualFolderSyncthingService) GetBlockDataFromCacheOrDownload(
 		return nil, false, GET_BLOCK_FAILED
 	}
 
+	watch.Step("pull")
+
 	defer logger.DefaultLogger.Infof("GetBlockDataFromCacheOrDownload(%v:%v): set to block storage", file.Name, block.Offset/int64(file.BlockSize()))
 	vFSS.blockCache.ReserveAndSet(block.Hash, data)
+
+	watch.Step("rsvAndSt")
 
 	return data, true, GET_BLOCK_DOWNLOAD
 }
