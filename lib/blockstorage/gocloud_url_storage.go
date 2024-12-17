@@ -337,8 +337,8 @@ func (hm *GoCloudUrlStorage) ReserveAndGet(hash []byte, downloadData bool) (data
 		return nil, false
 	}
 
-	logger.DefaultLogger.Infof("ReserveAndGet(): %v", hashutil.HashToStringMapKey(hash))
-	defer logger.DefaultLogger.Infof("ReserveAndGet(): %v", hashutil.HashToStringMapKey(hash))
+	//logger.DefaultLogger.Infof("ReserveAndGet(): %v", hashutil.HashToStringMapKey(hash))
+	//defer logger.DefaultLogger.Infof("ReserveAndGet(): %v", hashutil.HashToStringMapKey(hash))
 
 	for {
 		retry := false
@@ -347,7 +347,7 @@ func (hm *GoCloudUrlStorage) ReserveAndGet(hash []byte, downloadData bool) (data
 			break
 		}
 		// wait for a relatively long period of time to allow deletion to complete / skip
-		logger.DefaultLogger.Infof("ReserveAndGet(): %v - WAIT for retry", hashutil.HashToStringMapKey(hash))
+		//logger.DefaultLogger.Infof("ReserveAndGet(): %v - WAIT for retry", hashutil.HashToStringMapKey(hash))
 		time.Sleep(time.Minute * 1)
 	}
 

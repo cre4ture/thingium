@@ -87,9 +87,9 @@ func (f *folderBase) pullBlockBase(
 	b protocol.BlockOfFile,
 ) error {
 	var lastError error
-	logger.DefaultLogger.Infof("pullBlockBase(%v) - START", b)
+	grp := fmt.Sprintf("pullBlockBase(%s)", b.String())
 	watch := utils.PerformanceStopWatchStart()
-	defer watch.LastStep("pullBlockBase", "FINAL")
+	defer watch.LastStep(grp, "FINAL")
 
 	candidates := f.model.blockAvailability(f.FolderConfiguration, snap, *b.File, b.Block)
 
