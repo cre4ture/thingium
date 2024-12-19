@@ -59,7 +59,7 @@ type BlockDataAccessI interface {
 	GetBlockDataFromCacheOrDownloadI(
 		file *protocol.FileInfo,
 		block protocol.BlockInfo,
-	) ([]byte, bool, GetBlockDataResult)
+	) ([]byte, error, GetBlockDataResult)
 	ReserveAndSetI(hash []byte, data []byte)
 	RequestBackgroundDownloadI(filename string, size int64, modified time.Time)
 }
@@ -242,7 +242,8 @@ func (stf *syncthingVirtualFolderFuseAdapter) writeFile(
 		var blockData = []byte{}
 		if blockIdx < len(fi.Blocks) {
 			bi := fi.Blocks[blockIdx]
-			blockData, ok, _ = stf.dataAccess.GetBlockDataFromCacheOrDownloadI(&fi, bi)
+			blockData, err, _ = stf.dataAccess.GetBlockDataFromCacheOrDownloadI(&fi, bi)
+			ok = (err == nil)
 		}
 		if !ok {
 			// allocate new block: // TODO: what in case of temporary connection issue?
@@ -611,8 +612,8 @@ func (vf *VirtualFileReadResult) readOneBlock(offset uint64, remainingToRead int
 		return nil, 0
 	}
 
-	inputData, ok, _ := vf.f.dataAccess.GetBlockDataFromCacheOrDownloadI(vf.fi, block)
-	if !ok {
+	inputData, err, _ := vf.f.dataAccess.GetBlockDataFromCacheOrDownloadI(vf.fi, block)
+	if err != nil {
 		return nil, fuse.Status(syscall.EAGAIN)
 	}
 

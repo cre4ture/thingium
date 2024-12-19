@@ -24,7 +24,7 @@ func (e *EncryptedHashBlockStorage) DeAnnounceDelete(hash []byte) error {
 }
 
 // GetBlockHashState implements HashBlockStorageI.
-func (e *EncryptedHashBlockStorage) GetBlockHashState(hash []byte) HashBlockState {
+func (e *EncryptedHashBlockStorage) GetBlockHashState(hash []byte) (HashBlockState, error) {
 	return e.store.GetBlockHashState(hash)
 }
 
@@ -45,58 +45,51 @@ func (e *EncryptedHashBlockStorage) Close() error {
 }
 
 // Delete implements HashBlockStorageI.
-func (e *EncryptedHashBlockStorage) DeleteReservation(hash []byte) {
-	e.store.DeleteReservation(hash)
+func (e *EncryptedHashBlockStorage) DeleteReservation(hash []byte) error {
+	return e.store.DeleteReservation(hash)
 	// TODO: how to cleanup related metadata?
 	//e.store.DeleteMeta(e.genRealHashKey(hash))
 }
 
 // DeleteMeta implements HashBlockStorageI.
-func (e *EncryptedHashBlockStorage) DeleteMeta(name string) {
-	e.store.DeleteMeta(name)
+func (e *EncryptedHashBlockStorage) DeleteMeta(name string) error {
+	return e.store.DeleteMeta(name)
 }
 
 // Get implements HashBlockStorageI.
-func (e *EncryptedHashBlockStorage) ReserveAndGet(hash []byte, downloadData bool) (data []byte, ok bool) {
+func (e *EncryptedHashBlockStorage) ReserveAndGet(hash []byte, downloadData bool) (data []byte, err error) {
 	return e.store.ReserveAndGet(hash, downloadData)
 }
 
 // GetBlockHashesCache implements HashBlockStorageI.
 func (e *EncryptedHashBlockStorage) GetBlockHashesCache(
-	ctx context.Context, progressNotifier func(count int, currentHash []byte)) HashBlockStateMap {
+	ctx context.Context, progressNotifier func(count int, currentHash []byte)) (HashBlockStateMap, error) {
 	return e.store.GetBlockHashesCache(ctx, progressNotifier)
 }
 
 // GetBlockHashesCountHint implements HashBlockStorageI.
-func (e *EncryptedHashBlockStorage) GetBlockHashesCountHint() int {
+func (e *EncryptedHashBlockStorage) GetBlockHashesCountHint() (int, error) {
 	return e.store.GetBlockHashesCountHint()
 }
 
 // GetMeta implements HashBlockStorageI.
-func (e *EncryptedHashBlockStorage) GetMeta(name string) (data []byte, ok bool) {
+func (e *EncryptedHashBlockStorage) GetMeta(name string) (data []byte, err error) {
 	return e.store.GetMeta(name)
 }
 
-//// Has implements HashBlockStorageI.
-//func (e *EncryptedHashBlockStorage) Has(hash []byte) (ok bool) {
-//	return e.store.Has(hash)
-//}
-
-//// IterateBlocks implements HashBlockStorageI.
-//func (e *EncryptedHashBlockStorage) IterateBlocks(fn func(hash []byte, state HashBlockState) bool) error {
-//	return e.store.IterateBlocks(fn)
-//}
-
 // Set implements HashBlockStorageI.
-func (e *EncryptedHashBlockStorage) ReserveAndSet(hash []byte, data []byte) {
+func (e *EncryptedHashBlockStorage) ReserveAndSet(hash []byte, data []byte) error {
 	real_hash := sha256.Sum256(data)
-	e.store.SetMeta(e.genRealHashKey(hash), real_hash[:])
-	e.store.ReserveAndSet(hash, data)
+	err := e.store.SetMeta(e.genRealHashKey(hash), real_hash[:])
+	if err != nil {
+		return err
+	}
+	return e.store.ReserveAndSet(hash, data)
 }
 
 // SetMeta implements HashBlockStorageI.
-func (e *EncryptedHashBlockStorage) SetMeta(name string, data []byte) {
-	e.store.SetMeta(name, data)
+func (e *EncryptedHashBlockStorage) SetMeta(name string, data []byte) error {
+	return e.store.SetMeta(name, data)
 }
 
 func NewEncryptedHashBlockStorage(store HashBlockStorageI) *EncryptedHashBlockStorage {

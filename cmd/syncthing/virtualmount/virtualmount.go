@@ -184,14 +184,14 @@ type OfflineBlockDataAccess struct {
 
 type CachedBlock struct {
 	data   []byte
-	ok     bool
+	err    error
 	result model.GetBlockDataResult
 }
 
 // GetBlockDataFromCacheOrDownloadI implements model.BlockDataAccessI.
 func (o *OfflineBlockDataAccess) GetBlockDataFromCacheOrDownloadI(
 	file *protocol.FileInfo, block protocol.BlockInfo,
-) ([]byte, bool, model.GetBlockDataResult) {
+) ([]byte, error, model.GetBlockDataResult) {
 
 	cacheKey := hashutil.HashToStringMapKey(block.Hash)
 	var dataBuffer *CachedBlock = nil
@@ -215,19 +215,19 @@ func (o *OfflineBlockDataAccess) GetBlockDataFromCacheOrDownloadI(
 
 	if ok {
 		dataBuffer = pCD.Lock()
-		return dataBuffer.data, dataBuffer.ok, dataBuffer.result
+		return dataBuffer.data, dataBuffer.err, dataBuffer.result
 	}
 
-	data, ok := o.blockStorage.ReserveAndGet(block.Hash, true)
+	data, err := o.blockStorage.ReserveAndGet(block.Hash, true)
 	dataBuffer.data = data
-	dataBuffer.ok = ok
-	if !ok {
+	dataBuffer.err = err
+	if err != nil {
 		dataBuffer.result = model.GET_BLOCK_FAILED
 	} else {
 		dataBuffer.result = model.GET_BLOCK_CACHED
 	}
 
-	return dataBuffer.data, dataBuffer.ok, dataBuffer.result
+	return dataBuffer.data, dataBuffer.err, dataBuffer.result
 }
 
 // RequestBackgroundDownloadI implements model.BlockDataAccessI.
@@ -329,9 +329,9 @@ func (o *OfflineDbSnapshotI) GetGlobal(file string) (protocol.FileInfo, bool) {
 	}
 
 	fullUrl := o.metaPrefix + file
-	data, ok := o.blockStorage.GetMeta(fullUrl)
+	data, err := o.blockStorage.GetMeta(fullUrl)
 	logger.DefaultLogger.Debugf("GetGlobal(%v): %v, ok:%v, data len:%v", file, fullUrl, ok, len(data))
-	if !ok {
+	if err != nil {
 		func() {
 			cache := o.caches.fileCache.Lock()
 			defer o.caches.fileCache.Unlock()
@@ -341,7 +341,7 @@ func (o *OfflineDbSnapshotI) GetGlobal(file string) (protocol.FileInfo, bool) {
 	}
 
 	wireFi := &bep.FileInfo{}
-	err := proto.Unmarshal(data, wireFi)
+	err = proto.Unmarshal(data, wireFi)
 	fiCpy := protocol.FileInfoFromWire(wireFi)
 	fi = &fiCpy
 	logger.DefaultLogger.Debugf("GetGlobal(%v): unmarshal-err: %+v. fi: %+v", file, err, fi)

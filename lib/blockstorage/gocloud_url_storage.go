@@ -172,21 +172,21 @@ func (hm *GoCloudUrlStorage) UncheckedDelete(hash []byte) error {
 }
 
 // GetBlockHashesCountHint implements HashBlockStorageI.
-func (hm *GoCloudUrlStorage) GetBlockHashesCountHint() int {
+func (hm *GoCloudUrlStorage) GetBlockHashesCountHint() (int, error) {
 
 	minimum := 100
 
 	logger.DefaultLogger.Debugf("GetBlockHashesCountHint() - enter")
-	data, ok := hm.GetMeta("BlockCountHint")
-	if !ok {
+	data, err := hm.GetMeta("BlockCountHint")
+	if err != nil {
 		logger.DefaultLogger.Infof("GetBlockHashesCountHint() - read hint failed - use %v", minimum)
-		return minimum
+		return minimum, err
 	}
 
 	hint, err := strconv.Atoi(string(data[:]))
 	if err != nil {
 		logger.DefaultLogger.Infof("GetBlockHashesCountHint() - parsing of hint failed (%v) - use %v", err, minimum)
-		return minimum
+		return minimum, err
 	}
 
 	if hint < minimum {
@@ -194,7 +194,7 @@ func (hm *GoCloudUrlStorage) GetBlockHashesCountHint() int {
 	}
 
 	logger.DefaultLogger.Infof("GetBlockHashesCountHint() - read hint OK: %v", hint)
-	return hint
+	return hint, nil
 }
 
 func NewGoCloudUrlStorage(ctx context.Context, url string, myDeviceId string) *GoCloudUrlStorage {
@@ -224,7 +224,7 @@ func getMetadataStringKey(name string) string {
 func (hm *GoCloudUrlStorage) GetBlockHashesCache(
 	ctx context.Context,
 	progressNotifier func(count int, currentHash []byte),
-) HashBlockStateMap {
+) (HashBlockStateMap, error) {
 
 	startTime := time.Now()
 	defer func() {
@@ -242,54 +242,33 @@ func (hm *GoCloudUrlStorage) GetBlockHashesCache(
 
 	if err != nil {
 		logger.DefaultLogger.Warnf("IterateBlocks returned error: %v", err)
-		return nil
+		return nil, err
 	}
 
 	blockCountHint := strconv.Itoa(len(hashSet))
-	hm.SetMeta("BlockCountHint", []byte(blockCountHint))
+	_ = hm.SetMeta("BlockCountHint", []byte(blockCountHint))
 	speedElementsPerSecond := float64(len(hashSet)) / time.Since(startTime).Seconds()
 	logger.DefaultLogger.Debugf("SetMeta(BlockCountHint): %v, speed(block/s): %v", blockCountHint, speedElementsPerSecond)
-	return hashSet
+	return hashSet, nil
 }
 
-func (hm *GoCloudUrlStorage) GetBlockHashState(hash []byte) HashBlockState {
+func (hm *GoCloudUrlStorage) GetBlockHashState(hash []byte) (HashBlockState, error) {
 	blockState := HashBlockState{}
-	hm.IterateBlocksInternal(hm.ctx, hashutil.HashToStringMapKey(hash), func(d HashAndState) {
+	err := hm.IterateBlocksInternal(hm.ctx, hashutil.HashToStringMapKey(hash), func(d HashAndState) {
 		blockState = d.state
 	})
 
-	return blockState
+	return blockState, err
 }
 
-//func (hm *GoCloudUrlStorage) Has(hash []byte) (ok bool) {
-//	if len(hash) == 0 {
-//		return false
-//	}
-//
-//	stringKey := getBlockStringKey(hash)
-//
-//	hm.bucket.ListPage(hm.ctx, nil, 3)
-//	exists, err := hm.bucket.Exists(hm.ctx, stringKey)
-//	if gcerrors.Code(err) == gcerrors.NotFound || !exists {
-//		return false
-//	}
-//
-//	if err != nil {
-//		log.Fatal(err)
-//		panic("failed to get block from block storage")
-//	}
-//
-//	return true
-//}
-
-func (hm *GoCloudUrlStorage) reserveAndCheckExistence(hash []byte) (ok bool, retry bool) {
+func (hm *GoCloudUrlStorage) reserveAndCheckExistence(hash []byte) error {
 	hashKey := getBlockStringKey(hash)
 
 	if !hm.IsReadOnly() {
 		// force existence of use-tag with our ID
 		err := hm.putATag(hash, BLOCK_USE_TAG, false)
 		if err != nil {
-			return false, false
+			return err
 		}
 	}
 
@@ -298,7 +277,7 @@ func (hm *GoCloudUrlStorage) reserveAndCheckExistence(hash []byte) (ok bool, ret
 	opts.Prefix = hashKey
 	page, _, err := hm.bucket.ListPage(hm.ctx, blob.FirstPageToken, perPageCount, opts)
 	if err != nil {
-		return false, false
+		return err
 	}
 
 	usesMap := map[string]*blob.ListObject{}
@@ -323,28 +302,27 @@ func (hm *GoCloudUrlStorage) reserveAndCheckExistence(hash []byte) (ok bool, ret
 		// wait until all deletes are processed completely.
 		// This should be very rarely happing, thus a simple retry later should not
 		// influence overall performance
-		return false, true
+		return ErrRetryLater
 	}
 
 	if dataEntry == nil {
-		return false, false
+		return ErrNotAvailable
 	}
 
-	return true, false
+	return nil
 }
 
-func (hm *GoCloudUrlStorage) ReserveAndGet(hash []byte, downloadData bool) (data []byte, ok bool) {
+func (hm *GoCloudUrlStorage) ReserveAndGet(hash []byte, downloadData bool) (data []byte, err error) {
 	if len(hash) == 0 {
-		return nil, false
+		return nil, ErrNotAvailable
 	}
 
 	//logger.DefaultLogger.Infof("ReserveAndGet(): %v", hashutil.HashToStringMapKey(hash))
 	//defer logger.DefaultLogger.Infof("ReserveAndGet(): %v", hashutil.HashToStringMapKey(hash))
 
 	for {
-		retry := false
-		ok, retry = hm.reserveAndCheckExistence(hash)
-		if !retry {
+		err = hm.reserveAndCheckExistence(hash)
+		if !errors.Is(err, ErrRetryLater) {
 			break
 		}
 		// wait for a relatively long period of time to allow deletion to complete / skip
@@ -352,22 +330,22 @@ func (hm *GoCloudUrlStorage) ReserveAndGet(hash []byte, downloadData bool) (data
 		time.Sleep(time.Minute * 1)
 	}
 
-	if ok && downloadData {
+	if (err == nil) && downloadData {
 		var err error = nil
 		logger.DefaultLogger.Infof("ReserveAndGet(): %v - download", hashutil.HashToStringMapKey(hash))
 		data, err = hm.bucket.ReadAll(hm.ctx, getBlockStringKey(hash))
 		if err != nil {
-			panic("failed to read existing block data!")
+			return nil, ErrConnectionFailed
 		}
 	}
 
-	return data, ok
+	return data, err
 }
 
-func (hm *GoCloudUrlStorage) ReserveAndSet(hash []byte, data []byte) {
+func (hm *GoCloudUrlStorage) ReserveAndSet(hash []byte, data []byte) error {
 	if hm.IsReadOnly() {
 		logger.DefaultLogger.Warnf("ReserveAndSet: read only")
-		return
+		return ErrReadOnly
 	}
 
 	grp := fmt.Sprintf("ReserveAndSet(*,size:%d)", len(data))
@@ -377,7 +355,8 @@ func (hm *GoCloudUrlStorage) ReserveAndSet(hash []byte, data []byte) {
 	// force existence of use-tag with our ID
 	err := hm.putATag(hash, BLOCK_USE_TAG, false)
 	if err != nil {
-		log.Panicf("writing to block storage failed! Put reservation. %+v", err)
+		logger.DefaultLogger.Warnf("writing to block storage failed! Put reservation. %+v", err)
+		return err
 	}
 
 	sw.Step("ptTg")
@@ -385,7 +364,7 @@ func (hm *GoCloudUrlStorage) ReserveAndSet(hash []byte, data []byte) {
 	//existsAlready, err := hm.bucket.Exists(hm.ctx, stringKey)
 	//if err != nil {
 	//	log.Fatal(err)
-	//	panic("writing to block storage failed! Pre-Check.")
+	//	return err
 	//}
 	//if existsAlready {
 	//	return // skip upload
@@ -394,44 +373,45 @@ func (hm *GoCloudUrlStorage) ReserveAndSet(hash []byte, data []byte) {
 	hashKey := getBlockStringKey(hash)
 	err = hm.bucket.WriteAll(hm.ctx, hashKey, data, nil)
 	if err != nil {
-		log.Panicf("writing to block storage failed! Write. %+v", err)
+		logger.DefaultLogger.Warnf("writing to block storage failed! Write. %+v", err)
+		return err
 	}
 
 	sw.Step("wrtAll")
+	return nil
 }
 
-func (hm *GoCloudUrlStorage) DeleteReservation(hash []byte) {
+func (hm *GoCloudUrlStorage) DeleteReservation(hash []byte) error {
 	// delete reference to block data for this node
 	// TODO: trigger async immediate checked delete?
 	err := hm.removeATag(hash, BLOCK_USE_TAG)
 	if err != nil {
 		log.Fatal(err)
-		panic("writing to block storage failed!")
+		return err
 	}
+
+	return nil
 }
 
-func (hm *GoCloudUrlStorage) GetMeta(name string) (data []byte, ok bool) {
-	data, err := hm.bucket.ReadAll(hm.ctx, getMetadataStringKey(name))
-	if err != nil {
-		return nil, false
-	}
-	return data, true
+func (hm *GoCloudUrlStorage) GetMeta(name string) (data []byte, err error) {
+	return hm.bucket.ReadAll(hm.ctx, getMetadataStringKey(name))
 }
-func (hm *GoCloudUrlStorage) SetMeta(name string, data []byte) {
+
+func (hm *GoCloudUrlStorage) SetMeta(name string, data []byte) error {
 	if hm.IsReadOnly() {
 		logger.DefaultLogger.Warnf("SetMeta: read only")
-		return
+		return ErrReadOnly
 	}
 
-	hm.bucket.WriteAll(hm.ctx, getMetadataStringKey(name), data, nil)
+	return hm.bucket.WriteAll(hm.ctx, getMetadataStringKey(name), data, nil)
 }
-func (hm *GoCloudUrlStorage) DeleteMeta(name string) {
+func (hm *GoCloudUrlStorage) DeleteMeta(name string) error {
 	if hm.IsReadOnly() {
 		logger.DefaultLogger.Warnf("SetMeta: read only")
-		return
+		return ErrReadOnly
 	}
 
-	hm.bucket.Delete(hm.ctx, getMetadataStringKey(name))
+	return hm.bucket.Delete(hm.ctx, getMetadataStringKey(name))
 }
 
 func (hm *GoCloudUrlStorage) Close() error {

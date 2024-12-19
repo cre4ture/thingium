@@ -12,7 +12,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io/fs"
 	"log"
 	"math"
 	"os"
@@ -79,7 +78,7 @@ const (
 func (vFSS *virtualFolderSyncthingService) GetBlockDataFromCacheOrDownloadI(
 	file *protocol.FileInfo,
 	block protocol.BlockInfo,
-) ([]byte, bool, GetBlockDataResult) {
+) ([]byte, error, GetBlockDataResult) {
 	return vFSS.GetBlockDataFromCacheOrDownload(file, block, nil)
 }
 
@@ -87,14 +86,19 @@ func (vFSS *virtualFolderSyncthingService) GetBlockDataFromCacheOrDownload(
 	file *protocol.FileInfo,
 	block protocol.BlockInfo,
 	checkOnly func(), // set to nil when no check only
-) ([]byte, bool, GetBlockDataResult) {
+) ([]byte, error, GetBlockDataResult) {
 	grp := fmt.Sprintf("GetBlockDataFromCacheOrDownload(%v:%v): START", file.Name, block.Offset/int64(file.BlockSize()))
 	watch := utils.PerformanceStopWatchStart()
 	defer watch.LastStep(grp, "FINAL")
 
-	data, ok := vFSS.blockCache.ReserveAndGet(block.Hash, checkOnly == nil)
-	if ok {
-		return data, true, GET_BLOCK_CACHED
+	data, err := vFSS.blockCache.ReserveAndGet(block.Hash, checkOnly == nil)
+	if err == nil {
+		return data, nil, GET_BLOCK_CACHED
+	} else {
+		if !errors.Is(err, blockstorage.ErrNotAvailable) {
+			// connection error, or other unknown issue
+			return nil, err, GET_BLOCK_FAILED
+		}
 	}
 
 	watch.Step("rsvAndGt")
@@ -103,7 +107,7 @@ func (vFSS *virtualFolderSyncthingService) GetBlockDataFromCacheOrDownload(
 
 	snap, err := vFSS.fset.Snapshot()
 	if err != nil {
-		return nil, false, GET_BLOCK_FAILED
+		return nil, err, GET_BLOCK_FAILED
 	}
 	defer snap.Release()
 
@@ -114,7 +118,7 @@ func (vFSS *virtualFolderSyncthingService) GetBlockDataFromCacheOrDownload(
 	}, snap, protocol.BlockOfFile{File: file, Block: block})
 
 	if err != nil {
-		return nil, false, GET_BLOCK_FAILED
+		return nil, err, GET_BLOCK_FAILED
 	}
 
 	watch.Step("pull")
@@ -123,7 +127,7 @@ func (vFSS *virtualFolderSyncthingService) GetBlockDataFromCacheOrDownload(
 
 	watch.Step("rsvAndSt")
 
-	return data, true, GET_BLOCK_DOWNLOAD
+	return data, nil, GET_BLOCK_DOWNLOAD
 }
 
 func (vFSS *virtualFolderSyncthingService) ReserveAndSetI(hash []byte, data []byte) {
@@ -441,7 +445,7 @@ func (vf *runningVirtualFolderSyncthingService) pullOrScan_x(ctx context.Context
 
 	checkMap := blockstorage.HashBlockStateMap(nil)
 	if opts.onlyCheck {
-		func() {
+		err = func() error {
 			asyncNotifier := utils.NewAsyncProgressNotifier(vf.serviceRunningCtx)
 			asyncNotifier.StartAsyncProgressNotification(
 				logger.DefaultLogger,
@@ -454,7 +458,7 @@ func (vf *runningVirtualFolderSyncthingService) pullOrScan_x(ctx context.Context
 			defer logger.DefaultLogger.Infof("pull_x END1 asyncNotifier.Stop()")
 			defer asyncNotifier.Stop()
 
-			checkMap = vf.blockCache.GetBlockHashesCache(ctx, func(count int, currentHash []byte) {
+			checkMap, err = vf.blockCache.GetBlockHashesCache(ctx, func(count int, currentHash []byte) {
 				if len(currentHash) < 1 {
 					log.Panicf("Scan progress: Length of currentHash is zero! %v", currentHash)
 				}
@@ -462,7 +466,12 @@ func (vf *runningVirtualFolderSyncthingService) pullOrScan_x(ctx context.Context
 				// logger.DefaultLogger.Infof("GetBlockHashesCache - progress: %v, byte: 0x%x", count, progressByte)
 				asyncNotifier.Progress.UpdateTotal(progressByte)
 			})
+			return err
 		}()
+
+		if err != nil {
+			return err
+		}
 	}
 
 	jobs := newJobQueue()
@@ -695,8 +704,8 @@ func (vf *runningVirtualFolderSyncthingService) scanOne(snap *db.Snapshot, f pro
 				ok = inMap
 				if inMap && (!blockState.IsAvailableAndReservedByMe()) {
 					// block is there but not hold, add missing hold - checking again for existence as in unhold state it could have been removed meanwhile
-					_, reservationOk := vf.parent.blockCache.ReserveAndGet(bi.Hash, false)
-					ok = reservationOk
+					_, err := vf.parent.blockCache.ReserveAndGet(bi.Hash, false)
+					ok = (err == nil)
 				}
 				if !ok {
 					logger.DefaultLogger.Debugf("synchronous cache-map based check(%v) failed for block info #%v: %+v, inMap: %v",
@@ -736,18 +745,18 @@ var _ = (virtualFolderServiceI)((*virtualFolderSyncthingService)(nil))
 
 // API to model
 func (vf *virtualFolderSyncthingService) GetHashBlockData(hash []byte, response_data []byte) (int, error) {
-	data, ok := vf.blockCache.ReserveAndGet(hash, true)
-	if !ok {
-		return 0, protocol.ErrNoSuchFile
+	data, err := vf.blockCache.ReserveAndGet(hash, true)
+	if err != nil {
+		return 0, err
 	}
 	n := copy(response_data, data)
 	return n, nil
 }
 
 func (f *virtualFolderSyncthingService) ReadEncryptionToken() ([]byte, error) {
-	data, ok := f.blockCache.GetMeta(config.EncryptionTokenName)
-	if !ok {
-		return nil, fs.ErrNotExist
+	data, err := f.blockCache.GetMeta(config.EncryptionTokenName)
+	if err != nil {
+		return nil, err
 	}
 	dataBuf := bytes.NewBuffer(data)
 	var stored storedEncryptionToken

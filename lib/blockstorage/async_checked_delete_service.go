@@ -4,6 +4,10 @@ import (
 	"context"
 	"sync"
 	"time"
+
+	"github.com/syncthing/syncthing/lib/hashutil"
+	"github.com/syncthing/syncthing/lib/logger"
+	"github.com/syncthing/syncthing/lib/utils"
 )
 
 type AsyncCheckedDeleteService struct {
@@ -67,36 +71,43 @@ func (ds *AsyncCheckedDeleteService) serveTodoList() {
 		case <-ds.ctx.Done():
 			return
 		case currentJob := <-ds.todoList:
-			// first check again, as the job might have been waiting in TODO list for a while
-			currentState := ds.hbs.GetBlockHashState(currentJob)
-			if currentState.IsReservedBySomeone() {
-				// logger.DefaultLogger.Infof("skip delete as still reserved: %v, state: %v",
-				// 	hashutil.HashToStringMapKey(currentJob), currentState)
-				continue
-			}
+			err := utils.AbortableTimeDelayedRetry(ds.ctx, 6, time.Minute, func(tryNr uint) error {
+				// first check again, as the job might have been waiting in TODO list for a while
+				currentState, err := ds.hbs.GetBlockHashState(currentJob)
+				if err != nil {
+					return err
+				}
 
-			ds.hbs.AnnounceDelete(currentJob)
-			pendingDeleteJob := PendingDelete{
-				time: time.Now().Add(TIME_CONSTANT),
-				hash: currentJob,
+				if currentState.IsReservedBySomeone() {
+					// logger.DefaultLogger.Infof("skip delete as still reserved: %v, state: %v",
+					// 	hashutil.HashToStringMapKey(currentJob), currentState)
+					return nil
+				}
+
+				err = ds.hbs.AnnounceDelete(currentJob)
+				if err != nil {
+					return err
+				}
+
+				pendingDeleteJob := PendingDelete{
+					time: time.Now().Add(TIME_CONSTANT),
+					hash: currentJob,
+				}
+				select {
+				case <-ds.ctx.Done():
+					_ = ds.hbs.DeAnnounceDelete(currentJob)
+					return context.Canceled
+				case ds.pendingDeletes <- pendingDeleteJob:
+				}
+				// logger.DefaultLogger.Infof("announced delete for: %v", hashutil.HashToStringMapKey(currentJob))
+
+				return nil
+			})
+
+			if err != nil {
+				logger.DefaultLogger.Warnf("deletion of %v failed to to persistent errors", hashutil.HashToStringMapKey(currentJob))
 			}
-			select {
-			case <-ds.ctx.Done():
-				ds.hbs.DeAnnounceDelete(currentJob)
-				return
-			case ds.pendingDeletes <- pendingDeleteJob:
-			}
-			// logger.DefaultLogger.Infof("announced delete for: %v", hashutil.HashToStringMapKey(currentJob))
 		}
-	}
-}
-
-func abortableTimeSleep(ctx context.Context, duration time.Duration) error {
-	select {
-	case <-ctx.Done():
-		return context.Canceled
-	case <-time.After(duration):
-		return nil
 	}
 }
 
@@ -115,13 +126,17 @@ func (ds *AsyncCheckedDeleteService) servePendingList() {
 				defer ds.hbs.DeAnnounceDelete(currentJob.hash)
 
 				timeTillDue := time.Until(currentJob.time)
-				err := abortableTimeSleep(ds.ctx, timeTillDue)
+				err := utils.AbortableTimeSleep(ds.ctx, timeTillDue)
 				if err != nil {
-					return
+					return // aborted
 				}
 
 				// check again, abort if state changed, delete when state same and we are still in time
-				currentState := ds.hbs.GetBlockHashState(currentJob.hash)
+				currentState, err := ds.hbs.GetBlockHashState(currentJob.hash)
+				if err != nil {
+					return // error, abort
+				}
+
 				if currentState.IsReservedBySomeone() {
 					// if state changed in grace period, this needs to be accepted
 					// logger.DefaultLogger.Infof("abort delete due to new reservation for: %v, state: %v",
@@ -136,7 +151,10 @@ func (ds *AsyncCheckedDeleteService) servePendingList() {
 				}
 
 				// we are still in time window for deletion, no state changed, finally delete
-				ds.hbs.UncheckedDelete(currentJob.hash)
+				err = ds.hbs.UncheckedDelete(currentJob.hash)
+				if err != nil {
+					logger.DefaultLogger.Warnf("delete for: %v failed. Err: %+v", hashutil.HashToStringMapKey(currentJob.hash), err)
+				}
 				// logger.DefaultLogger.Infof("delete done for: %v",
 				// 	hashutil.HashToStringMapKey(currentJob.hash))
 			}()

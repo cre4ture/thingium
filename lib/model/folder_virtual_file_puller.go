@@ -6,6 +6,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/syncthing/syncthing/lib/blockstorage"
 	"github.com/syncthing/syncthing/lib/db"
 	"github.com/syncthing/syncthing/lib/events"
 	"github.com/syncthing/syncthing/lib/protocol"
@@ -78,24 +79,35 @@ func (f *VirtualFolderFilePuller) doPull() {
 			//logger.DefaultLogger.Debugf("check block info #%v: %+v", i, bi)
 
 			leases.AsyncRunOne(fmt.Sprintf("%v:%v", f.job.name, i), func() {
-				_, ok, variant := f.folderService.GetBlockDataFromCacheOrDownload(
-					&f.file, bi, func() {
-						f.pullStarted()
-					})
-				if !ok {
+
+				err := utils.AbortableTimeDelayedRetry(f.ctx, 6, time.Minute, func(tryNr uint) error {
+					_, err, variant := f.folderService.GetBlockDataFromCacheOrDownload(
+						&f.file, bi, func() {
+							f.pullStarted()
+						})
+
+					if err != nil {
+						// trigger retry
+						return err
+					}
+
+					switch variant {
+					case GET_BLOCK_CACHED:
+						f.copiedFromElsewhere(bi.Size)
+						f.copyDone(bi)
+					case GET_BLOCK_DOWNLOAD:
+						f.pullDone(bi)
+					case GET_BLOCK_FAILED:
+						err = blockstorage.ErrNotAvailable
+					}
+
+					f.job.progressCb(int64(bi.Size), false)
+					return err
+				})
+
+				if err != nil {
 					all_ok.Store(false)
 				}
-
-				switch variant {
-				case GET_BLOCK_CACHED:
-					f.copiedFromElsewhere(bi.Size)
-					f.copyDone(bi)
-				case GET_BLOCK_DOWNLOAD:
-					f.pullDone(bi)
-				case GET_BLOCK_FAILED:
-				}
-
-				f.job.progressCb(int64(bi.Size), false)
 			})
 
 			if utils.IsDone(f.ctx) {
