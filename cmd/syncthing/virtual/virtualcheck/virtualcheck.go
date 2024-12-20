@@ -10,7 +10,9 @@ package virtualcheck
 import (
 	"crypto/sha256"
 	"errors"
+	"fmt"
 
+	progressbar "github.com/schollz/progressbar/v3"
 	"github.com/syncthing/syncthing/cmd/syncthing/virtual"
 	"github.com/syncthing/syncthing/lib/hashutil"
 	"github.com/syncthing/syncthing/lib/logger"
@@ -18,9 +20,10 @@ import (
 )
 
 type CLI struct {
-	DeviceID string `help:"Device ID of the virtual folder, if it cannot be determined automatically"`
-	FolderID string `help:"Folder ID of the virtual folder, if it cannot be determined automatically"`
-	URL      string `arg:"" required:"1" help:"URL to virtual folder. Excluding \":virtual:\""`
+	DeviceID     string `help:"Device ID of the virtual folder, if it cannot be determined automatically"`
+	FolderID     string `help:"Folder ID of the virtual folder, if it cannot be determined automatically"`
+	URL          string `arg:"" required:"1" help:"URL to virtual folder. Excluding \":virtual:\""`
+	ValidateData bool   `help:"If 1 (default), content of data is fetched and checksum validated" default:"1"`
 }
 
 type BlockStatus int
@@ -33,6 +36,12 @@ const (
 )
 
 func (c *CLI) Run() error {
+
+	if !c.ValidateData {
+		println("Validation of data is turned OFF")
+	} else {
+		println("Validation of data is turned ON")
+	}
 
 	osa, err := virtual.NewOfflineDataAccess(
 		c.URL, c.DeviceID, c.FolderID,
@@ -49,40 +58,83 @@ func (c *CLI) Run() error {
 
 	neededBlocks := make(map[string]BlockStatus)
 	corruptedFiles := make(map[string]string)
+	directoriesTodo := make(map[string]*protocol.FileInfo)
 
-	snap.WithPrefixedGlobalTruncated("", func(f protocol.FileInfo) bool {
-		for i, bi := range f.Blocks {
-			hashKey := hashutil.HashToStringMapKey(bi.Hash)
-			status, ok := neededBlocks[hashKey]
-			if !ok {
-				data, err := osa.BlockStorage.ReserveAndGet(bi.Hash, true)
-				if err != nil {
-					status = BLOCK_STATUS_NOT_AVAILABLE
-				} else {
-					currentHash := sha256.Sum256(data)
-					currentHashKey := hashutil.HashToStringMapKey(currentHash[:])
-					if currentHashKey == hashKey {
-						status = BLOCK_STATUS_GOOD
-					} else {
-						status = BLOCK_STATUS_CORRUPTED
-						logger.DefaultLogger.Warnf("validating %v:%v - hash mismatch: %s != %s", f.Name, i, currentHashKey, hashKey)
-					}
-				}
-
-				neededBlocks[hashKey] = status
-			}
-
-			if status != BLOCK_STATUS_GOOD {
-				logger.DefaultLogger.Warnf("validating %v:%v - hash mismatch", f.Name, i)
-				corruptedFiles[f.Name] = "BAD"
-			}
+	getFirstTodo := func() (prefix string, info *protocol.FileInfo) {
+		for k := range directoriesTodo {
+			delete(directoriesTodo, k)
+			return
 		}
 
-		return true
-	})
+		return "", nil
+	}
+
+	iterateDir := func(prefix string) {
+		snap.WithPrefixedGlobalTruncated(prefix, func(f protocol.FileInfo) bool {
+
+			if f.IsDirectory() {
+				directoriesTodo[prefix+f.Name] = &f
+				return true
+			}
+
+			println(fmt.Sprintf("Start validating of %v", prefix+f.Name))
+			bar := progressbar.New(len(f.Blocks))
+			defer func() {
+				bar.Clear()
+				println("")
+			}()
+
+			for i, bi := range f.Blocks {
+				hashKey := hashutil.HashToStringMapKey(bi.Hash)
+				status, ok := neededBlocks[hashKey]
+				if !ok {
+					data, err := osa.BlockStorage.ReserveAndGet(bi.Hash, c.ValidateData)
+					if err != nil {
+						status = BLOCK_STATUS_NOT_AVAILABLE
+					} else {
+						if c.ValidateData {
+							currentHash := sha256.Sum256(data)
+							currentHashKey := hashutil.HashToStringMapKey(currentHash[:])
+							if currentHashKey == hashKey {
+								status = BLOCK_STATUS_GOOD
+							} else {
+								status = BLOCK_STATUS_CORRUPTED
+								logger.DefaultLogger.Warnf("validating %v:%v - hash mismatch: %s != %s", f.Name, i, currentHashKey, hashKey)
+							}
+						} else {
+							status = BLOCK_STATUS_GOOD
+						}
+					}
+
+					neededBlocks[hashKey] = status
+				}
+
+				if status != BLOCK_STATUS_GOOD {
+					logger.DefaultLogger.Warnf("validating %v:%v - hash mismatch", f.Name, i)
+					corruptedFiles[f.Name] = "BAD"
+				}
+
+				bar.Add(1)
+			}
+
+			return true
+		})
+	}
+
+	iterateDir("")
+
+	for {
+		prefix, info := getFirstTodo()
+		if info == nil {
+			// done
+			break
+		}
+
+		iterateDir(prefix)
+	}
 
 	if len(corruptedFiles) > 0 {
-		return errors.New("Found corrupted files")
+		return errors.New("found corrupted files")
 	}
 
 	logger.DefaultLogger.Infof("Validation SUCCESS. Blocks scanned: %v", len(neededBlocks))
