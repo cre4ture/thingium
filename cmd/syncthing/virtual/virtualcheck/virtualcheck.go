@@ -70,6 +70,7 @@ func (c *CLI) Run() error {
 	}
 
 	iterateDir := func(prefix string) {
+		println(fmt.Sprintf("Start iterating prefix: %v", prefix))
 		snap.WithPrefixedGlobalTruncated(prefix, func(f protocol.FileInfo) bool {
 
 			if f.IsDirectory() {
