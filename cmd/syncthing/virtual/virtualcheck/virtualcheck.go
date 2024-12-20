@@ -77,7 +77,7 @@ func (c *CLI) Run() error {
 				return true
 			}
 
-			println(fmt.Sprintf("Start validating of %v", prefix+f.Name))
+			println(fmt.Sprintf("Start validation of %v", prefix+f.Name))
 			bar := progressbar.New(len(f.Blocks))
 			defer func() {
 				bar.Clear()
