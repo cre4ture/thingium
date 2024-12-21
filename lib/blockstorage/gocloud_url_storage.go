@@ -332,7 +332,7 @@ func (hm *GoCloudUrlStorage) ReserveAndGet(hash []byte, downloadData bool) (data
 
 	if (err == nil) && downloadData {
 		var err error = nil
-		logger.DefaultLogger.Infof("ReserveAndGet(): %v - download", hashutil.HashToStringMapKey(hash))
+		//logger.DefaultLogger.Infof("ReserveAndGet(): %v - download", hashutil.HashToStringMapKey(hash))
 		data, err = hm.bucket.ReadAll(hm.ctx, getBlockStringKey(hash))
 		if err != nil {
 			return nil, ErrConnectionFailed

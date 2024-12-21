@@ -20,10 +20,11 @@ import (
 )
 
 type CLI struct {
-	DeviceID     string `help:"Device ID of the virtual folder, if it cannot be determined automatically"`
-	FolderID     string `help:"Folder ID of the virtual folder, if it cannot be determined automatically"`
-	URL          string `arg:"" required:"1" help:"URL to virtual folder. Excluding \":virtual:\""`
-	ValidateData bool   `help:"If 1 (default), content of data is fetched and checksum validated" default:"1"`
+	DeviceID        string `help:"Device ID of the virtual folder, if it cannot be determined automatically"`
+	FolderID        string `help:"Folder ID of the virtual folder, if it cannot be determined automatically"`
+	URL             string `arg:"" required:"1" help:"URL to virtual folder. Excluding \":virtual:\""`
+	ValidateData    bool   `help:"If 1 (default), content of data is fetched and checksum validated" default:"1"`
+	RemoveCorrupted bool   `help:"If 1 (default is 0), data blocks that doesn't match the hash are deleted" default:"0"`
 }
 
 type BlockStatus int
@@ -56,14 +57,20 @@ func (c *CLI) Run() error {
 		return err
 	}
 
-	neededBlocks := make(map[string]BlockStatus)
-	corruptedFiles := make(map[string]string)
-	directoriesTodo := make(map[string]*protocol.FileInfo)
+	dummy := struct{}{}
 
-	getFirstTodo := func() (prefix string, info *protocol.FileInfo) {
-		for k := range directoriesTodo {
+	checkedBlocks := make(map[string]BlockStatus)
+	corruptedFiles := make(map[string]struct{})
+	corruptedBlocks := make(map[string]struct{})
+
+	directoriesTodo := make(map[string]*protocol.FileInfo)
+	filesTodo := make(map[string]*protocol.FileInfo)
+	filesTodoSize := uint64(0)
+
+	getFirstDirTodo := func() (prefix string, info *protocol.FileInfo) {
+		for k, v := range directoriesTodo {
 			delete(directoriesTodo, k)
-			return
+			return k, v
 		}
 
 		return "", nil
@@ -73,59 +80,24 @@ func (c *CLI) Run() error {
 		println(fmt.Sprintf("Start iterating prefix: %v", prefix))
 		snap.WithPrefixedGlobalTruncated(prefix, func(f protocol.FileInfo) bool {
 
+			fullPath := f.Name
+			if len(prefix) != 0 {
+				fullPath = prefix + "/" + f.Name
+			}
+			println(fmt.Sprintf("Queue validation of %v - isDir: %v", fullPath, f.IsDirectory()))
 			if f.IsDirectory() {
-				directoriesTodo[prefix+f.Name] = &f
-				return true
+				directoriesTodo[fullPath] = &f
+			} else {
+				filesTodo[fullPath] = &f
+				filesTodoSize += uint64(f.Size)
 			}
-
-			println(fmt.Sprintf("Start validation of %v", prefix+f.Name))
-			bar := progressbar.New(len(f.Blocks))
-			defer func() {
-				bar.Clear()
-				println("")
-			}()
-
-			for i, bi := range f.Blocks {
-				hashKey := hashutil.HashToStringMapKey(bi.Hash)
-				status, ok := neededBlocks[hashKey]
-				if !ok {
-					data, err := osa.BlockStorage.ReserveAndGet(bi.Hash, c.ValidateData)
-					if err != nil {
-						status = BLOCK_STATUS_NOT_AVAILABLE
-					} else {
-						if c.ValidateData {
-							currentHash := sha256.Sum256(data)
-							currentHashKey := hashutil.HashToStringMapKey(currentHash[:])
-							if currentHashKey == hashKey {
-								status = BLOCK_STATUS_GOOD
-							} else {
-								status = BLOCK_STATUS_CORRUPTED
-								logger.DefaultLogger.Warnf("validating %v:%v - hash mismatch: %s != %s", f.Name, i, currentHashKey, hashKey)
-							}
-						} else {
-							status = BLOCK_STATUS_GOOD
-						}
-					}
-
-					neededBlocks[hashKey] = status
-				}
-
-				if status != BLOCK_STATUS_GOOD {
-					logger.DefaultLogger.Warnf("validating %v:%v - hash mismatch", f.Name, i)
-					corruptedFiles[f.Name] = "BAD"
-				}
-
-				bar.Add(1)
-			}
-
 			return true
 		})
 	}
 
-	iterateDir("")
-
+	directoriesTodo[""] = &protocol.FileInfo{Type: protocol.FileInfoTypeDirectory}
 	for {
-		prefix, info := getFirstTodo()
+		prefix, info := getFirstDirTodo()
 		if info == nil {
 			// done
 			break
@@ -134,11 +106,68 @@ func (c *CLI) Run() error {
 		iterateDir(prefix)
 	}
 
-	if len(corruptedFiles) > 0 {
-		return errors.New("found corrupted files")
+	println("Starting validation of blocks...")
+
+	bar := progressbar.DefaultBytes(int64(filesTodoSize), "validating data hashes ...")
+	defer func() {
+		bar.Finish()
+		errors := len(corruptedFiles)
+		if errors == 0 {
+			println("Validation FINISHED with %v ERRORS.", errors)
+		} else {
+			println("Validation FINISHED with SUCCESS. No errors found.")
+		}
+	}()
+
+	handleCorruptedBlock := func(bi *protocol.BlockInfo) {
+		if c.RemoveCorrupted {
+			osa.BlockStorage.UncheckedDelete(bi.Hash)
+			osa.BlockStorage.SetMeta("recheckBlocks/"+hashutil.HashToStringMapKey(bi.Hash), []byte{})
+		}
 	}
 
-	logger.DefaultLogger.Infof("Validation SUCCESS. Blocks scanned: %v", len(neededBlocks))
+	for filePath, f := range filesTodo {
+		bar.Describe(filePath)
+		for i, bi := range f.Blocks {
+			hashKey := hashutil.HashToStringMapKey(bi.Hash)
+			status, ok := checkedBlocks[hashKey]
+			if !ok {
+				data, err := osa.BlockStorage.ReserveAndGet(bi.Hash, c.ValidateData)
+				if err != nil {
+					status = BLOCK_STATUS_NOT_AVAILABLE
+				} else {
+					if c.ValidateData {
+						currentHash := sha256.Sum256(data)
+						currentHashKey := hashutil.HashToStringMapKey(currentHash[:])
+						if currentHashKey == hashKey {
+							status = BLOCK_STATUS_GOOD
+						} else {
+							status = BLOCK_STATUS_CORRUPTED
+							logger.DefaultLogger.Warnf("validating %v:%v - hash mismatch: %s != %s, size: %v, expected size: %v",
+								filePath, i, currentHashKey, hashKey, len(data), bi.Size)
+							handleCorruptedBlock(&bi)
+							corruptedBlocks[hashKey] = dummy
+						}
+					} else {
+						status = BLOCK_STATUS_GOOD
+					}
+				}
+
+				checkedBlocks[hashKey] = status
+			}
+
+			bar.Add(bi.Size)
+
+			if status != BLOCK_STATUS_GOOD {
+				logger.DefaultLogger.Warnf("validating %v:%v - hash mismatch", filePath, i)
+				corruptedFiles[f.Name] = dummy
+			}
+		}
+	}
+
+	if len(corruptedFiles) > 0 {
+		return errors.New("found corrupted files/blocks")
+	}
 
 	return nil
 }
