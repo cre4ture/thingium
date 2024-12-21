@@ -56,6 +56,8 @@ type HashBlockStorageI interface {
 	// Has(hash []byte) (ok bool)
 
 	ReserveAndGet(hash []byte, downloadData bool) (data []byte, err error)
+	UncheckedGet(hash []byte, downloadData bool) (data []byte, err error)
+
 	ReserveAndSet(hash []byte, data []byte) error
 	DeleteReservation(hash []byte) error
 	AnnounceDelete(hash []byte) error

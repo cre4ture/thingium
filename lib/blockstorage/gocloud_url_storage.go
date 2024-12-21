@@ -342,6 +342,36 @@ func (hm *GoCloudUrlStorage) ReserveAndGet(hash []byte, downloadData bool) (data
 	return data, err
 }
 
+func (hm *GoCloudUrlStorage) UncheckedGet(hash []byte, downloadData bool) (data []byte, err error) {
+	if len(hash) == 0 {
+		return nil, ErrNotAvailable
+	}
+
+	//logger.DefaultLogger.Infof("ReserveAndGet(): %v", hashutil.HashToStringMapKey(hash))
+	//defer logger.DefaultLogger.Infof("ReserveAndGet(): %v", hashutil.HashToStringMapKey(hash))
+
+	key := getBlockStringKey(hash)
+	if downloadData {
+		var err error = nil
+		//logger.DefaultLogger.Infof("ReserveAndGet(): %v - download", hashutil.HashToStringMapKey(hash))
+		data, err = hm.bucket.ReadAll(hm.ctx, key)
+		if err != nil {
+			return nil, ErrConnectionFailed
+		}
+	} else {
+		exists, err := hm.bucket.Exists(hm.ctx, key)
+		if err != nil {
+			return nil, ErrConnectionFailed
+		}
+
+		if !exists {
+			return nil, ErrNotAvailable
+		}
+	}
+
+	return data, err
+}
+
 func (hm *GoCloudUrlStorage) ReserveAndSet(hash []byte, data []byte) error {
 	if hm.IsReadOnly() {
 		logger.DefaultLogger.Warnf("ReserveAndSet: read only")

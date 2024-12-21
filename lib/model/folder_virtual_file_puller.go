@@ -73,7 +73,7 @@ func (f *VirtualFolderFilePuller) doPull() {
 	all_ok.Store(true)
 	func() {
 		leases := utils.NewParallelLeases(10, "vPuller.doPull")
-		defer leases.WaitAllDone()
+		defer leases.AbortAndWait()
 
 		for i, bi := range f.file.Blocks {
 			//logger.DefaultLogger.Debugf("check block info #%v: %+v", i, bi)

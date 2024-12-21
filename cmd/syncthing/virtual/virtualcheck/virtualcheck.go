@@ -17,6 +17,7 @@ import (
 	"github.com/syncthing/syncthing/lib/hashutil"
 	"github.com/syncthing/syncthing/lib/logger"
 	"github.com/syncthing/syncthing/lib/protocol"
+	"github.com/syncthing/syncthing/lib/utils"
 )
 
 type CLI struct {
@@ -30,11 +31,18 @@ type CLI struct {
 type BlockStatus int
 
 const (
-	BLOCK_STATUS_UNKNOWN BlockStatus = iota
+	BLOCK_STATUS_IN_VALIDATION BlockStatus = iota
 	BLOCK_STATUS_GOOD
 	BLOCK_STATUS_NOT_AVAILABLE
 	BLOCK_STATUS_CORRUPTED
 )
+
+type BlockWithStatus struct {
+	hashKey string
+	status  BlockStatus
+	size    uint64
+	index   int
+}
 
 func (c *CLI) Run() error {
 
@@ -59,7 +67,7 @@ func (c *CLI) Run() error {
 
 	dummy := struct{}{}
 
-	checkedBlocks := make(map[string]BlockStatus)
+	checkedBlocks := utils.NewProtected(make(map[string]BlockStatus))
 	corruptedFiles := make(map[string]struct{})
 	corruptedBlocks := make(map[string]struct{})
 
@@ -112,8 +120,8 @@ func (c *CLI) Run() error {
 	defer func() {
 		bar.Finish()
 		errors := len(corruptedFiles)
-		if errors == 0 {
-			println("Validation FINISHED with %v ERRORS.", errors)
+		if errors != 0 {
+			println(fmt.Sprintf("Validation FINISHED with %v ERRORS.", errors))
 		} else {
 			println("Validation FINISHED with SUCCESS. No errors found.")
 		}
@@ -128,38 +136,108 @@ func (c *CLI) Run() error {
 
 	for filePath, f := range filesTodo {
 		bar.Describe(filePath)
-		for i, bi := range f.Blocks {
-			hashKey := hashutil.HashToStringMapKey(bi.Hash)
-			status, ok := checkedBlocks[hashKey]
-			if !ok {
-				data, err := osa.BlockStorage.ReserveAndGet(bi.Hash, c.ValidateData)
-				if err != nil {
-					status = BLOCK_STATUS_NOT_AVAILABLE
-				} else {
-					if c.ValidateData {
-						currentHash := sha256.Sum256(data)
-						currentHashKey := hashutil.HashToStringMapKey(currentHash[:])
-						if currentHashKey == hashKey {
-							status = BLOCK_STATUS_GOOD
-						} else {
-							status = BLOCK_STATUS_CORRUPTED
-							logger.DefaultLogger.Warnf("validating %v:%v - hash mismatch: %s != %s, size: %v, expected size: %v",
-								filePath, i, currentHashKey, hashKey, len(data), bi.Size)
-							handleCorruptedBlock(&bi)
-							corruptedBlocks[hashKey] = dummy
-						}
-					} else {
-						status = BLOCK_STATUS_GOOD
-					}
-				}
+		validatedBlocksChan := make(chan BlockWithStatus, 5)
+		leases := utils.NewParallelLeases(5, "block validators")
+		go func() {
+			for i, bi := range f.Blocks {
 
-				checkedBlocks[hashKey] = status
+				//logger.DefaultLogger.Infof("validating %v:%v - expected size: %v",
+				//	filePath, i, bi.Size)
+
+				func() {
+					hashKey := hashutil.HashToStringMapKey(bi.Hash)
+					var status BlockStatus = BLOCK_STATUS_NOT_AVAILABLE
+					var isInCache bool = false
+					func() {
+						lockedMap := checkedBlocks.Lock()
+						defer checkedBlocks.Unlock()
+						status, isInCache = (*lockedMap)[hashKey]
+						if !isInCache {
+							status = BLOCK_STATUS_IN_VALIDATION
+							(*lockedMap)[hashKey] = status
+						}
+					}()
+					if isInCache {
+						//logger.DefaultLogger.Infof("validating isInCache push before %v:%v - expected size: %v",
+						//	filePath, i, bi.Size)
+
+						validatedBlocksChan <- BlockWithStatus{
+							hashKey: hashKey,
+							status:  status,
+							size:    uint64(bi.Size),
+							index:   i,
+						}
+
+						//logger.DefaultLogger.Infof("validating isInCache push after %v:%v - expected size: %v",
+						//	filePath, i, bi.Size)
+					} else {
+						leases.AsyncRunOne(fmt.Sprintf("block %s:%v", filePath, i), func() {
+
+							//logger.DefaultLogger.Infof("validating parallel %v:%v - expected size: %v",
+							//	filePath, i, bi.Size)
+
+							data, err := osa.BlockStorage.UncheckedGet(bi.Hash, c.ValidateData)
+
+							//logger.DefaultLogger.Infof("validating parallel 2 %v:%v - expected size: %v",
+							//	filePath, i, bi.Size)
+
+							if err != nil {
+								status = BLOCK_STATUS_NOT_AVAILABLE
+							} else {
+								if c.ValidateData {
+									currentHash := sha256.Sum256(data)
+									currentHashKey := hashutil.HashToStringMapKey(currentHash[:])
+									if currentHashKey == hashKey {
+										status = BLOCK_STATUS_GOOD
+									} else {
+										status = BLOCK_STATUS_CORRUPTED
+										logger.DefaultLogger.Warnf("validating %v:%v - hash mismatch: %s != %s, size: %v, expected size: %v",
+											filePath, i, currentHashKey, hashKey, len(data), bi.Size)
+										handleCorruptedBlock(&bi)
+										corruptedBlocks[hashKey] = dummy
+									}
+								} else {
+									status = BLOCK_STATUS_GOOD
+								}
+							}
+
+							//logger.DefaultLogger.Infof("validating parallel push before %v:%v - expected size: %v",
+							//	filePath, i, bi.Size)
+
+							validatedBlocksChan <- BlockWithStatus{
+								hashKey: hashKey,
+								status:  status,
+								size:    uint64(bi.Size),
+								index:   i,
+							}
+
+							//logger.DefaultLogger.Infof("validating parallel push after %v:%v - expected size: %v",
+							//	filePath, i, bi.Size)
+						})
+
+					}
+				}()
 			}
 
-			bar.Add(bi.Size)
+			go func() {
+				leases.WaitAllFinished()
+				//logger.DefaultLogger.Infof("finished all leases, close: %v", filePath)
+				close(validatedBlocksChan)
+			}()
+		}()
 
-			if status != BLOCK_STATUS_GOOD {
-				logger.DefaultLogger.Warnf("validating %v:%v - hash mismatch", filePath, i)
+		for result := range validatedBlocksChan {
+			//logger.DefaultLogger.Infof("validating %v:%v", filePath, result.index)
+			func() {
+				lockedMap := checkedBlocks.Lock()
+				defer checkedBlocks.Unlock()
+				(*lockedMap)[result.hashKey] = result.status
+			}()
+			bar.Add64(int64(result.size))
+
+			if (result.status != BLOCK_STATUS_GOOD) &&
+				(result.status != BLOCK_STATUS_IN_VALIDATION) {
+				logger.DefaultLogger.Warnf("validating %v:%+v", filePath, result)
 				corruptedFiles[f.Name] = dummy
 			}
 		}

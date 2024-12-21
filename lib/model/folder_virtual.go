@@ -515,7 +515,7 @@ func (vf *runningVirtualFolderSyncthingService) pullOrScan_x(ctx context.Context
 		leaseCnt = math.MaxUint
 	}
 	leases := utils.NewParallelLeases(leaseCnt, actionName)
-	defer leases.WaitAllDone()
+	defer leases.AbortAndWait()
 
 	isAbortOrErr := false
 	pullF := func(f protocol.FileInfo) bool /* true to continue */ {

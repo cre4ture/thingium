@@ -13,6 +13,11 @@ type EncryptedHashBlockStorage struct {
 	store HashBlockStorageI
 }
 
+// UncheckedGet implements HashBlockStorageI.
+func (e *EncryptedHashBlockStorage) UncheckedGet(hash []byte, downloadData bool) (data []byte, err error) {
+	return e.store.UncheckedGet(hash, downloadData)
+}
+
 // AnnounceDelete implements HashBlockStorageI.
 func (e *EncryptedHashBlockStorage) AnnounceDelete(hash []byte) error {
 	return e.store.AnnounceDelete(hash)

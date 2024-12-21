@@ -49,7 +49,7 @@ func (pl *ParallelLeases) AsyncRunOneWithDoneFn(name string, fn func(doneFn func
 		pl.cond.L.Lock()
 		defer pl.cond.L.Unlock()
 		pl.freeLeases += 1
-		pl.cond.Broadcast()
+		pl.cond.Signal()
 		//logger.DefaultLogger.Infof("DONE[%v, %v] leases free: %v/%v", pl.jobGroupName, name, currentlyFree, pl.count)
 	})
 }
@@ -61,12 +61,22 @@ func (pl *ParallelLeases) AsyncRunOne(name string, fn func()) {
 	})
 }
 
-func (pl *ParallelLeases) WaitAllDone() {
+func (pl *ParallelLeases) AbortAndWait() {
+	//defer logger.DefaultLogger.Infof("PULL_X: wait for async operations to complete - DONE")
+	func() {
+		pl.cond.L.Lock()
+		defer pl.cond.L.Unlock()
+		pl.aborting = true
+		pl.cond.Broadcast()
+	}()
+
+	pl.WaitAllFinished()
+}
+
+func (pl *ParallelLeases) WaitAllFinished() {
 	//defer logger.DefaultLogger.Infof("PULL_X: wait for async operations to complete - DONE")
 	pl.cond.L.Lock()
 	defer pl.cond.L.Unlock()
-
-	pl.aborting = true
 
 	// wait for async operations to complete
 	for {
