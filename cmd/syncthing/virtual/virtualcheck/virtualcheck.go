@@ -23,7 +23,7 @@ import (
 type CLI struct {
 	DeviceID        string `help:"Device ID of the virtual folder, if it cannot be determined automatically"`
 	FolderID        string `help:"Folder ID of the virtual folder, if it cannot be determined automatically"`
-	URL             string `arg:"" required:"1" help:"URL to virtual folder. Excluding \":virtual:\""`
+	URL             string `arg:"" required:"1" help:"URL to virtual folder. Excluding Including \":virtual:\" or \":virtual-s:\""`
 	ValidateData    bool   `help:"If 1 (default), content of data is fetched and checksum validated" default:"1"`
 	RemoveCorrupted bool   `help:"If 1 (default is 0), data blocks that doesn't match the hash are deleted" default:"0"`
 }

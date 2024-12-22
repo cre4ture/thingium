@@ -134,7 +134,20 @@ func (hm *GoCloudUrlStorage) GetBlockHashesCountHint() (int, error) {
 	return hint, nil
 }
 
-func NewGoCloudUrlStorage(ctx context.Context, url string, myDeviceId string) *GoCloudUrlStorage {
+func NewGoCloudUrlStorageFromConfigStr(ctx context.Context, configStr string, myDeviceId string) *GoCloudUrlStorage {
+	hasVirtualDescriptor_slash := false
+	blobUrl, hasVirtualDescriptor_def := strings.CutPrefix(configStr, ":virtual:")
+	if !hasVirtualDescriptor_def {
+		blobUrl, hasVirtualDescriptor_slash = strings.CutPrefix(configStr, ":virtual-s:")
+	}
+	if (!hasVirtualDescriptor_def) && (!hasVirtualDescriptor_slash) {
+		panic("missing :virtual:, or :virtual-s:")
+	}
+
+	return NewGoCloudUrlStorage(ctx, blobUrl, myDeviceId, hasVirtualDescriptor_slash)
+}
+
+func NewGoCloudUrlStorage(ctx context.Context, url string, myDeviceId string, useSlashedHashStrings bool) *GoCloudUrlStorage {
 	bucket, err := blob.OpenBucket(context.Background(), url)
 	if err != nil {
 		log.Fatal(err)
@@ -145,7 +158,7 @@ func NewGoCloudUrlStorage(ctx context.Context, url string, myDeviceId string) *G
 		ctx:                   ctx,
 		bucket:                bucket,
 		myDeviceId:            myDeviceId,
-		useSlashedHashStrings: false,
+		useSlashedHashStrings: useSlashedHashStrings,
 	}
 
 	return instance
@@ -404,7 +417,7 @@ func (hm *GoCloudUrlStorage) IterateBlocks(ctx context.Context, fn func(d HashAn
 	connections := make([]*GoCloudUrlStorage, 0, numberOfParallelConnections)
 	connections = append(connections, hm)
 	for i := 0; i < numberOfParallelConnections-1; i++ {
-		hmParallel := NewGoCloudUrlStorage(ctx, hm.url, hm.myDeviceId)
+		hmParallel := NewGoCloudUrlStorage(ctx, hm.url, hm.myDeviceId, hm.useSlashedHashStrings)
 		defer hmParallel.Close()
 		connections = append(connections, hmParallel)
 	}

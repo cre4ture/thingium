@@ -26,7 +26,7 @@ import (
 type CLI struct {
 	DeviceID  string `help:"Device ID of the virtual folder, if it cannot be determined automatically"`
 	FolderID  string `help:"Folder ID of the virtual folder, if it cannot be determined automatically"`
-	URL       string `arg:"" required:"1" help:"URL to virtual folder. Excluding \":virtual:\""`
+	URL       string `arg:"" required:"1" help:"URL to virtual folder. Including \":virtual:\" or \":virtual-s:\""`
 	MountPath string `required:"1" xor:"mode" placeholder:"PATH" help:"Directory where to mount the virtual folder"`
 }
 

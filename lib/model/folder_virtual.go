@@ -146,14 +146,8 @@ func newVirtualFolder(
 
 	folderBase := newFolderBase(cfg, evLogger, model, fset)
 
-	blobUrl := ""
-	virtual_descriptor, hasVirtualDescriptor := strings.CutPrefix(folderBase.Path, ":virtual:")
-	if !hasVirtualDescriptor {
-		panic("missing :virtual:")
-	}
-
-	parts := strings.Split(virtual_descriptor, ":mount_at:")
-	blobUrl = parts[0]
+	parts := strings.Split(folderBase.Path, ":mount_at:")
+	blobUrl := parts[0]
 	mountPath := ""
 	if len(parts) >= 2 {
 		//url := "s3://bucket-syncthing-uli-virtual-folder-test1/" + myDir
@@ -161,7 +155,7 @@ func newVirtualFolder(
 	}
 
 	lifetimeCtx, lifetimeCtxCancel := context.WithCancel(context.Background())
-	var blockCache blockstorage.HashBlockStorageI = blockstorage.NewGoCloudUrlStorage(
+	var blockCache blockstorage.HashBlockStorageI = blockstorage.NewGoCloudUrlStorageFromConfigStr(
 		lifetimeCtx, blobUrl, folderBase.ownDeviceIdString())
 
 	if folderBase.Type.IsReceiveEncrypted() {
