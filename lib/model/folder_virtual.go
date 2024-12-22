@@ -154,6 +154,8 @@ func newVirtualFolder(
 		mountPath = parts[1]
 	}
 
+	logger.DefaultLogger.Infof("newVirtualFolder(): create storage: %v, mount: %v", blobUrl, mountPath)
+
 	lifetimeCtx, lifetimeCtxCancel := context.WithCancel(context.Background())
 	var blockCache blockstorage.HashBlockStorageI = blockstorage.NewGoCloudUrlStorageFromConfigStr(
 		lifetimeCtx, blobUrl, folderBase.ownDeviceIdString())

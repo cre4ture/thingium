@@ -139,6 +139,9 @@ func NewGoCloudUrlStorageFromConfigStr(ctx context.Context, configStr string, my
 	blobUrl, hasVirtualDescriptor_def := strings.CutPrefix(configStr, ":virtual:")
 	if !hasVirtualDescriptor_def {
 		blobUrl, hasVirtualDescriptor_slash = strings.CutPrefix(configStr, ":virtual-s:")
+		logger.DefaultLogger.Infof("NewGoCloudUrlStorageFromConfigStr(): using slashed hash strings: %v", hasVirtualDescriptor_slash)
+	} else {
+		logger.DefaultLogger.Infof("NewGoCloudUrlStorageFromConfigStr(): using normal hash strings")
 	}
 	if (!hasVirtualDescriptor_def) && (!hasVirtualDescriptor_slash) {
 		panic("missing :virtual:, or :virtual-s:")
@@ -152,6 +155,8 @@ func NewGoCloudUrlStorage(ctx context.Context, url string, myDeviceId string, us
 	if err != nil {
 		log.Fatal(err)
 	}
+
+	logger.DefaultLogger.Infof("NewGoCloudUrlStorage(): url:%v, myDeviceId:%v, useSlashedHashStrings:%v", url, myDeviceId, useSlashedHashStrings)
 
 	instance := &GoCloudUrlStorage{
 		url:                   url,
