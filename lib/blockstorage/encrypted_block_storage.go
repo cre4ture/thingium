@@ -3,14 +3,17 @@ package blockstorage
 import (
 	"context"
 	"crypto/sha256"
-
-	"github.com/syncthing/syncthing/lib/hashutil"
 )
 
 // additionally calculates and stores real hash of encrypted data.
 // this enables the detection of bit-rot
 type EncryptedHashBlockStorage struct {
 	store HashBlockStorageI
+}
+
+// CalculateInternalPathRepresentationFromHash implements HashBlockStorageI.
+func (e *EncryptedHashBlockStorage) CalculateInternalPathRepresentationFromHash(hash []byte) string {
+	return e.store.CalculateInternalPathRepresentationFromHash(hash)
 }
 
 // UncheckedGet implements HashBlockStorageI.
@@ -41,7 +44,7 @@ func (e *EncryptedHashBlockStorage) UncheckedDelete(hash []byte) error {
 const HASH_MAPPING_PREFIX = "real_hashes/"
 
 func (e *EncryptedHashBlockStorage) genRealHashKey(hash []byte) string {
-	return HASH_MAPPING_PREFIX + hashutil.HashToStringMapKey(hash)
+	return HASH_MAPPING_PREFIX + e.store.CalculateInternalPathRepresentationFromHash(hash)
 }
 
 // Close implements HashBlockStorageI.

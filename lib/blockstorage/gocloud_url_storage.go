@@ -169,12 +169,16 @@ func NewGoCloudUrlStorage(ctx context.Context, url string, myDeviceId string, us
 	return instance
 }
 
-func (hm *GoCloudUrlStorage) getBlockStringKey(hash []byte) string {
+func (hm *GoCloudUrlStorage) CalculateInternalPathRepresentationFromHash(hash []byte) string {
 	if hm.useSlashedHashStrings {
-		return BlockDataSubFolder + "/" + hashutil.HashToSlashedStringMapKey(hash)
+		return hashutil.HashToSlashedStringMapKey(hash)
 	} else {
-		return BlockDataSubFolder + "/" + hashutil.HashToStringMapKey(hash)
+		return hashutil.HashToStringMapKey(hash)
 	}
+}
+
+func (hm *GoCloudUrlStorage) getBlockStringKey(hash []byte) string {
+	return BlockDataSubFolder + "/" + hm.CalculateInternalPathRepresentationFromHash(hash)
 }
 
 func getMetadataStringKey(name string) string {

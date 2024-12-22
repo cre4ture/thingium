@@ -55,6 +55,8 @@ type HashBlockStorageI interface {
 	// just Has() alone is not allowed as this doesn't allow proper reference counting
 	// Has(hash []byte) (ok bool)
 
+	CalculateInternalPathRepresentationFromHash(hash []byte) string
+
 	ReserveAndGet(hash []byte, downloadData bool) (data []byte, err error)
 	UncheckedGet(hash []byte, downloadData bool) (data []byte, err error)
 
