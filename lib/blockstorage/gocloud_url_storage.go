@@ -32,76 +32,13 @@ const MetaDataSubFolder = "meta"
 const BLOCK_DELETE_TAG = "deletion-by"
 const BLOCK_USE_TAG = "used-by"
 
-type HashBlockStorageMapBuilder struct {
-	ownName      string
-	cb           func(d HashAndState)
-	currentHash  string
-	currentState HashBlockState
-}
-
-func NewHashBlockStorageMapBuilder(ownName string, cb func(d HashAndState)) *HashBlockStorageMapBuilder {
-	return &HashBlockStorageMapBuilder{
-		ownName:      ownName,
-		cb:           cb,
-		currentHash:  "",
-		currentState: HashBlockState{},
-	}
-}
-
-func (b *HashBlockStorageMapBuilder) completeIfNextHash(hash string) bool {
-	complete := hash != b.currentHash
-	if complete {
-		if b.currentState.dataExists {
-			b.cb(HashAndState{hashutil.StringMapKeyToHashNoError(b.currentHash), b.currentState})
-		}
-		b.currentHash = hash
-		b.currentState = HashBlockState{}
-	}
-	return false
-}
-
-func (b *HashBlockStorageMapBuilder) addData(hash string) {
-	if b.completeIfNextHash(hash) {
-		return
-	}
-
-	b.currentState.dataExists = true
-}
-
-func (b *HashBlockStorageMapBuilder) addUse(hash string, who string) {
-	if b.completeIfNextHash(hash) {
-		return
-	}
-
-	if b.currentState.IsAvailable() {
-		isMe := who == b.ownName
-		if isMe {
-			b.currentState.reservedByMe = true
-		} else {
-			b.currentState.reservedByOthers = true
-		}
-	}
-}
-
-func (b *HashBlockStorageMapBuilder) addDelete(hash string) {
-	if b.completeIfNextHash(hash) {
-		return
-	}
-
-	// it will be deleted soon
-	b.currentState.deletionPending = true
-}
-
-func (b *HashBlockStorageMapBuilder) close() {
-	b.completeIfNextHash("") // force flush of last element
-}
-
 type GoCloudUrlStorage struct {
 	// io.Closer
-	url        string
-	ctx        context.Context
-	bucket     *blob.Bucket
-	myDeviceId string
+	url                   string
+	useSlashedHashStrings bool
+	ctx                   context.Context
+	bucket                *blob.Bucket
+	myDeviceId            string
 }
 
 func (hm *GoCloudUrlStorage) RawAccess() *blob.Bucket {
@@ -113,7 +50,7 @@ func (hm *GoCloudUrlStorage) IsReadOnly() bool {
 }
 
 func (hm *GoCloudUrlStorage) getATag(hash []byte, tag string) string {
-	hashKey := getBlockStringKey(hash)
+	hashKey := hm.getBlockStringKey(hash)
 	return hashKey + "." + tag + "." + hm.myDeviceId
 }
 
@@ -146,7 +83,7 @@ func (hm *GoCloudUrlStorage) removeATag(hash []byte, tag string) error {
 		return errors.New("removeATag: read only")
 	}
 
-	reservationKey := getBlockStringKey(hash) + "." + tag + "." + hm.myDeviceId
+	reservationKey := hm.getBlockStringKey(hash) + "." + tag + "." + hm.myDeviceId
 	// logger.DefaultLogger.Debugf("removing tag %v: %v", tag, reservationKey)
 	return hm.bucket.Delete(hm.ctx, reservationKey)
 }
@@ -167,7 +104,7 @@ func (hm *GoCloudUrlStorage) UncheckedDelete(hash []byte) error {
 		return errors.New("UncheckedDelete: read only")
 	}
 
-	stringKey := getBlockStringKey(hash)
+	stringKey := hm.getBlockStringKey(hash)
 	return hm.bucket.Delete(hm.ctx, stringKey)
 }
 
@@ -204,17 +141,22 @@ func NewGoCloudUrlStorage(ctx context.Context, url string, myDeviceId string) *G
 	}
 
 	instance := &GoCloudUrlStorage{
-		url:        url,
-		ctx:        ctx,
-		bucket:     bucket,
-		myDeviceId: myDeviceId,
+		url:                   url,
+		ctx:                   ctx,
+		bucket:                bucket,
+		myDeviceId:            myDeviceId,
+		useSlashedHashStrings: false,
 	}
 
 	return instance
 }
 
-func getBlockStringKey(hash []byte) string {
-	return BlockDataSubFolder + "/" + hashutil.HashToStringMapKey(hash)
+func (hm *GoCloudUrlStorage) getBlockStringKey(hash []byte) string {
+	if hm.useSlashedHashStrings {
+		return BlockDataSubFolder + "/" + hashutil.HashToSlashedStringMapKey(hash)
+	} else {
+		return BlockDataSubFolder + "/" + hashutil.HashToStringMapKey(hash)
+	}
 }
 
 func getMetadataStringKey(name string) string {
@@ -262,7 +204,7 @@ func (hm *GoCloudUrlStorage) GetBlockHashState(hash []byte) (HashBlockState, err
 }
 
 func (hm *GoCloudUrlStorage) reserveAndCheckExistence(hash []byte) error {
-	hashKey := getBlockStringKey(hash)
+	hashKey := hm.getBlockStringKey(hash)
 
 	if !hm.IsReadOnly() {
 		// force existence of use-tag with our ID
@@ -333,7 +275,7 @@ func (hm *GoCloudUrlStorage) ReserveAndGet(hash []byte, downloadData bool) (data
 	if (err == nil) && downloadData {
 		var err error = nil
 		//logger.DefaultLogger.Infof("ReserveAndGet(): %v - download", hashutil.HashToStringMapKey(hash))
-		data, err = hm.bucket.ReadAll(hm.ctx, getBlockStringKey(hash))
+		data, err = hm.bucket.ReadAll(hm.ctx, hm.getBlockStringKey(hash))
 		if err != nil {
 			return nil, ErrConnectionFailed
 		}
@@ -350,7 +292,7 @@ func (hm *GoCloudUrlStorage) UncheckedGet(hash []byte, downloadData bool) (data 
 	//logger.DefaultLogger.Infof("ReserveAndGet(): %v", hashutil.HashToStringMapKey(hash))
 	//defer logger.DefaultLogger.Infof("ReserveAndGet(): %v", hashutil.HashToStringMapKey(hash))
 
-	key := getBlockStringKey(hash)
+	key := hm.getBlockStringKey(hash)
 	if downloadData {
 		var err error = nil
 		//logger.DefaultLogger.Infof("ReserveAndGet(): %v - download", hashutil.HashToStringMapKey(hash))
@@ -400,7 +342,7 @@ func (hm *GoCloudUrlStorage) ReserveAndSet(hash []byte, data []byte) error {
 	//	return // skip upload
 	//}
 
-	hashKey := getBlockStringKey(hash)
+	hashKey := hm.getBlockStringKey(hash)
 	err = hm.bucket.WriteAll(hm.ctx, hashKey, data, nil)
 	if err != nil {
 		logger.DefaultLogger.Warnf("writing to block storage failed! Write. %+v", err)
@@ -523,7 +465,11 @@ func (hm *GoCloudUrlStorage) IterateBlocks(ctx context.Context, fn func(d HashAn
 func (hm *GoCloudUrlStorage) IterateBlocksInternal(
 	ctx context.Context, prefix string, fn func(d HashAndState)) error {
 
-	iterator := NewHashBlockStorageMapBuilder(hm.myDeviceId, func(d HashAndState) {
+	hashStrConvFn := hashutil.StringMapKeyToHashNoError
+	if hm.useSlashedHashStrings {
+		hashStrConvFn = hashutil.SlashedStringMapKeyToHashNoError
+	}
+	iterator := NewHashBlockStorageMapBuilder(hm.myDeviceId, hashStrConvFn, func(d HashAndState) {
 		fn(d)
 	})
 
