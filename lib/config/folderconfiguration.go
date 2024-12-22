@@ -153,7 +153,7 @@ func (f FolderConfiguration) ModTimeWindow() time.Duration {
 }
 
 func (cfg *FolderConfiguration) IsBasedOnNativeFileSystem() bool {
-	isVirtual := strings.HasPrefix(cfg.Path, ":virtual:")
+	isVirtual := strings.HasPrefix(cfg.Path, ":virtual")
 	return !isVirtual
 }
 
