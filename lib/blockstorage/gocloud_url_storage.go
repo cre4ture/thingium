@@ -148,7 +148,7 @@ func NewGoCloudUrlStorageFromConfigStr(ctx context.Context, configStr string, my
 			panic("wrong format of :virtual-xxx:")
 		}
 		virtualDescriptor_dash = blobUrl[:descEndPos]
-		blobUrl = blobUrl[descEndPos:]
+		blobUrl = blobUrl[descEndPos+1:]
 		logger.DefaultLogger.Infof("NewGoCloudUrlStorageFromConfigStr(): using slashed hash strings: %v", virtualDescriptor_dash)
 	} else {
 		logger.DefaultLogger.Infof("NewGoCloudUrlStorageFromConfigStr(): using normal hash strings")
