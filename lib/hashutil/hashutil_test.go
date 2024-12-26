@@ -32,6 +32,13 @@ func TestGenericHashSlasher_s2x0(t *testing.T) {
 	assert.Equal(t, "df/48b13994eb58d1627a2a9564191e7219e5d95ebc7cd579a0f0ae9f54afecf1", noSlashes.HashToSlashedStringMapKey(byteHash_2[:]))
 }
 
+func TestGenericHashSlasher_s3x0(t *testing.T) {
+	noSlashes := hashutil.NewHashStringStrategy("s3x0")
+
+	assert.Equal(t, "3ef/a957b72f257fc3a447aa656e35b817bfaca2e624f3e53369219cdd0440ef6", noSlashes.HashToSlashedStringMapKey(byteHash_1[:]))
+	assert.Equal(t, "df4/8b13994eb58d1627a2a9564191e7219e5d95ebc7cd579a0f0ae9f54afecf1", noSlashes.HashToSlashedStringMapKey(byteHash_2[:]))
+}
+
 func TestGenericHashSlasher_s2x16(t *testing.T) {
 	noSlashes := hashutil.NewHashStringStrategy("s2x16")
 

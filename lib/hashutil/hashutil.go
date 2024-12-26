@@ -46,6 +46,11 @@ func NewHashStringStrategy(strategy string) *HashStringStrategy {
 			step1: 2,
 			stepX: math.MaxUint, // disabled
 		}
+	case "s3x0":
+		return &HashStringStrategy{
+			step1: 3,
+			stepX: math.MaxUint, // disabled
+		}
 	case "s2x16":
 		return &HashStringStrategy{
 			step1: 2,
