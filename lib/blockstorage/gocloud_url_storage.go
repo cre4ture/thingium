@@ -34,11 +34,11 @@ const BLOCK_USE_TAG = "used-by"
 
 type GoCloudUrlStorage struct {
 	// io.Closer
-	url                   string
-	useSlashedHashStrings bool
-	ctx                   context.Context
-	bucket                *blob.Bucket
-	myDeviceId            string
+	url                string
+	hashStringStrategy *hashutil.HashStringStrategy
+	ctx                context.Context
+	bucket             *blob.Bucket
+	myDeviceId         string
 }
 
 func (hm *GoCloudUrlStorage) RawAccess() *blob.Bucket {
@@ -135,46 +135,49 @@ func (hm *GoCloudUrlStorage) GetBlockHashesCountHint() (int, error) {
 }
 
 func NewGoCloudUrlStorageFromConfigStr(ctx context.Context, configStr string, myDeviceId string) *GoCloudUrlStorage {
-	hasVirtualDescriptor_slash := false
+	virtualDescriptor_dash := ""
 	blobUrl, hasVirtualDescriptor_def := strings.CutPrefix(configStr, ":virtual:")
 	if !hasVirtualDescriptor_def {
-		blobUrl, hasVirtualDescriptor_slash = strings.CutPrefix(configStr, ":virtual-s:")
-		logger.DefaultLogger.Infof("NewGoCloudUrlStorageFromConfigStr(): using slashed hash strings: %v", hasVirtualDescriptor_slash)
+		hasVirtualDescriptor_dash := false
+		blobUrl, hasVirtualDescriptor_dash = strings.CutPrefix(configStr, ":virtual-")
+		if !hasVirtualDescriptor_dash {
+			panic("missing :virtual:, or :virtual-s:")
+		}
+		descEndPos := strings.Index(blobUrl, ":")
+		if descEndPos < 0 {
+			panic("wrong format of :virtual-xxx:")
+		}
+		virtualDescriptor_dash = blobUrl[:descEndPos]
+		blobUrl = blobUrl[descEndPos:]
+		logger.DefaultLogger.Infof("NewGoCloudUrlStorageFromConfigStr(): using slashed hash strings: %v", virtualDescriptor_dash)
 	} else {
 		logger.DefaultLogger.Infof("NewGoCloudUrlStorageFromConfigStr(): using normal hash strings")
 	}
-	if (!hasVirtualDescriptor_def) && (!hasVirtualDescriptor_slash) {
-		panic("missing :virtual:, or :virtual-s:")
-	}
 
-	return NewGoCloudUrlStorage(ctx, blobUrl, myDeviceId, hasVirtualDescriptor_slash)
+	return NewGoCloudUrlStorage(ctx, blobUrl, myDeviceId, hashutil.NewHashStringStrategy(virtualDescriptor_dash))
 }
 
-func NewGoCloudUrlStorage(ctx context.Context, url string, myDeviceId string, useSlashedHashStrings bool) *GoCloudUrlStorage {
+func NewGoCloudUrlStorage(ctx context.Context, url string, myDeviceId string, hashStringStrategy *hashutil.HashStringStrategy) *GoCloudUrlStorage {
 	bucket, err := blob.OpenBucket(context.Background(), url)
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	logger.DefaultLogger.Infof("NewGoCloudUrlStorage(): url:%v, myDeviceId:%v, useSlashedHashStrings:%v", url, myDeviceId, useSlashedHashStrings)
+	logger.DefaultLogger.Infof("NewGoCloudUrlStorage(): url:%v, myDeviceId:%v, hashStringStrategy:%+v", url, myDeviceId, hashStringStrategy)
 
 	instance := &GoCloudUrlStorage{
-		url:                   url,
-		ctx:                   ctx,
-		bucket:                bucket,
-		myDeviceId:            myDeviceId,
-		useSlashedHashStrings: useSlashedHashStrings,
+		url:                url,
+		ctx:                ctx,
+		bucket:             bucket,
+		myDeviceId:         myDeviceId,
+		hashStringStrategy: hashStringStrategy,
 	}
 
 	return instance
 }
 
 func (hm *GoCloudUrlStorage) CalculateInternalPathRepresentationFromHash(hash []byte) string {
-	if hm.useSlashedHashStrings {
-		return hashutil.HashToSlashedStringMapKey(hash)
-	} else {
-		return hashutil.HashToStringMapKey(hash)
-	}
+	return hm.hashStringStrategy.HashToSlashedStringMapKey(hash)
 }
 
 func (hm *GoCloudUrlStorage) getBlockStringKey(hash []byte) string {
@@ -426,7 +429,7 @@ func (hm *GoCloudUrlStorage) IterateBlocks(ctx context.Context, fn func(d HashAn
 	connections := make([]*GoCloudUrlStorage, 0, numberOfParallelConnections)
 	connections = append(connections, hm)
 	for i := 0; i < numberOfParallelConnections-1; i++ {
-		hmParallel := NewGoCloudUrlStorage(ctx, hm.url, hm.myDeviceId, hm.useSlashedHashStrings)
+		hmParallel := NewGoCloudUrlStorage(ctx, hm.url, hm.myDeviceId, hm.hashStringStrategy)
 		defer hmParallel.Close()
 		connections = append(connections, hmParallel)
 	}
@@ -487,13 +490,13 @@ func (hm *GoCloudUrlStorage) IterateBlocks(ctx context.Context, fn func(d HashAn
 func (hm *GoCloudUrlStorage) IterateBlocksInternal(
 	ctx context.Context, prefix string, fn func(d HashAndState)) error {
 
-	hashStrConvFn := hashutil.StringMapKeyToHashNoError
-	if hm.useSlashedHashStrings {
-		hashStrConvFn = hashutil.SlashedStringMapKeyToHashNoError
-	}
-	iterator := NewHashBlockStorageMapBuilder(hm.myDeviceId, hashStrConvFn, func(d HashAndState) {
-		fn(d)
-	})
+	iterator := NewHashBlockStorageMapBuilder(hm.myDeviceId,
+		func(str string) []byte {
+			return hm.hashStringStrategy.SlashedStringMapKeyToHashNoError(str)
+		},
+		func(d HashAndState) {
+			fn(d)
+		})
 
 	folderPrefix := BlockDataSubFolder + "/"
 	perPageCount := 1024 * 4

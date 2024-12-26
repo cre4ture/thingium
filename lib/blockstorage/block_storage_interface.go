@@ -47,6 +47,13 @@ func (s HashBlockState) IsReservedBySomeone() bool {
 	return s.dataExists && (s.reservedByMe || s.reservedByOthers)
 }
 
+type Hash [32]byte
+
+type HashSequence struct {
+	sequence     []Hash
+	sequenceHash Hash
+}
+
 type HashBlockStateMap map[string]HashBlockState
 
 type HashBlockStorageI interface {

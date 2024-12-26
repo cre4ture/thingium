@@ -17,8 +17,6 @@ var byteHash_1 [32]byte = sha256.Sum256([]byte("hash_1"))
 var byteHash_2 [32]byte = sha256.Sum256([]byte("hash_2"))
 var hash_1 string = hashutil.HashToStringMapKey(byteHash_1[:])
 var hash_2 string = hashutil.HashToStringMapKey(byteHash_2[:])
-var slashedHash_1 string = hashutil.HashToSlashedStringMapKey(byteHash_1[:])
-var slashedHash_2 string = hashutil.HashToSlashedStringMapKey(byteHash_2[:])
 
 func TestHashBlockStorageMapBuilder_addData(t *testing.T) {
 	calls := 0
@@ -54,10 +52,16 @@ func TestHashBlockStorageMapBuilder_addUse(t *testing.T) {
 func TestHashBlockStorageMapBuilder_SlashedHashStrings_addUse(t *testing.T) {
 	calls := 0
 	lastState := HashBlockState{}
-	builder := NewHashBlockStorageMapBuilder(MY_NAME, hashutil.SlashedStringMapKeyToHashNoError, func(d HashAndState) {
+	slashStrategy := hashutil.NewHashStringStrategy("s")
+	builder := NewHashBlockStorageMapBuilder(MY_NAME, func(str string) []byte {
+		return slashStrategy.SlashedStringMapKeyToHashNoError(str)
+	}, func(d HashAndState) {
 		calls += 1
 		lastState = d.state
 	})
+
+	var slashedHash_1 string = slashStrategy.HashToSlashedStringMapKey(byteHash_1[:])
+	var slashedHash_2 string = slashStrategy.HashToSlashedStringMapKey(byteHash_2[:])
 
 	builder.addData(slashedHash_1)
 	builder.addUse(slashedHash_1, MY_NAME)
@@ -122,15 +126,15 @@ func TestHashBlockStorageMapBuilder_addUseMeAndOther(t *testing.T) {
 func TestHashBlockStorage_generateSlashedAndNonSlashedHashStrings(t *testing.T) {
 
 	hm_normal := GoCloudUrlStorage{
-		url:                   "should not be used in this test",
-		useSlashedHashStrings: false,
-		ctx:                   context.Background(),
-		bucket:                nil, /* should not be used in this test */
-		myDeviceId:            "TEST_DEVICE_ID",
+		url:                "should not be used in this test",
+		hashStringStrategy: hashutil.NewHashStringStrategy(""),
+		ctx:                context.Background(),
+		bucket:             nil, /* should not be used in this test */
+		myDeviceId:         "TEST_DEVICE_ID",
 	}
 
 	hm_slashed := hm_normal // copy
-	hm_slashed.useSlashedHashStrings = true
+	hm_slashed.hashStringStrategy = hashutil.NewHashStringStrategy("s")
 
 	testData := "test test test"
 	testHash := sha256.Sum256([]byte(testData))
