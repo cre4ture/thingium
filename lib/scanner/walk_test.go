@@ -171,7 +171,7 @@ func TestVerify(t *testing.T) {
 		t.Fatalf("Incorrect number of blocks %d != %d", len(blocks), exp)
 	}
 
-	if int64(len(data)) != progress.Total() {
+	if uint64(len(data)) != progress.Total() {
 		t.Fatalf("Incorrect counter value %d  != %d", len(data), progress.Total())
 	}
 
