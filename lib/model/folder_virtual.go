@@ -300,7 +300,7 @@ func (f *runningVirtualFolderSyncthingService) serve_backgroundDownloadTask() {
 			f.backgroundDownloadQueue.Done(jobPtr.name)
 			jobPtr.abort()
 		} else {
-			createVirtualFolderFilePullerAndPull(f, jobPtr)
+			createVirtualFolderFilePullerAndPull(f, jobPtr, &BlockStorageFileBlobFs{blockCache: f.parent.blockCache})
 		}
 	}
 }
