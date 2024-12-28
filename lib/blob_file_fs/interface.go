@@ -6,8 +6,25 @@
 
 package blobfilefs
 
-import "github.com/syncthing/syncthing/lib/protocol"
+import (
+	"context"
+
+	"github.com/syncthing/syncthing/lib/protocol"
+)
+
+type GetBlockDataResult int
+
+const (
+	GET_BLOCK_FAILED   GetBlockDataResult = iota
+	GET_BLOCK_CACHED   GetBlockDataResult = iota
+	GET_BLOCK_DOWNLOAD GetBlockDataResult = iota
+)
 
 type BlobFsI interface {
-	UpdateFile(fi *protocol.FileInfo, downloadCb func(hash []byte) ([]byte, error)) error
+	UpdateFile(
+		ctx context.Context,
+		fi *protocol.FileInfo,
+		blockStatusCb func(block protocol.BlockInfo, status GetBlockDataResult),
+		downloadBlockDataCb func(block protocol.BlockInfo) ([]byte, error),
+	) error
 }

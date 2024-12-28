@@ -9,7 +9,12 @@ package blockstorage
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
+
+	blobfilefs "github.com/syncthing/syncthing/lib/blob_file_fs"
+	"github.com/syncthing/syncthing/lib/protocol"
+	"github.com/syncthing/syncthing/lib/utils"
 )
 
 const LOCAL_HAVE_FI_META_PREFIX = "LocalHaveMeta"
@@ -81,4 +86,38 @@ type HashBlockStorageI interface {
 	GetBlockHashesCountHint() (int, error)
 	GetBlockHashesCache(ctx context.Context, progressNotifier func(count int, currentHash []byte)) (HashBlockStateMap, error)
 	GetBlockHashState(hash []byte) (HashBlockState, error)
+}
+
+func GetBlockDataFromCacheOrDownload(
+	connection HashBlockStorageI,
+	file *protocol.FileInfo,
+	block protocol.BlockInfo,
+	downloadBlockDataCb func(block protocol.BlockInfo) ([]byte, error),
+	checkOnly bool,
+) ([]byte, error, blobfilefs.GetBlockDataResult) {
+	grp := fmt.Sprintf("ff-GetBlockDataFromCacheOrDownload(%v:%v): START", file.Name, block.Offset/int64(file.BlockSize()))
+	watch := utils.PerformanceStopWatchStart()
+	defer watch.LastStep(grp, "FINAL")
+
+	data, err := connection.ReserveAndGet(block.Hash, checkOnly)
+	if err == nil {
+		return data, nil, blobfilefs.GET_BLOCK_CACHED
+	} else {
+		if !errors.Is(err, ErrNotAvailable) {
+			// connection error, or other unknown issue
+			return nil, err, blobfilefs.GET_BLOCK_FAILED
+		}
+	}
+
+	watch.Step("rsvAndGt")
+
+	downloadBlockDataCb(block)
+
+	watch.Step("pull")
+
+	connection.ReserveAndSet(block.Hash, data)
+
+	watch.Step("rsvAndSt")
+
+	return data, nil, blobfilefs.GET_BLOCK_DOWNLOAD
 }

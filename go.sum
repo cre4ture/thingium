@@ -130,8 +130,8 @@ github.com/cncf/udpa/go v0.0.0-20191209042840-269d4d468f6f/go.mod h1:M8M6+tZqaGX
 github.com/cpuguy83/go-md2man/v2 v2.0.4/go.mod h1:tgQtvFlXSQOSOSIRvRPT7W67SCa46tRHOmNcaadrF8o=
 github.com/cpuguy83/go-md2man/v2 v2.0.5 h1:ZtcqGrnekaHpVLArFSe4HK5DoKx1T0rq2DwVB0alcyc=
 github.com/cpuguy83/go-md2man/v2 v2.0.5/go.mod h1:tgQtvFlXSQOSOSIRvRPT7W67SCa46tRHOmNcaadrF8o=
-github.com/cre4ture/restic v0.0.0-20241227225751-eec0f578054e h1:1F+oTSxmPCNNxk5dDy52mlH1E7Ndu4ouykMMIxlRYFw=
-github.com/cre4ture/restic v0.0.0-20241227225751-eec0f578054e/go.mod h1:RdDfusyHO7YAlRunJIFQDKAlKUeGL3dew4jnVow8JBk=
+github.com/cre4ture/restic v0.0.0-20241228121927-102f976ee17c h1:S8x/Bi5bpOYP4BfXYwTWUvulSyHIxIutYvFxJRAHHUI=
+github.com/cre4ture/restic v0.0.0-20241228121927-102f976ee17c/go.mod h1:RdDfusyHO7YAlRunJIFQDKAlKUeGL3dew4jnVow8JBk=
 github.com/creack/pty v1.1.9/go.mod h1:oKZEueFk5CKHvIhNR5MUki03XCEU+Q6VDXinZuGJ33E=
 github.com/d4l3k/messagediff v1.2.1 h1:ZcAIMYsUg0EAp9X+tt8/enBE/Q8Yd5kzPynLyKptt9U=
 github.com/d4l3k/messagediff v1.2.1/go.mod h1:Oozbb1TVXFac9FtSIxHBMnBCq2qeH/2KkEQxENCrlLo=

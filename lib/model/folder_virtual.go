@@ -18,6 +18,7 @@ import (
 	"strings"
 	"time"
 
+	blobfilefs "github.com/syncthing/syncthing/lib/blob_file_fs"
 	"github.com/syncthing/syncthing/lib/blockstorage"
 	"github.com/syncthing/syncthing/lib/config"
 	"github.com/syncthing/syncthing/lib/db"
@@ -67,18 +68,10 @@ type runningVirtualFolderSyncthingService struct {
 	InitialScanDone  chan struct{}
 }
 
-type GetBlockDataResult int
-
-const (
-	GET_BLOCK_FAILED   GetBlockDataResult = iota
-	GET_BLOCK_CACHED   GetBlockDataResult = iota
-	GET_BLOCK_DOWNLOAD GetBlockDataResult = iota
-)
-
 func (vFSS *virtualFolderSyncthingService) GetBlockDataFromCacheOrDownloadI(
 	file *protocol.FileInfo,
 	block protocol.BlockInfo,
-) ([]byte, error, GetBlockDataResult) {
+) ([]byte, error, blobfilefs.GetBlockDataResult) {
 	return vFSS.GetBlockDataFromCacheOrDownload(file, block, nil)
 }
 
@@ -86,18 +79,18 @@ func (vFSS *virtualFolderSyncthingService) GetBlockDataFromCacheOrDownload(
 	file *protocol.FileInfo,
 	block protocol.BlockInfo,
 	checkOnly func(), // set to nil when no check only
-) ([]byte, error, GetBlockDataResult) {
+) ([]byte, error, blobfilefs.GetBlockDataResult) {
 	grp := fmt.Sprintf("GetBlockDataFromCacheOrDownload(%v:%v): START", file.Name, block.Offset/int64(file.BlockSize()))
 	watch := utils.PerformanceStopWatchStart()
 	defer watch.LastStep(grp, "FINAL")
 
 	data, err := vFSS.blockCache.ReserveAndGet(block.Hash, checkOnly == nil)
 	if err == nil {
-		return data, nil, GET_BLOCK_CACHED
+		return data, nil, blobfilefs.GET_BLOCK_CACHED
 	} else {
 		if !errors.Is(err, blockstorage.ErrNotAvailable) {
 			// connection error, or other unknown issue
-			return nil, err, GET_BLOCK_FAILED
+			return nil, err, blobfilefs.GET_BLOCK_FAILED
 		}
 	}
 
@@ -107,7 +100,7 @@ func (vFSS *virtualFolderSyncthingService) GetBlockDataFromCacheOrDownload(
 
 	snap, err := vFSS.fset.Snapshot()
 	if err != nil {
-		return nil, err, GET_BLOCK_FAILED
+		return nil, err, blobfilefs.GET_BLOCK_FAILED
 	}
 	defer snap.Release()
 
@@ -118,7 +111,7 @@ func (vFSS *virtualFolderSyncthingService) GetBlockDataFromCacheOrDownload(
 	}, snap, protocol.BlockOfFile{File: file, Block: block})
 
 	if err != nil {
-		return nil, err, GET_BLOCK_FAILED
+		return nil, err, blobfilefs.GET_BLOCK_FAILED
 	}
 
 	watch.Step("pull")
@@ -127,7 +120,7 @@ func (vFSS *virtualFolderSyncthingService) GetBlockDataFromCacheOrDownload(
 
 	watch.Step("rsvAndSt")
 
-	return data, nil, GET_BLOCK_DOWNLOAD
+	return data, nil, blobfilefs.GET_BLOCK_DOWNLOAD
 }
 
 func (vFSS *virtualFolderSyncthingService) ReserveAndSetI(hash []byte, data []byte) {

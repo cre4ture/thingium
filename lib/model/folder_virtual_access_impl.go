@@ -16,6 +16,7 @@ import (
 
 	ffs "github.com/hanwen/go-fuse/v2/fs"
 	"github.com/hanwen/go-fuse/v2/fuse"
+	blobfilefs "github.com/syncthing/syncthing/lib/blob_file_fs"
 	"github.com/syncthing/syncthing/lib/config"
 	"github.com/syncthing/syncthing/lib/db"
 	"github.com/syncthing/syncthing/lib/logger"
@@ -59,7 +60,7 @@ type BlockDataAccessI interface {
 	GetBlockDataFromCacheOrDownloadI(
 		file *protocol.FileInfo,
 		block protocol.BlockInfo,
-	) ([]byte, error, GetBlockDataResult)
+	) ([]byte, error, blobfilefs.GetBlockDataResult)
 	ReserveAndSetI(hash []byte, data []byte)
 	RequestBackgroundDownloadI(filename string, size int64, modified time.Time)
 }

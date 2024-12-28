@@ -709,6 +709,34 @@ type PlatformData struct {
 	NetBSD  *XattrData
 }
 
+func (p *PlatformData) GetUnixGidOrDefault(def int) int {
+	if p.Unix == nil {
+		return def
+	}
+	return p.Unix.GID
+}
+
+func (p *PlatformData) GetUnixUidOrDefault(def int) int {
+	if p.Unix == nil {
+		return def
+	}
+	return p.Unix.UID
+}
+
+func (p *PlatformData) GetUnixOwnerNameOrDefault(def string) string {
+	if p.Unix == nil {
+		return def
+	}
+	return p.Unix.OwnerName
+}
+
+func (p *PlatformData) GetUnixGroupNameOrDefault(def string) string {
+	if p.Unix == nil {
+		return def
+	}
+	return p.Unix.GroupName
+}
+
 func (p *PlatformData) toWire() *bep.PlatformData {
 	return &bep.PlatformData{
 		Unix:    p.Unix.toWire(),
