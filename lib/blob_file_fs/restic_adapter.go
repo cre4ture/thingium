@@ -9,27 +9,102 @@ package blobfilefs
 import (
 	"context"
 	"os"
+	"sync/atomic"
 
 	archiver "github.com/restic/restic/lib/archiver"
 	restic_model "github.com/restic/restic/lib/model"
 	"github.com/syncthing/syncthing/lib/model"
 	"github.com/syncthing/syncthing/lib/protocol"
+	"golang.org/x/sync/errgroup"
 )
 
+type ResticAdapterBase struct {
+	options archiver.EasyArchiverOptions
+}
+
 type ResticAdapter struct {
-	snw *archiver.EasyArchiver
+	*ResticAdapterBase
+
+	reader atomic.Pointer[ResticScannerOrPuller]
+}
+
+func NewResticAdapter(options archiver.EasyArchiverOptions) (*ResticAdapter, error) {
+	base := &ResticAdapterBase{
+		options: options,
+	}
+	reader, err := base.StartScanOrPullConcrete(
+		context.Background(),
+		model.PullOptions{OnlyCheck: true},
+	)
+	if err != nil {
+		return nil, err
+	}
+	ptr := atomic.Pointer[ResticScannerOrPuller]{}
+	ptr.Store(reader)
+	return &ResticAdapter{
+		ResticAdapterBase: base,
+		reader:            ptr,
+	}, nil
+}
+
+func (r *ResticAdapter) Close() {
+	r.replaceReader(nil)
+}
+
+func (r *ResticAdapter) replaceReader(newPtr *ResticScannerOrPuller) {
+	readerPtr := r.reader.Swap(newPtr)
+	if readerPtr != nil {
+		readerPtr.Finish()
+	}
 }
 
 type ResticScannerOrPuller struct {
-	parent   *ResticAdapter
-	ctx      context.Context
+	parent   *ResticAdapterBase
 	scanOpts model.PullOptions
+	ctx      context.Context
+
+	snw    *archiver.EasyArchiver
+	cancel context.CancelFunc
+}
+
+// StartScanOrPull implements BlobFsI.
+func (r *ResticAdapter) StartScanOrPull(ctx context.Context, opts model.PullOptions) (model.BlobFsScanOrPullI, error) {
+	upToDate, err := r.StartScanOrPullConcrete(ctx, opts)
+	if err != nil {
+		return nil, err
+	}
+	return upToDate, nil
+}
+
+// StartScanOrPull implements BlobFsI.
+func (r *ResticAdapterBase) StartScanOrPullConcrete(ctx context.Context, opts model.PullOptions) (*ResticScannerOrPuller, error) {
+
+	snapshotCtx, cancel := context.WithCancel(ctx)
+	arch, err := archiver.NewEasyArchiver(
+		ctx,
+		r.options,
+		func(ctx context.Context, g *errgroup.Group) error {
+			<-snapshotCtx.Done()
+			return nil
+		},
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	return &ResticScannerOrPuller{
+		parent:   r,
+		scanOpts: opts,
+		ctx:      ctx,
+		snw:      arch,
+		cancel:   cancel,
+	}, nil
 }
 
 // DoOne implements BlobFsScanOrPullI.
 func (r *ResticScannerOrPuller) DoOne(fi *protocol.FileInfo, fn model.JobQueueProgressFn) error {
 	if r.scanOpts.OnlyCheck {
-		return r.parent.UpdateFile(r.ctx, fi, func(block protocol.BlockInfo, status model.GetBlockDataResult) {
+		return UpdateFile(r.ctx, r.snw, fi, func(block protocol.BlockInfo, status model.GetBlockDataResult) {
 			// noop
 		}, func(block protocol.BlockInfo) ([]byte, error) {
 			// if this is called, it means that the block data is missing and should be downloaded
@@ -43,7 +118,9 @@ func (r *ResticScannerOrPuller) DoOne(fi *protocol.FileInfo, fn model.JobQueuePr
 
 // Finish implements BlobFsScanOrPullI.
 func (r *ResticScannerOrPuller) Finish() error {
-	panic("unimplemented")
+	r.cancel()
+	r.snw.Close()
+	return nil
 }
 
 // ReserveAndSetI implements BlobFsI.
@@ -53,7 +130,11 @@ func (r *ResticAdapter) ReserveAndSetI(hash []byte, data []byte) {
 
 // GetHashBlockData implements BlobFsI.
 func (r *ResticAdapter) GetHashBlockData(ctx context.Context, hash []byte, response_data []byte) (int, error) {
-	data, err := r.snw.LoadDataBlob(ctx, restic_model.ID(hash))
+	readerPtr := r.reader.Load()
+	if readerPtr == nil {
+		return 0, model.ErrConnectionFailed
+	}
+	data, err := readerPtr.snw.LoadDataBlob(ctx, restic_model.ID(hash))
 	if err != nil {
 		return 0, err
 	}
@@ -69,13 +150,6 @@ func (r *ResticAdapter) GetMeta(name string) (data []byte, err error) {
 // SetMeta implements BlobFsI.
 func (r *ResticAdapter) SetMeta(name string, data []byte) error {
 	panic("unimplemented")
-}
-
-// StartScanOrPull implements BlobFsI.
-func (r *ResticAdapter) StartScanOrPull(ctx context.Context, opts model.PullOptions) (model.BlobFsScanOrPullI, error) {
-	return &ResticScannerOrPuller{
-		scanOpts: opts,
-	}, nil
 }
 
 // convertToResticIDs converts []protocol.BlockInfo to restic.IDs
@@ -129,16 +203,16 @@ func ConvertFileInfoToResticNode(fi *protocol.FileInfo) *restic_model.Node {
 	}
 }
 
-// UpdateFile implements BlobFsI.
-func (r *ResticAdapter) UpdateFile(
+func UpdateFile(
 	ctx context.Context,
+	snw *archiver.EasyArchiver,
 	fi *protocol.FileInfo,
 	blockStatusCb func(block protocol.BlockInfo, status model.GetBlockDataResult),
 	downloadBlockDataCb func(block protocol.BlockInfo) ([]byte, error),
 ) error {
 
 	node := ConvertFileInfoToResticNode(fi)
-	return r.snw.UpdateFile(
+	return snw.UpdateFile(
 		ctx,
 		fi.Name,
 		node,
@@ -148,4 +222,14 @@ func (r *ResticAdapter) UpdateFile(
 			return downloadBlockDataCb(fi.Blocks[blockIdx])
 		},
 	)
+}
+
+// UpdateFile implements model.BlobFsI.
+func (r *ResticAdapter) UpdateFile(ctx context.Context, fi *protocol.FileInfo, blockStatusCb func(block protocol.BlockInfo, status model.GetBlockDataResult), downloadBlockDataCb func(block protocol.BlockInfo) ([]byte, error)) error {
+	tmpSnw, err := r.StartScanOrPullConcrete(ctx, model.PullOptions{OnlyMissing: false, OnlyCheck: false})
+	if err != nil {
+		return err
+	}
+	defer tmpSnw.Finish()
+	return UpdateFile(ctx, tmpSnw.snw, fi, blockStatusCb, downloadBlockDataCb)
 }
