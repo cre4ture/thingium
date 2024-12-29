@@ -62,7 +62,7 @@ type BlockDataAccessI interface {
 		block protocol.BlockInfo,
 	) ([]byte, error, blobfilefs.GetBlockDataResult)
 	ReserveAndSetI(hash []byte, data []byte)
-	RequestBackgroundDownloadI(filename string, size int64, modified time.Time)
+	RequestBackgroundDownloadI(filename string, size int64, modified time.Time, fn blobfilefs.JobQueueProgressFn)
 }
 
 func NewSyncthingVirtualFolderFuseAdapter(
@@ -667,7 +667,7 @@ func (vf *VirtualFileReadResult) Bytes(outBuf []byte) ([]byte, fuse.Status) {
 	if nextOutBufWriteBegin != 0 {
 
 		// request download of remaining file data:
-		vf.f.dataAccess.RequestBackgroundDownloadI(vf.fi.Name, vf.fi.Size, vf.fi.ModTime())
+		vf.f.dataAccess.RequestBackgroundDownloadI(vf.fi.Name, vf.fi.Size, vf.fi.ModTime(), nil)
 
 		return outBuf[:nextOutBufWriteBegin], 0
 	} else {

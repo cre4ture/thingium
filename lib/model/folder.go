@@ -81,6 +81,21 @@ func (f *folderBase) ownDeviceIdString() string {
 	return f.model.id.String()
 }
 
+func (f *folderBase) pullBlockBaseConvenient(b protocol.BlockOfFile) ([]byte, error) {
+	snap, err := f.fset.Snapshot()
+	if err != nil {
+		return nil, err
+	}
+	defer snap.Release()
+
+	var data []byte = nil
+	err = f.pullBlockBase(func(blockData []byte) {
+		data = blockData
+	}, snap, b)
+
+	return data, err
+}
+
 func (f *folderBase) pullBlockBase(
 	handleBlockData func([]byte),
 	snap *db.Snapshot,

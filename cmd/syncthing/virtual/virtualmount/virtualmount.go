@@ -132,7 +132,9 @@ func (o *OfflineBlockDataAccess) GetBlockDataFromCacheOrDownloadI(
 }
 
 // RequestBackgroundDownloadI implements model.BlockDataAccessI.
-func (o *OfflineBlockDataAccess) RequestBackgroundDownloadI(filename string, size int64, modified time.Time) {
+func (o *OfflineBlockDataAccess) RequestBackgroundDownloadI(
+	filename string, size int64, modified time.Time, fn blobfilefs.JobQueueProgressFn,
+) {
 	// ignore
 }
 

@@ -11,7 +11,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"log"
 	"math"
 	"os"
@@ -23,7 +22,6 @@ import (
 	"github.com/syncthing/syncthing/lib/config"
 	"github.com/syncthing/syncthing/lib/db"
 	"github.com/syncthing/syncthing/lib/events"
-	"github.com/syncthing/syncthing/lib/hashutil"
 	"github.com/syncthing/syncthing/lib/ignore"
 	"github.com/syncthing/syncthing/lib/logger"
 	"github.com/syncthing/syncthing/lib/protocol"
@@ -31,7 +29,6 @@ import (
 	"github.com/syncthing/syncthing/lib/sync"
 	"github.com/syncthing/syncthing/lib/utils"
 	"github.com/syncthing/syncthing/lib/versioner"
-	"google.golang.org/protobuf/proto"
 )
 
 func init() {
@@ -50,17 +47,18 @@ const (
 
 type virtualFolderSyncthingService struct {
 	*folderBase
-	lifetimeCtxCancel context.CancelFunc // TODO: when to call this function?
-	mountPath         string
-	blockCache        blockstorage.HashBlockStorageI // block cache needs to be early accessible as it is used to read the encryption token. TODO: when to close it?
-	running           *runningVirtualFolderSyncthingService
+	lifetimeCtxCancel                 context.CancelFunc // TODO: when to call this function?
+	mountPath                         string
+	blobFs                            blobfilefs.BlobFsI // blob FS needs to be early accessible as it is used to read the encryption token. TODO: when to close it?
+	getBlockDataFromCacheOrDownloadFn func(file *protocol.FileInfo, block protocol.BlockInfo) ([]byte, error, blobfilefs.GetBlockDataResult)
+
+	running *runningVirtualFolderSyncthingService
 }
 
 type runningVirtualFolderSyncthingService struct {
 	parent            *virtualFolderSyncthingService
-	blockCache        blockstorage.HashBlockStorageI // convenience shortcut to parent
+	blobFs            blobfilefs.BlobFsI
 	serviceRunningCtx context.Context
-	deleteService     *blockstorage.AsyncCheckedDeleteService
 
 	backgroundDownloadQueue *jobQueue
 
@@ -72,59 +70,11 @@ func (vFSS *virtualFolderSyncthingService) GetBlockDataFromCacheOrDownloadI(
 	file *protocol.FileInfo,
 	block protocol.BlockInfo,
 ) ([]byte, error, blobfilefs.GetBlockDataResult) {
-	return vFSS.GetBlockDataFromCacheOrDownload(file, block, nil)
-}
-
-func (vFSS *virtualFolderSyncthingService) GetBlockDataFromCacheOrDownload(
-	file *protocol.FileInfo,
-	block protocol.BlockInfo,
-	checkOnly func(), // set to nil when no check only
-) ([]byte, error, blobfilefs.GetBlockDataResult) {
-	grp := fmt.Sprintf("GetBlockDataFromCacheOrDownload(%v:%v): START", file.Name, block.Offset/int64(file.BlockSize()))
-	watch := utils.PerformanceStopWatchStart()
-	defer watch.LastStep(grp, "FINAL")
-
-	data, err := vFSS.blockCache.ReserveAndGet(block.Hash, checkOnly == nil)
-	if err == nil {
-		return data, nil, blobfilefs.GET_BLOCK_CACHED
-	} else {
-		if !errors.Is(err, blockstorage.ErrNotAvailable) {
-			// connection error, or other unknown issue
-			return nil, err, blobfilefs.GET_BLOCK_FAILED
-		}
-	}
-
-	watch.Step("rsvAndGt")
-
-	checkOnly()
-
-	snap, err := vFSS.fset.Snapshot()
-	if err != nil {
-		return nil, err, blobfilefs.GET_BLOCK_FAILED
-	}
-	defer snap.Release()
-
-	watch.Step("snap")
-
-	err = vFSS.pullBlockBase(func(blockData []byte) {
-		data = blockData
-	}, snap, protocol.BlockOfFile{File: file, Block: block})
-
-	if err != nil {
-		return nil, err, blobfilefs.GET_BLOCK_FAILED
-	}
-
-	watch.Step("pull")
-
-	vFSS.blockCache.ReserveAndSet(block.Hash, data)
-
-	watch.Step("rsvAndSt")
-
-	return data, nil, blobfilefs.GET_BLOCK_DOWNLOAD
+	return vFSS.getBlockDataFromCacheOrDownloadFn(file, block)
 }
 
 func (vFSS *virtualFolderSyncthingService) ReserveAndSetI(hash []byte, data []byte) {
-	vFSS.blockCache.ReserveAndSet(hash, data)
+	vFSS.blobFs.ReserveAndSetI(hash, data)
 }
 
 func newVirtualFolder(
@@ -157,12 +107,26 @@ func newVirtualFolder(
 		blockCache = blockstorage.NewEncryptedHashBlockStorage(blockCache)
 	}
 
+	blobFs := NewBlockStorageFileBlobFs(
+		lifetimeCtx,
+		folderBase.ownDeviceIdString(),
+		folderBase.folderID,
+		folderBase.evLogger,
+		folderBase.fset,
+		blockCache,
+	)
+
 	f := &virtualFolderSyncthingService{
 		folderBase:        folderBase,
 		lifetimeCtxCancel: lifetimeCtxCancel,
 		mountPath:         mountPath,
-		blockCache:        blockCache,
-		running:           nil,
+		blobFs:            blobFs,
+		getBlockDataFromCacheOrDownloadFn: func(file *protocol.FileInfo, block protocol.BlockInfo) ([]byte, error, blobfilefs.GetBlockDataResult) {
+			return blockstorage.GetBlockDataFromCacheOrDownload(blockCache, file, block, func(block protocol.BlockInfo) ([]byte, error) {
+				return folderBase.pullBlockBaseConvenient(protocol.BlockOfFile{File: file, Block: block})
+			}, false)
+		},
+		running: nil,
 	}
 
 	return f
@@ -182,15 +146,11 @@ func (vf *virtualFolderSyncthingService) runVirtualFolderServiceCoroutine(
 		serviceRunningCtx, lifetimeCtxCancel := context.WithCancel(ctx)
 		defer lifetimeCtxCancel()
 
-		deleteService := blockstorage.NewAsyncCheckedDeleteService(serviceRunningCtx, vf.blockCache)
-		defer deleteService.Close()
-
 		jobQ := newJobQueue()
 		rvf := &runningVirtualFolderSyncthingService{
 			parent:                  vf,
-			blockCache:              vf.blockCache,
+			blobFs:                  vf.blobFs,
 			serviceRunningCtx:       serviceRunningCtx,
-			deleteService:           deleteService,
 			backgroundDownloadQueue: jobQ,
 			initialScanState:        INITIAL_SCAN_IDLE,
 			InitialScanDone:         make(chan struct{}, 1),
@@ -238,7 +198,7 @@ func (vf *virtualFolderSyncthingService) runVirtualFolderServiceCoroutine(
 			// TODO: rvf.Pull_x(ctx, PullOptions{false, true})
 			rvf.initialScanState = INITIAL_SCAN_COMPLETED
 			close(rvf.InitialScanDone)
-			rvf.pullOrScan_x(ctx, PullOptions{true, false})
+			rvf.pullOrScan_x(ctx, blobfilefs.PullOptions{true, false})
 		}
 
 		// unblock caller after successful init
@@ -257,19 +217,19 @@ func (vf *virtualFolderSyncthingService) runVirtualFolderServiceCoroutine(
 }
 
 func (f *virtualFolderSyncthingService) RequestBackgroundDownloadI(
-	filename string, size int64, modified time.Time,
+	filename string, size int64, modified time.Time, fn blobfilefs.JobQueueProgressFn,
 ) {
 	if f.running == nil {
-		return
+		panic("RequestBackgroundDownloadI() called on non-running virtual folder")
 	}
 
-	f.running.RequestBackgroundDownloadI(filename, size, modified)
+	f.running.RequestBackgroundDownloadI(filename, size, modified, jobQueueProgressFn(fn))
 }
 
 func (f *runningVirtualFolderSyncthingService) RequestBackgroundDownloadI(
-	filename string, size int64, modified time.Time,
+	filename string, size int64, modified time.Time, fn jobQueueProgressFn,
 ) {
-	f.RequestBackgroundDownload(filename, size, modified, nil)
+	f.RequestBackgroundDownload(filename, size, modified, fn)
 }
 
 func (f *runningVirtualFolderSyncthingService) RequestBackgroundDownload(
@@ -300,7 +260,7 @@ func (f *runningVirtualFolderSyncthingService) serve_backgroundDownloadTask() {
 			f.backgroundDownloadQueue.Done(jobPtr.name)
 			jobPtr.abort()
 		} else {
-			createVirtualFolderFilePullerAndPull(f, jobPtr, &BlockStorageFileBlobFs{blockCache: f.parent.blockCache})
+			createVirtualFolderFilePullerAndPull(f, jobPtr, f.blobFs)
 		}
 	}
 }
@@ -347,7 +307,7 @@ func (f *virtualFolderSyncthingService) Serve(ctx context.Context) error {
 		case <-f.pullScheduled: // TODO: replace with "doInSyncChan"
 			logger.DefaultLogger.Infof("virtualFolderServe: case <-f.pullScheduled")
 			l.Debugf("Serve: f.pullAllMissing(false) - START")
-			err := f.running.pullOrScan_x(ctx, PullOptions{true, false})
+			err := f.running.pullOrScan_x(ctx, blobfilefs.PullOptions{true, false})
 			l.Debugf("Serve: f.pullAllMissing(false) - DONE. Err: %v", err)
 			logger.DefaultLogger.Infof("virtualFolderServe: case <-f.pullScheduled - 2")
 			continue
@@ -366,7 +326,7 @@ func (f *virtualFolderSyncthingService) ScheduleScan() {
 		if f.running == nil {
 			return nil // ignore request
 		}
-		err := f.running.pullOrScan_x(f.ctx, PullOptions{false, true})
+		err := f.running.pullOrScan_x(f.ctx, blobfilefs.PullOptions{false, true})
 		logger.DefaultLogger.Infof("ScheduleScan - pull_x - DONE. Err: %v", err)
 		return err
 	})
@@ -396,15 +356,10 @@ func (vf *virtualFolderSyncthingService) Scan(subs []string) error {
 	}
 
 	logger.DefaultLogger.Infof("Scan(%+v) - pull_x", subs)
-	return vf.running.pullOrScan_x_doInSync(vf.ctx, PullOptions{false, true})
+	return vf.running.pullOrScan_x_doInSync(vf.ctx, blobfilefs.PullOptions{false, true})
 }
 
-type PullOptions struct {
-	onlyMissing bool
-	onlyCheck   bool
-}
-
-func (f *runningVirtualFolderSyncthingService) pullOrScan_x_doInSync(ctx context.Context, opts PullOptions) error {
+func (f *runningVirtualFolderSyncthingService) pullOrScan_x_doInSync(ctx context.Context, opts blobfilefs.PullOptions) error {
 	logger.DefaultLogger.Infof("request pullOrScan_x_doInSync - %+v", opts)
 	return f.parent.doInSync(func() error {
 		logger.DefaultLogger.Infof("execute pullOrScan_x_doInSync - %+v", opts)
@@ -412,7 +367,7 @@ func (f *runningVirtualFolderSyncthingService) pullOrScan_x_doInSync(ctx context
 	})
 }
 
-func (vf *runningVirtualFolderSyncthingService) pullOrScan_x(ctx context.Context, opts PullOptions) error {
+func (vf *runningVirtualFolderSyncthingService) pullOrScan_x(ctx context.Context, opts blobfilefs.PullOptions) error {
 	defer logger.DefaultLogger.Infof("pull_x END z - opts: %+v", opts)
 	snap, err := vf.parent.fset.Snapshot()
 	if err != nil {
@@ -421,7 +376,7 @@ func (vf *runningVirtualFolderSyncthingService) pullOrScan_x(ctx context.Context
 	defer logger.DefaultLogger.Infof("pull_x END snap - opts: %+v", opts)
 	defer snap.Release()
 
-	if opts.onlyCheck {
+	if opts.OnlyCheck {
 		vf.parent.setState(FolderScanning)
 	} else {
 		vf.parent.setState(FolderSyncing)
@@ -432,35 +387,9 @@ func (vf *runningVirtualFolderSyncthingService) pullOrScan_x(ctx context.Context
 	logger.DefaultLogger.Infof("pull_x START - opts: %+v", opts)
 	defer logger.DefaultLogger.Infof("pull_x END a")
 
-	checkMap := blockstorage.HashBlockStateMap(nil)
-	if opts.onlyCheck {
-		err = func() error {
-			asyncNotifier := utils.NewAsyncProgressNotifier(vf.serviceRunningCtx)
-			asyncNotifier.StartAsyncProgressNotification(
-				logger.DefaultLogger,
-				uint64(255), // use first hash byte as progress indicator. This works as storage is sorted.
-				uint(5),
-				vf.parent.evLogger,
-				vf.parent.folderID,
-				make([]string, 0),
-				nil)
-			defer logger.DefaultLogger.Infof("pull_x END1 asyncNotifier.Stop()")
-			defer asyncNotifier.Stop()
-
-			checkMap, err = vf.blockCache.GetBlockHashesCache(ctx, func(count int, currentHash []byte) {
-				if len(currentHash) < 1 {
-					log.Panicf("Scan progress: Length of currentHash is zero! %v", currentHash)
-				}
-				progressByte := uint64(currentHash[0])
-				// logger.DefaultLogger.Infof("GetBlockHashesCache - progress: %v, byte: 0x%x", count, progressByte)
-				asyncNotifier.Progress.UpdateTotal(progressByte)
-			})
-			return err
-		}()
-
-		if err != nil {
-			return err
-		}
+	scanner, err := vf.blobFs.StartScanOrPull(ctx, opts)
+	if err != nil {
+		return err
 	}
 
 	jobs := newJobQueue()
@@ -472,10 +401,10 @@ func (vf *runningVirtualFolderSyncthingService) pullOrScan_x(ctx context.Context
 			return true
 		}
 
-		if opts.onlyMissing {
+		if opts.OnlyMissing {
 			snap.WithNeedTruncated(protocol.LocalDeviceID, prepareFn)
 		} else {
-			if opts.onlyCheck {
+			if opts.OnlyCheck {
 				snap.WithHaveTruncated(protocol.LocalDeviceID, prepareFn)
 			} else {
 				snap.WithGlobalTruncated(prepareFn)
@@ -492,7 +421,7 @@ func (vf *runningVirtualFolderSyncthingService) pullOrScan_x(ctx context.Context
 	defer asyncNotifier.Stop()
 	defer logger.DefaultLogger.Infof("pull_x END b")
 
-	doScan := checkMap != nil
+	doScan := opts.OnlyCheck
 	actionName := "Pull"
 	if doScan {
 		actionName = "Scan"
@@ -522,11 +451,7 @@ func (vf *runningVirtualFolderSyncthingService) pullOrScan_x(ctx context.Context
 					}
 				}
 			}
-			if checkMap != nil {
-				vf.scanOne(snap, f, checkMap, progressFn)
-			} else {
-				vf.pullOne(snap, f, progressFn)
-			}
+			scanner.DoOne(&f, progressFn)
 		}
 		leases.AsyncRunOneWithDoneFn(f.FileName(), workF)
 
@@ -559,109 +484,19 @@ func (vf *runningVirtualFolderSyncthingService) pullOrScan_x(ctx context.Context
 		return nil
 	}
 
-	if checkMap != nil {
-		vf.cleanupUnneededReservations(checkMap)
+	scanner.Finish()
+
+	if doScan {
 		vf.parent.ScanCompleted()
 	}
 
 	return nil
 }
 
-func (vf *runningVirtualFolderSyncthingService) cleanupUnneededReservations(checkMap blockstorage.HashBlockStateMap) error {
-	snap, err := vf.parent.fset.Snapshot()
-	if err != nil {
-		return err
-	}
-	defer logger.DefaultLogger.Infof("cleanupUnneeded END snap")
-	defer snap.Release()
-
-	dummyValue := struct{}{}
-	usedBlockHashes := map[string]struct{}{}
-	snap.WithHave(protocol.LocalDeviceID, func(f protocol.FileInfo) bool {
-		fi, ok := snap.Get(protocol.LocalDeviceID, f.FileName())
-		if !ok {
-			log.Panicf("cleanupUnneeded: inconsistent snapshot! %v", f.FileName())
-		}
-		for _, bi := range fi.Blocks {
-			usedBlockHashes[hashutil.HashToStringMapKey(bi.Hash)] = dummyValue
-		}
-		return true
-	})
-
-	for hash, state := range checkMap {
-		if state.IsAvailableAndFree() {
-			byteHash := hashutil.StringMapKeyToHashNoError(hash)
-			vf.deleteService.RequestCheckedDelete(byteHash)
-		} else if state.IsAvailableAndReservedByMe() {
-			_, stillNeeded := usedBlockHashes[hash]
-			if !stillNeeded {
-				byteHash := hashutil.StringMapKeyToHashNoError(hash)
-				vf.blockCache.DeleteReservation(byteHash)
-				vf.deleteService.RequestCheckedDelete(byteHash)
-			}
-		}
-	}
-
-	return nil
-}
-
-func (vf *runningVirtualFolderSyncthingService) pullOne(
-	snap *db.Snapshot, f protocol.FileInfo, fn jobQueueProgressFn,
-) {
-
-	vf.parent.evLogger.Log(events.ItemStarted, map[string]string{
-		"folder": vf.parent.folderID,
-		"item":   f.FileName(),
-		"type":   "file",
-		"action": "update",
-	})
-
-	err := error(nil)
-
-	fn2 := func(deltaBytes int64, done bool) {
-		fn(deltaBytes, done)
-
-		if done {
-			vf.parent.evLogger.Log(events.ItemFinished, map[string]interface{}{
-				"folder": vf.parent.folderID,
-				"item":   f.FileName(),
-				"error":  events.Error(err),
-				"type":   "dir",
-				"action": "update",
-			})
-		}
-	}
-
-	if f.IsDirectory() {
-		// no work to do for directories. directly take over:
-		fi, ok := snap.GetGlobal(f.FileName())
-		if ok {
-			vf.parent.updateOneLocalFileInfo(&fi, events.RemoteChangeDetected)
-		}
-		fn2(f.FileSize(), true)
-	} else {
-		vf.RequestBackgroundDownload(f.FileName(), f.FileSize(), f.ModTime(), fn2)
-	}
-}
-
 func (vf *virtualFolderSyncthingService) updateOneLocalFileInfo(fi *protocol.FileInfo, typeOfEvent events.EventType) {
 	vf.fset.UpdateOne(protocol.LocalDeviceID, fi)
 	vf.ReceivedFile(fi.Name, fi.IsDeleted())
 	vf.emitDiskChangeEvents([]protocol.FileInfo{*fi}, typeOfEvent)
-
-	wireFi := fi.ToWire(false)
-	fiData, err := proto.Marshal(wireFi)
-	if err != nil {
-		logger.DefaultLogger.Warnf("VFolder: failed to serialize file info. Err: %+v", err)
-		return
-	}
-
-	metaKey := blockstorage.LOCAL_HAVE_FI_META_PREFIX + "/" +
-		vf.ownDeviceIdString() + "/" +
-		vf.folderID + "/" +
-		fi.Name
-	vf.blockCache.SetMeta(metaKey, fiData)
-	logger.DefaultLogger.Debugf("VFolder: Stored file info (size: %v) to %v", len(fiData), metaKey)
 }
 
 func (vf *virtualFolderSyncthingService) Update(fs []protocol.FileInfo) {
@@ -669,61 +504,14 @@ func (vf *virtualFolderSyncthingService) Update(fs []protocol.FileInfo) {
 }
 
 func (vf *virtualFolderSyncthingService) UpdateOneLocalFileInfoLocalChangeDetected(fi *protocol.FileInfo) {
-	vf.updateOneLocalFileInfo(fi, events.LocalChangeDetected)
-}
-
-func (vf *runningVirtualFolderSyncthingService) scanOne(snap *db.Snapshot, f protocol.FileInfo, checkMap blockstorage.HashBlockStateMap, fn jobQueueProgressFn) {
-
-	if f.IsDirectory() {
-		// no work to do for directories.
-		fn(f.FileSize(), true)
-	} else {
-		func() {
-			defer fn(0, true)
-
-			fi, ok := snap.Get(protocol.LocalDeviceID, f.FileName())
-			if !ok {
-				return
-			}
-
-			all_ok := true
-			for _, bi := range fi.Blocks {
-				//logger.DefaultLogger.Debugf("synchronous NEW check(%v) block info #%v: %+v", onlyCheck, i, bi, hashutil.HashToStringMapKey(bi.Hash))
-				blockState, inMap := checkMap[hashutil.HashToStringMapKey(bi.Hash)]
-				ok = inMap
-				if inMap && (!blockState.IsAvailableAndReservedByMe()) {
-					// block is there but not hold, add missing hold - checking again for existence as in unhold state it could have been removed meanwhile
-					_, err := vf.parent.blockCache.ReserveAndGet(bi.Hash, false)
-					ok = (err == nil)
-				}
-				if !ok {
-					logger.DefaultLogger.Debugf("synchronous cache-map based check(%v) failed for block info #%v: %+v, inMap: %v",
-						f.FileName(), bi.Offset, hashutil.HashToStringMapKey(bi.Hash), inMap)
-				}
-				all_ok = all_ok && ok
-
-				fn(int64(bi.Size), false)
-
-				if utils.IsDone(vf.serviceRunningCtx) {
-					return
-				}
-			}
-
-			if !all_ok {
-				//logger.DefaultLogger.Debugf("synchronous check block info result: incomplete, file: %s", fi.Name)
-				// Revert means to throw away our local changes. We reset the
-				// version to the empty vector, which is strictly older than any
-				// other existing version. It is not in conflict with anything,
-				// either, so we will not create a conflict copy of our local
-				// changes.
-				fi.Version = protocol.Vector{}
-				vf.parent.fset.UpdateOne(protocol.LocalDeviceID, &fi)
-				// as this is NOT usual case, we don't store this to the meta data of block storage
-				// NOT: updateOneLocalFileInfo(&fi)
-			}
-
-		}()
+	err := vf.blobFs.UpdateFile(vf.ctx, fi, func(block protocol.BlockInfo, status blobfilefs.GetBlockDataResult) {},
+		func(block protocol.BlockInfo) ([]byte, error) {
+			panic("UpdateOneLocalFileInfoLocalChangeDetected(): download callback should not be called for already processed local block changes")
+		})
+	if err != nil {
+		logger.DefaultLogger.Warnf("VFolder: UpdateOneLocalFileInfoLocalChangeDetected(): failed to update file. Err: %+v", err)
 	}
+	vf.updateOneLocalFileInfo(fi, events.LocalChangeDetected)
 }
 
 func (f *virtualFolderSyncthingService) Errors() []FileError             { return []FileError{} }
@@ -734,16 +522,11 @@ var _ = (virtualFolderServiceI)((*virtualFolderSyncthingService)(nil))
 
 // API to model
 func (vf *virtualFolderSyncthingService) GetHashBlockData(hash []byte, response_data []byte) (int, error) {
-	data, err := vf.blockCache.ReserveAndGet(hash, true)
-	if err != nil {
-		return 0, err
-	}
-	n := copy(response_data, data)
-	return n, nil
+	return vf.blobFs.GetHashBlockData(vf.ctx, hash, response_data)
 }
 
 func (f *virtualFolderSyncthingService) ReadEncryptionToken() ([]byte, error) {
-	data, err := f.blockCache.GetMeta(config.EncryptionTokenName)
+	data, err := f.blobFs.GetMeta(config.EncryptionTokenName)
 	if err != nil {
 		return nil, err
 	}
@@ -763,6 +546,6 @@ func (f *virtualFolderSyncthingService) WriteEncryptionToken(token []byte) error
 	if err != nil {
 		return err
 	}
-	f.blockCache.SetMeta(config.EncryptionTokenName, data.Bytes())
+	f.blobFs.SetMeta(config.EncryptionTokenName, data.Bytes())
 	return nil
 }

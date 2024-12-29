@@ -20,6 +20,13 @@ const (
 	GET_BLOCK_DOWNLOAD GetBlockDataResult = iota
 )
 
+type PullOptions struct {
+	OnlyMissing bool
+	OnlyCheck   bool
+}
+
+type JobQueueProgressFn func(deltaBytes int64, done bool)
+
 type BlobFsI interface {
 	UpdateFile(
 		ctx context.Context,
@@ -27,4 +34,17 @@ type BlobFsI interface {
 		blockStatusCb func(block protocol.BlockInfo, status GetBlockDataResult),
 		downloadBlockDataCb func(block protocol.BlockInfo) ([]byte, error),
 	) error
+
+	GetHashBlockData(ctx context.Context, hash []byte, response_data []byte) (int, error)
+	ReserveAndSetI(hash []byte, data []byte)
+
+	GetMeta(name string) (data []byte, err error)
+	SetMeta(name string, data []byte) error
+
+	StartScanOrPull(ctx context.Context, opts PullOptions) (BlobFsScanOrPullI, error)
+}
+
+type BlobFsScanOrPullI interface {
+	DoOne(fi *protocol.FileInfo, fn JobQueueProgressFn) error
+	Finish() error
 }

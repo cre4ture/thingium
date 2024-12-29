@@ -16,7 +16,42 @@ import (
 )
 
 type ResticAdapter struct {
-	snw archiver.EasyArchiver
+	snw *archiver.EasyArchiver
+}
+
+// ReserveAndSetI implements BlobFsI.
+func (r *ResticAdapter) ReserveAndSetI(hash []byte, data []byte) {
+	panic("unimplemented")
+}
+
+// StartScanOrPull implements BlobFsI.
+func (r *ResticAdapter) StartScanOrPull(ctx context.Context, opts PullOptions) (BlobFsScanOrPullI, error) {
+	panic("unimplemented")
+}
+
+// GetHashBlockData implements BlobFsI.
+func (r *ResticAdapter) GetHashBlockData(ctx context.Context, hash []byte, response_data []byte) (int, error) {
+	data, err := r.snw.LoadDataBlob(ctx, restic_model.ID(hash))
+	if err != nil {
+		return 0, err
+	}
+	n := copy(response_data, data)
+	return n, nil
+}
+
+// GetMeta implements BlobFsI.
+func (r *ResticAdapter) GetMeta(name string) (data []byte, err error) {
+	panic("unimplemented")
+}
+
+// SetMeta implements BlobFsI.
+func (r *ResticAdapter) SetMeta(name string, data []byte) error {
+	panic("unimplemented")
+}
+
+// StartScan implements BlobFsI.
+func (r *ResticAdapter) StartScan(ctx context.Context, opts PullOptions) error {
+	panic("unimplemented")
 }
 
 // convertToResticIDs converts []protocol.BlockInfo to restic.IDs
