@@ -17,6 +17,7 @@ import (
 
 	"github.com/syncthing/syncthing/lib/hashutil"
 	"github.com/syncthing/syncthing/lib/logger"
+	"github.com/syncthing/syncthing/lib/model"
 	"github.com/syncthing/syncthing/lib/utils"
 	"gocloud.dev/blob"
 
@@ -134,7 +135,12 @@ func (hm *GoCloudUrlStorage) GetBlockHashesCountHint() (int, error) {
 	return hint, nil
 }
 
-func NewGoCloudUrlStorageFromConfigStr(ctx context.Context, configStr string, myDeviceId string) *GoCloudUrlStorage {
+func NewGoCloudUrlStorageFromConfigStr(ctx context.Context, configStr string, myDeviceId string) model.HashBlockStorageI {
+	return NewGoCloudUrlStorageFromConfigStrConcrete(ctx, configStr, myDeviceId)
+}
+
+func NewGoCloudUrlStorageFromConfigStrConcrete(ctx context.Context, configStr string, myDeviceId string) *GoCloudUrlStorage {
+
 	virtualDescriptor_dash := ""
 	blobUrl, hasVirtualDescriptor_def := strings.CutPrefix(configStr, ":virtual:")
 	if !hasVirtualDescriptor_def {
@@ -191,20 +197,20 @@ func getMetadataStringKey(name string) string {
 func (hm *GoCloudUrlStorage) GetBlockHashesCache(
 	ctx context.Context,
 	progressNotifier func(count int, currentHash []byte),
-) (HashBlockStateMap, error) {
+) (model.HashBlockStateMap, error) {
 
 	startTime := time.Now()
 	defer func() {
 		logger.DefaultLogger.Infof("Total time for cached blocks listing: %v minutes", time.Since(startTime).Minutes())
 	}()
 
-	hashSet := make(map[string]HashBlockState)
-	err := hm.IterateBlocks(ctx, func(d HashAndState) {
+	hashSet := make(map[string]model.HashBlockState)
+	err := hm.IterateBlocks(ctx, func(d model.HashAndState) {
 
-		hashString := hashutil.HashToStringMapKey(d.hash)
-		hashSet[hashString] = d.state
+		hashString := hashutil.HashToStringMapKey(d.Hash)
+		hashSet[hashString] = d.State
 		// logger.DefaultLogger.Infof("IterateBlocks hash(hash, state): %v, %v", hashString, state)
-		progressNotifier(len(hashSet), d.hash)
+		progressNotifier(len(hashSet), d.Hash)
 	})
 
 	if err != nil {
@@ -219,10 +225,10 @@ func (hm *GoCloudUrlStorage) GetBlockHashesCache(
 	return hashSet, nil
 }
 
-func (hm *GoCloudUrlStorage) GetBlockHashState(hash []byte) (HashBlockState, error) {
-	blockState := HashBlockState{}
-	err := hm.IterateBlocksInternal(hm.ctx, hashutil.HashToStringMapKey(hash), func(d HashAndState) {
-		blockState = d.state
+func (hm *GoCloudUrlStorage) GetBlockHashState(hash []byte) (model.HashBlockState, error) {
+	blockState := model.HashBlockState{}
+	err := hm.IterateBlocksInternal(hm.ctx, hashutil.HashToStringMapKey(hash), func(d model.HashAndState) {
+		blockState = d.State
 	})
 
 	return blockState, err
@@ -269,11 +275,11 @@ func (hm *GoCloudUrlStorage) reserveAndCheckExistence(hash []byte) error {
 		// wait until all deletes are processed completely.
 		// This should be very rarely happing, thus a simple retry later should not
 		// influence overall performance
-		return ErrRetryLater
+		return model.ErrRetryLater
 	}
 
 	if dataEntry == nil {
-		return ErrNotAvailable
+		return model.ErrNotAvailable
 	}
 
 	return nil
@@ -281,7 +287,7 @@ func (hm *GoCloudUrlStorage) reserveAndCheckExistence(hash []byte) error {
 
 func (hm *GoCloudUrlStorage) ReserveAndGet(hash []byte, downloadData bool) (data []byte, err error) {
 	if len(hash) == 0 {
-		return nil, ErrNotAvailable
+		return nil, model.ErrNotAvailable
 	}
 
 	//logger.DefaultLogger.Infof("ReserveAndGet(): %v", hashutil.HashToStringMapKey(hash))
@@ -289,7 +295,7 @@ func (hm *GoCloudUrlStorage) ReserveAndGet(hash []byte, downloadData bool) (data
 
 	for {
 		err = hm.reserveAndCheckExistence(hash)
-		if !errors.Is(err, ErrRetryLater) {
+		if !errors.Is(err, model.ErrRetryLater) {
 			break
 		}
 		// wait for a relatively long period of time to allow deletion to complete / skip
@@ -302,7 +308,7 @@ func (hm *GoCloudUrlStorage) ReserveAndGet(hash []byte, downloadData bool) (data
 		//logger.DefaultLogger.Infof("ReserveAndGet(): %v - download", hashutil.HashToStringMapKey(hash))
 		data, err = hm.bucket.ReadAll(hm.ctx, hm.getBlockStringKey(hash))
 		if err != nil {
-			return nil, ErrConnectionFailed
+			return nil, model.ErrConnectionFailed
 		}
 	}
 
@@ -311,7 +317,7 @@ func (hm *GoCloudUrlStorage) ReserveAndGet(hash []byte, downloadData bool) (data
 
 func (hm *GoCloudUrlStorage) UncheckedGet(hash []byte, downloadData bool) (data []byte, err error) {
 	if len(hash) == 0 {
-		return nil, ErrNotAvailable
+		return nil, model.ErrNotAvailable
 	}
 
 	//logger.DefaultLogger.Infof("ReserveAndGet(): %v", hashutil.HashToStringMapKey(hash))
@@ -323,16 +329,16 @@ func (hm *GoCloudUrlStorage) UncheckedGet(hash []byte, downloadData bool) (data 
 		//logger.DefaultLogger.Infof("ReserveAndGet(): %v - download", hashutil.HashToStringMapKey(hash))
 		data, err = hm.bucket.ReadAll(hm.ctx, key)
 		if err != nil {
-			return nil, ErrConnectionFailed
+			return nil, model.ErrConnectionFailed
 		}
 	} else {
 		exists, err := hm.bucket.Exists(hm.ctx, key)
 		if err != nil {
-			return nil, ErrConnectionFailed
+			return nil, model.ErrConnectionFailed
 		}
 
 		if !exists {
-			return nil, ErrNotAvailable
+			return nil, model.ErrNotAvailable
 		}
 	}
 
@@ -342,7 +348,7 @@ func (hm *GoCloudUrlStorage) UncheckedGet(hash []byte, downloadData bool) (data 
 func (hm *GoCloudUrlStorage) ReserveAndSet(hash []byte, data []byte) error {
 	if hm.IsReadOnly() {
 		logger.DefaultLogger.Warnf("ReserveAndSet: read only")
-		return ErrReadOnly
+		return model.ErrReadOnly
 	}
 
 	grp := fmt.Sprintf("ReserveAndSet(*,size:%d)", len(data))
@@ -397,7 +403,7 @@ func (hm *GoCloudUrlStorage) GetMeta(name string) (data []byte, err error) {
 func (hm *GoCloudUrlStorage) SetMeta(name string, data []byte) error {
 	if hm.IsReadOnly() {
 		logger.DefaultLogger.Warnf("SetMeta: read only")
-		return ErrReadOnly
+		return model.ErrReadOnly
 	}
 
 	return hm.bucket.WriteAll(hm.ctx, getMetadataStringKey(name), data, nil)
@@ -405,7 +411,7 @@ func (hm *GoCloudUrlStorage) SetMeta(name string, data []byte) error {
 func (hm *GoCloudUrlStorage) DeleteMeta(name string) error {
 	if hm.IsReadOnly() {
 		logger.DefaultLogger.Warnf("SetMeta: read only")
-		return ErrReadOnly
+		return model.ErrReadOnly
 	}
 
 	return hm.bucket.Delete(hm.ctx, getMetadataStringKey(name))
@@ -416,11 +422,11 @@ func (hm *GoCloudUrlStorage) Close() error {
 }
 
 type HashStateAndError struct {
-	d   HashAndState
+	d   model.HashAndState
 	err error
 }
 
-func (hm *GoCloudUrlStorage) IterateBlocks(ctx context.Context, fn func(d HashAndState)) error {
+func (hm *GoCloudUrlStorage) IterateBlocks(ctx context.Context, fn func(d model.HashAndState)) error {
 
 	numberOfParallelRequests := 2
 	numberOfParallelConnections := 1
@@ -450,12 +456,12 @@ func (hm *GoCloudUrlStorage) IterateBlocks(ctx context.Context, fn func(d HashAn
 			go func() {
 				defer close(partChannel)
 				hmIdx := i % numberOfParallelConnections
-				err := connections[hmIdx].IterateBlocksInternal(ctx, b_str, func(d HashAndState) {
+				err := connections[hmIdx].IterateBlocksInternal(ctx, b_str, func(d model.HashAndState) {
 					partChannel <- HashStateAndError{d, nil}
 				})
 
 				if err != nil {
-					partChannel <- HashStateAndError{HashAndState{}, err}
+					partChannel <- HashStateAndError{model.HashAndState{}, err}
 					return
 				}
 			}()
@@ -488,13 +494,13 @@ func (hm *GoCloudUrlStorage) IterateBlocks(ctx context.Context, fn func(d HashAn
 }
 
 func (hm *GoCloudUrlStorage) IterateBlocksInternal(
-	ctx context.Context, prefix string, fn func(d HashAndState)) error {
+	ctx context.Context, prefix string, fn func(d model.HashAndState)) error {
 
 	iterator := NewHashBlockStorageMapBuilder(hm.myDeviceId,
 		func(str string) []byte {
 			return hm.hashStringStrategy.SlashedStringMapKeyToHashNoError(str)
 		},
-		func(d HashAndState) {
+		func(d model.HashAndState) {
 			fn(d)
 		})
 

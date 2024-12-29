@@ -4,7 +4,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this file,
 // You can obtain one at https://mozilla.org/MPL/2.0/.
 
-package blockstorage
+package model
 
 import (
 	"context"
@@ -12,12 +12,9 @@ import (
 	"fmt"
 	"io"
 
-	blobfilefs "github.com/syncthing/syncthing/lib/blob_file_fs"
 	"github.com/syncthing/syncthing/lib/protocol"
 	"github.com/syncthing/syncthing/lib/utils"
 )
-
-const LOCAL_HAVE_FI_META_PREFIX = "LocalHaveMeta"
 
 var ErrConnectionFailed = errors.New("connection to bucket failed. Retry later again")
 var ErrNotAvailable = errors.New("bucket entry doesn't exist")
@@ -25,31 +22,31 @@ var ErrRetryLater = errors.New("bucket entry is blocked by pending delete. Retry
 var ErrReadOnly = errors.New("bucket access is limited to read only")
 
 type HashBlockState struct {
-	dataExists       bool
-	reservedByMe     bool
-	reservedByOthers bool
-	deletionPending  bool
+	DataExists       bool
+	ReservedByMe     bool
+	ReservedByOthers bool
+	DeletionPending  bool
 }
 
 type HashAndState struct {
-	hash  []byte
-	state HashBlockState
+	Hash  []byte
+	State HashBlockState
 }
 
 func (s HashBlockState) IsAvailable() bool {
-	return s.dataExists && (!s.deletionPending)
+	return s.DataExists && (!s.DeletionPending)
 }
 
 func (s HashBlockState) IsAvailableAndReservedByMe() bool {
-	return s.dataExists && s.reservedByMe
+	return s.DataExists && s.ReservedByMe
 }
 
 func (s HashBlockState) IsAvailableAndFree() bool {
-	return s.dataExists && (!s.reservedByMe) && (!s.reservedByOthers)
+	return s.DataExists && (!s.ReservedByMe) && (!s.ReservedByOthers)
 }
 
 func (s HashBlockState) IsReservedBySomeone() bool {
-	return s.dataExists && (s.reservedByMe || s.reservedByOthers)
+	return s.DataExists && (s.ReservedByMe || s.ReservedByOthers)
 }
 
 type Hash [32]byte
@@ -94,18 +91,18 @@ func GetBlockDataFromCacheOrDownload(
 	block protocol.BlockInfo,
 	downloadBlockDataCb func(block protocol.BlockInfo) ([]byte, error),
 	checkOnly bool,
-) ([]byte, error, blobfilefs.GetBlockDataResult) {
+) ([]byte, error, GetBlockDataResult) {
 	grp := fmt.Sprintf("ff-GetBlockDataFromCacheOrDownload(%v:%v): START", file.Name, block.Offset/int64(file.BlockSize()))
 	watch := utils.PerformanceStopWatchStart()
 	defer watch.LastStep(grp, "FINAL")
 
 	data, err := connection.ReserveAndGet(block.Hash, checkOnly)
 	if err == nil {
-		return data, nil, blobfilefs.GET_BLOCK_CACHED
+		return data, nil, GET_BLOCK_CACHED
 	} else {
 		if !errors.Is(err, ErrNotAvailable) {
 			// connection error, or other unknown issue
-			return nil, err, blobfilefs.GET_BLOCK_FAILED
+			return nil, err, GET_BLOCK_FAILED
 		}
 	}
 
@@ -119,5 +116,5 @@ func GetBlockDataFromCacheOrDownload(
 
 	watch.Step("rsvAndSt")
 
-	return data, nil, blobfilefs.GET_BLOCK_DOWNLOAD
+	return data, nil, GET_BLOCK_DOWNLOAD
 }

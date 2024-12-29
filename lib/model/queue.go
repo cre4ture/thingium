@@ -7,6 +7,7 @@
 package model
 
 import (
+	"errors"
 	"strings"
 	"time"
 
@@ -20,13 +21,34 @@ type jobQueue struct {
 	progress *utils.SortableChannel[*jobQueueEntry]
 }
 
-type jobQueueProgressFn func(deltaBytes int64, done bool)
+type JobResult struct {
+	skipped bool
+	Err     error
+}
+
+func JobResultOK() *JobResult {
+	return &JobResult{
+		skipped: false,
+		Err:     nil,
+	}
+}
+
+func JobResultError(err error) *JobResult {
+	return &JobResult{
+		skipped: false,
+		Err:     err,
+	}
+}
+
+type JobQueueProgressFn func(deltaBytes int64, result *JobResult)
+
+var ErrAborted = errors.New("job aborted")
 
 type jobQueueEntry struct {
 	name       string
 	size       int64
 	modified   time.Time
-	progressCb jobQueueProgressFn
+	progressCb JobQueueProgressFn
 }
 
 func newJobQueue() *jobQueue {
@@ -38,7 +60,7 @@ func newJobQueue() *jobQueue {
 
 func (e *jobQueueEntry) abort() {
 	if e.progressCb != nil {
-		e.progressCb(0, true)
+		e.progressCb(0, &JobResult{Err: ErrAborted})
 		e.progressCb = nil
 	}
 }
@@ -63,7 +85,7 @@ func inverseModifiedDateComparer(jqe1, jqe2 *jobQueueEntry) int {
 	return modifiedDateComparer(jqe2, jqe1)
 }
 
-func (q *jobQueue) PushIfNew(file string, size int64, modified time.Time, fn jobQueueProgressFn) bool {
+func (q *jobQueue) PushIfNew(file string, size int64, modified time.Time, fn JobQueueProgressFn) bool {
 	return q.queued.PushIfNew(&jobQueueEntry{file, size, modified, fn}, nameComparer)
 }
 

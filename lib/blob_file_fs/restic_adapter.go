@@ -12,6 +12,7 @@ import (
 
 	archiver "github.com/restic/restic/lib/archiver"
 	restic_model "github.com/restic/restic/lib/model"
+	"github.com/syncthing/syncthing/lib/model"
 	"github.com/syncthing/syncthing/lib/protocol"
 )
 
@@ -19,13 +20,34 @@ type ResticAdapter struct {
 	snw *archiver.EasyArchiver
 }
 
-// ReserveAndSetI implements BlobFsI.
-func (r *ResticAdapter) ReserveAndSetI(hash []byte, data []byte) {
+type ResticScannerOrPuller struct {
+	parent   *ResticAdapter
+	ctx      context.Context
+	scanOpts model.PullOptions
+}
+
+// DoOne implements BlobFsScanOrPullI.
+func (r *ResticScannerOrPuller) DoOne(fi *protocol.FileInfo, fn model.JobQueueProgressFn) error {
+	if r.scanOpts.OnlyCheck {
+		return r.parent.UpdateFile(r.ctx, fi, func(block protocol.BlockInfo, status model.GetBlockDataResult) {
+			// noop
+		}, func(block protocol.BlockInfo) ([]byte, error) {
+			// if this is called, it means that the block data is missing and should be downloaded
+			// but we are in scan mode, so no download is desired
+			return nil, model.ErrMissingBlockData
+		})
+	} else {
+		panic("ResticScannerOrPuller::DoOne(): should not be called for pull!")
+	}
+}
+
+// Finish implements BlobFsScanOrPullI.
+func (r *ResticScannerOrPuller) Finish() error {
 	panic("unimplemented")
 }
 
-// StartScanOrPull implements BlobFsI.
-func (r *ResticAdapter) StartScanOrPull(ctx context.Context, opts PullOptions) (BlobFsScanOrPullI, error) {
+// ReserveAndSetI implements BlobFsI.
+func (r *ResticAdapter) ReserveAndSetI(hash []byte, data []byte) {
 	panic("unimplemented")
 }
 
@@ -49,9 +71,11 @@ func (r *ResticAdapter) SetMeta(name string, data []byte) error {
 	panic("unimplemented")
 }
 
-// StartScan implements BlobFsI.
-func (r *ResticAdapter) StartScan(ctx context.Context, opts PullOptions) error {
-	panic("unimplemented")
+// StartScanOrPull implements BlobFsI.
+func (r *ResticAdapter) StartScanOrPull(ctx context.Context, opts model.PullOptions) (model.BlobFsScanOrPullI, error) {
+	return &ResticScannerOrPuller{
+		scanOpts: opts,
+	}, nil
 }
 
 // convertToResticIDs converts []protocol.BlockInfo to restic.IDs
@@ -63,7 +87,7 @@ func convertToResticIDs(blocks []protocol.BlockInfo) restic_model.IDs {
 	return ids
 }
 
-var _ BlobFsI = &ResticAdapter{}
+var _ model.BlobFsI = &ResticAdapter{}
 
 func MapFileInfoTypeToResticNodeType(t protocol.FileInfoType) restic_model.NodeType {
 	switch t {
@@ -78,44 +102,48 @@ func MapFileInfoTypeToResticNodeType(t protocol.FileInfoType) restic_model.NodeT
 	}
 }
 
+func ConvertFileInfoToResticNode(fi *protocol.FileInfo) *restic_model.Node {
+	return &restic_model.Node{
+		Name:               fi.FileName(),
+		Type:               MapFileInfoTypeToResticNodeType(fi.Type),
+		Mode:               os.FileMode(fi.Permissions),
+		ModTime:            fi.ModTime(),
+		AccessTime:         fi.ModTime(),
+		ChangeTime:         fi.InodeChangeTime(),
+		UID:                uint32(fi.Platform.GetUnixUidOrDefault(0)),
+		GID:                uint32(fi.Platform.GetUnixGidOrDefault(0)),
+		User:               fi.Platform.GetUnixOwnerNameOrDefault(""),
+		Group:              fi.Platform.GetUnixGroupNameOrDefault(""),
+		DeviceID:           0,
+		Size:               uint64(fi.Size),
+		Links:              0,
+		LinkTarget:         "",
+		LinkTargetRaw:      nil,
+		ExtendedAttributes: nil,
+		GenericAttributes:  nil,
+		Device:             0,
+		Content:            convertToResticIDs(fi.Blocks),
+		Subtree:            nil,
+		Error:              "",
+		Path:               fi.Name,
+	}
+}
+
 // UpdateFile implements BlobFsI.
 func (r *ResticAdapter) UpdateFile(
 	ctx context.Context,
 	fi *protocol.FileInfo,
-	blockStatusCb func(block protocol.BlockInfo, status GetBlockDataResult),
+	blockStatusCb func(block protocol.BlockInfo, status model.GetBlockDataResult),
 	downloadBlockDataCb func(block protocol.BlockInfo) ([]byte, error),
 ) error {
 
-	content := convertToResticIDs(fi.Blocks)
+	node := ConvertFileInfoToResticNode(fi)
 	return r.snw.UpdateFile(
 		ctx,
 		fi.Name,
-		&restic_model.Node{
-			Name:               fi.FileName(),
-			Type:               MapFileInfoTypeToResticNodeType(fi.Type),
-			Mode:               os.FileMode(fi.Permissions),
-			ModTime:            fi.ModTime(),
-			AccessTime:         fi.ModTime(),
-			ChangeTime:         fi.InodeChangeTime(),
-			UID:                uint32(fi.Platform.GetUnixUidOrDefault(0)),
-			GID:                uint32(fi.Platform.GetUnixGidOrDefault(0)),
-			User:               fi.Platform.GetUnixOwnerNameOrDefault(""),
-			Group:              fi.Platform.GetUnixGroupNameOrDefault(""),
-			DeviceID:           0,
-			Size:               uint64(fi.Size),
-			Links:              0,
-			LinkTarget:         "",
-			LinkTargetRaw:      nil,
-			ExtendedAttributes: nil,
-			GenericAttributes:  nil,
-			Device:             0,
-			Content:            content,
-			Subtree:            nil,
-			Error:              "",
-			Path:               fi.Name,
-		},
+		node,
 		uint64(fi.BlockSize()),
-		content,
+		node.Content,
 		func(blockIdx uint64, hash []byte) ([]byte, error) {
 			return downloadBlockDataCb(fi.Blocks[blockIdx])
 		},

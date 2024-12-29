@@ -4,6 +4,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this file,
 // You can obtain one at https://mozilla.org/MPL/2.0/.
 
+// composition root, only used by cmd/syncthing/....
 package syncthing
 
 import (
@@ -23,6 +24,7 @@ import (
 	"github.com/thejerf/suture/v4"
 
 	"github.com/syncthing/syncthing/lib/api"
+	"github.com/syncthing/syncthing/lib/blockstorage"
 	"github.com/syncthing/syncthing/lib/build"
 	"github.com/syncthing/syncthing/lib/config"
 	"github.com/syncthing/syncthing/lib/connections"
@@ -244,7 +246,10 @@ func (a *App) startup() error {
 	}
 
 	keyGen := protocol.NewKeyGenerator()
-	m := model.NewModel(a.cfg, a.myID, a.ll, protectedFiles, a.evLogger, keyGen)
+	m := model.NewFullModel(a.cfg, a.myID, a.ll, protectedFiles, a.evLogger, keyGen,
+		model.NewVirtualFolder,
+		blockstorage.NewBlockStorageFileBlobFs,
+		blockstorage.NewGoCloudUrlStorageFromConfigStr)
 	a.Internals = newInternals(m)
 
 	a.mainService.Add(m)

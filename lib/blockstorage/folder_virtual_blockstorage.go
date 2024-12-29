@@ -4,7 +4,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this file,
 // You can obtain one at https://mozilla.org/MPL/2.0/.
 
-package model
+package blockstorage
 
 import (
 	"context"
@@ -13,33 +13,34 @@ import (
 	"sync/atomic"
 	"time"
 
-	blobfilefs "github.com/syncthing/syncthing/lib/blob_file_fs"
-	"github.com/syncthing/syncthing/lib/blockstorage"
 	"github.com/syncthing/syncthing/lib/db"
 	"github.com/syncthing/syncthing/lib/events"
 	"github.com/syncthing/syncthing/lib/hashutil"
 	"github.com/syncthing/syncthing/lib/logger"
+	"github.com/syncthing/syncthing/lib/model"
 	"github.com/syncthing/syncthing/lib/protocol"
 	"github.com/syncthing/syncthing/lib/utils"
 	"google.golang.org/protobuf/proto"
 )
+
+const LOCAL_HAVE_FI_META_PREFIX = "LocalHaveMeta"
 
 type BlockStorageFileBlobFs struct {
 	ownDeviceID     string
 	folderID        string
 	evLogger        events.Logger
 	fset            *db.FileSet
-	blockDataAccess BlockDataAccessI
+	blockDataAccess model.BlockDataAccessI
 
-	blockCache    blockstorage.HashBlockStorageI
-	deleteService *blockstorage.AsyncCheckedDeleteService
+	blockCache    model.HashBlockStorageI
+	deleteService *AsyncCheckedDeleteService
 }
 
 type BlockStorageFileBlobFsPullOrScan struct {
 	parent   *BlockStorageFileBlobFs
 	scanCtx  context.Context
-	checkMap blockstorage.HashBlockStateMap
-	scanOpts blobfilefs.PullOptions
+	checkMap model.HashBlockStateMap
+	scanOpts model.PullOptions
 }
 
 func NewBlockStorageFileBlobFs(
@@ -48,8 +49,8 @@ func NewBlockStorageFileBlobFs(
 	folderID string,
 	evLogger events.Logger,
 	fset *db.FileSet,
-	blockCache blockstorage.HashBlockStorageI,
-) *BlockStorageFileBlobFs {
+	blockCache model.HashBlockStorageI,
+) model.BlobFsI {
 
 	return &BlockStorageFileBlobFs{
 		ownDeviceID:   ownDeviceID,
@@ -57,7 +58,7 @@ func NewBlockStorageFileBlobFs(
 		evLogger:      evLogger,
 		fset:          fset,
 		blockCache:    blockCache,
-		deleteService: blockstorage.NewAsyncCheckedDeleteService(ctx, blockCache),
+		deleteService: NewAsyncCheckedDeleteService(ctx, blockCache),
 	}
 }
 
@@ -65,20 +66,20 @@ func (vf *BlockStorageFileBlobFs) Close() {
 	vf.deleteService.Close()
 }
 
-// GetMeta implements blobfilefs.BlobFsI.
+// GetMeta implements BlobFsI.
 func (b *BlockStorageFileBlobFs) GetMeta(name string) (data []byte, err error) {
 	return b.blockCache.GetMeta(name)
 }
 
-// SetMeta implements blobfilefs.BlobFsI.
+// SetMeta implements BlobFsI.
 func (b *BlockStorageFileBlobFs) SetMeta(name string, data []byte) error {
 	return b.blockCache.SetMeta(name, data)
 }
 
-// StartScan implements blobfilefs.BlobFsI.
+// StartScan implements BlobFsI.
 func (vf *BlockStorageFileBlobFs) StartScanOrPull(
-	ctx context.Context, opts blobfilefs.PullOptions,
-) (blobfilefs.BlobFsScanOrPullI, error) {
+	ctx context.Context, opts model.PullOptions,
+) (model.BlobFsScanOrPullI, error) {
 	scanOrPull := &BlockStorageFileBlobFsPullOrScan{
 		parent:   vf,
 		scanCtx:  ctx,
@@ -119,7 +120,7 @@ func (vf *BlockStorageFileBlobFs) StartScanOrPull(
 	return scanOrPull, nil
 }
 
-// FinishScan implements blobfilefs.BlobFsI.
+// FinishScan implements BlobFsI.
 func (b *BlockStorageFileBlobFsPullOrScan) Finish() error {
 	if b.checkMap != nil {
 		b.parent.cleanupUnneededReservations(b.checkMap)
@@ -127,62 +128,26 @@ func (b *BlockStorageFileBlobFsPullOrScan) Finish() error {
 	return nil
 }
 
-func (vf *BlockStorageFileBlobFsPullOrScan) DoOne(fi *protocol.FileInfo, progressFn blobfilefs.JobQueueProgressFn) error {
+func (vf *BlockStorageFileBlobFsPullOrScan) DoOne(fi *protocol.FileInfo, progressFn model.JobQueueProgressFn) error {
 	if vf.scanOpts.OnlyCheck {
 		return vf.scanOne(vf.scanCtx, fi, progressFn)
 	} else {
-		return vf.pullOne(vf.scanCtx, fi, progressFn)
+		panic("BlockStorageFileBlobFsPullOrScan::DoOne(): should not be called for pull!")
 	}
-}
-
-func (vf *BlockStorageFileBlobFsPullOrScan) pullOne(
-	ctx context.Context, f *protocol.FileInfo, fn blobfilefs.JobQueueProgressFn,
-) error {
-
-	vf.parent.evLogger.Log(events.ItemStarted, map[string]string{
-		"folder": vf.parent.folderID,
-		"item":   f.FileName(),
-		"type":   "file",
-		"action": "update",
-	})
-
-	err := error(nil)
-
-	fn2 := func(deltaBytes int64, done bool) {
-		fn(deltaBytes, done)
-
-		if done {
-			vf.parent.evLogger.Log(events.ItemFinished, map[string]interface{}{
-				"folder": vf.parent.folderID,
-				"item":   f.FileName(),
-				"error":  events.Error(err),
-				"type":   "dir",
-				"action": "update",
-			})
-		}
-	}
-
-	if f.IsDirectory() {
-		// no work to do for directories.
-		fn2(f.FileSize(), true)
-	} else {
-		vf.parent.blockDataAccess.RequestBackgroundDownloadI(f.Name, f.Size, f.ModTime(), fn2)
-	}
-
-	return nil
 }
 
 func (vf *BlockStorageFileBlobFsPullOrScan) scanOne(
-	ctx context.Context, fi *protocol.FileInfo, fn blobfilefs.JobQueueProgressFn,
+	ctx context.Context, fi *protocol.FileInfo, fn model.JobQueueProgressFn,
 ) error {
 
 	if fi.IsDirectory() {
 		// no work to do for directories.
-		fn(fi.FileSize(), true)
+		fn(fi.FileSize(), model.JobResultOK())
 		return nil
 	} else {
 		return func() error {
-			defer fn(0, true)
+			result := model.JobResultOK()
+			defer fn(0, result)
 
 			all_ok := true
 			for _, bi := range fi.Blocks {
@@ -200,7 +165,7 @@ func (vf *BlockStorageFileBlobFsPullOrScan) scanOne(
 				}
 				all_ok = all_ok && ok
 
-				fn(int64(bi.Size), false)
+				fn(int64(bi.Size), nil)
 
 				if utils.IsDone(vf.scanCtx) {
 					return context.Canceled
@@ -209,15 +174,7 @@ func (vf *BlockStorageFileBlobFsPullOrScan) scanOne(
 
 			if !all_ok {
 				//logger.DefaultLogger.Debugf("synchronous check block info result: incomplete, file: %s", fi.Name)
-				// Revert means to throw away our local changes. We reset the
-				// version to the empty vector, which is strictly older than any
-				// other existing version. It is not in conflict with anything,
-				// either, so we will not create a conflict copy of our local
-				// changes.
-				fi.Version = protocol.Vector{}
-				vf.parent.fset.UpdateOne(protocol.LocalDeviceID, fi)
-				// as this is NOT usual case, we don't store this to the meta data of block storage
-				// NOT: updateOneLocalFileInfo(&fi)
+				result.Err = model.ErrMissingBlockData
 			}
 
 			return nil
@@ -225,12 +182,12 @@ func (vf *BlockStorageFileBlobFsPullOrScan) scanOne(
 	}
 }
 
-var _ = blobfilefs.BlobFsI(&BlockStorageFileBlobFs{})
+var _ = model.BlobFsI(&BlockStorageFileBlobFs{})
 
 func (b *BlockStorageFileBlobFs) UpdateFile(
 	ctx context.Context,
 	fi *protocol.FileInfo,
-	blockStatusCb func(block protocol.BlockInfo, status blobfilefs.GetBlockDataResult),
+	blockStatusCb func(block protocol.BlockInfo, status model.GetBlockDataResult),
 	downloadBlockDataCb func(block protocol.BlockInfo) ([]byte, error),
 ) error {
 
@@ -248,7 +205,7 @@ func (b *BlockStorageFileBlobFs) UpdateFile(
 
 				err := utils.AbortableTimeDelayedRetry(ctx, 6, time.Minute, func(tryNr uint) error {
 
-					_, err, status := blockstorage.GetBlockDataFromCacheOrDownload(
+					_, err, status := model.GetBlockDataFromCacheOrDownload(
 						b.blockCache, fi, bi, downloadBlockDataCb, true)
 
 					if err != nil {
@@ -289,7 +246,7 @@ func (b *BlockStorageFileBlobFs) UpdateFile(
 	return nil
 }
 
-// ReserveAndSetI implements blobfilefs.BlobFsI.
+// ReserveAndSetI implements BlobFsI.
 func (vf *BlockStorageFileBlobFs) ReserveAndSetI(hash []byte, data []byte) {
 	vf.blockCache.ReserveAndSet(hash, data)
 }
@@ -304,7 +261,7 @@ func (b *BlockStorageFileBlobFs) updateStoredFileMetadata(
 		return err
 	}
 
-	metaKey := blockstorage.LOCAL_HAVE_FI_META_PREFIX + "/" +
+	metaKey := LOCAL_HAVE_FI_META_PREFIX + "/" +
 		b.ownDeviceID + "/" +
 		b.folderID + "/" +
 		fi.Name
@@ -323,7 +280,7 @@ func (vf *BlockStorageFileBlobFs) GetHashBlockData(ctx context.Context, hash []b
 	return n, nil
 }
 
-func (vf *BlockStorageFileBlobFs) cleanupUnneededReservations(checkMap blockstorage.HashBlockStateMap) error {
+func (vf *BlockStorageFileBlobFs) cleanupUnneededReservations(checkMap model.HashBlockStateMap) error {
 	snap, err := vf.fset.Snapshot()
 	if err != nil {
 		return err

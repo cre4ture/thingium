@@ -11,7 +11,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	blobfilefs "github.com/syncthing/syncthing/lib/blob_file_fs"
 	"github.com/syncthing/syncthing/lib/db"
 	"github.com/syncthing/syncthing/lib/events"
 	"github.com/syncthing/syncthing/lib/protocol"
@@ -27,13 +26,13 @@ type VirtualFolderFilePuller struct {
 	fset                    *db.FileSet
 	ctx                     context.Context
 
-	filePullerImpl blobfilefs.BlobFsI
+	filePullerImpl BlobFsI
 }
 
 func createVirtualFolderFilePullerAndPull(
 	f *runningVirtualFolderSyncthingService,
 	job *jobQueueEntry,
-	filePullerImpl blobfilefs.BlobFsI,
+	filePullerImpl BlobFsI,
 ) {
 	defer f.backgroundDownloadQueue.Done(job.name)
 
@@ -84,18 +83,18 @@ func (f *VirtualFolderFilePuller) doPull() {
 	all_ok.Store(true)
 
 	err := f.filePullerImpl.UpdateFile(f.ctx, &f.file,
-		func(bi protocol.BlockInfo, status blobfilefs.GetBlockDataResult) {
+		func(bi protocol.BlockInfo, status GetBlockDataResult) {
 			switch status {
-			case blobfilefs.GET_BLOCK_CACHED:
+			case GET_BLOCK_CACHED:
 				f.copiedFromElsewhere(bi.Size)
 				f.copyDone(bi)
-			case blobfilefs.GET_BLOCK_DOWNLOAD:
+			case GET_BLOCK_DOWNLOAD:
 				f.pullDone(bi)
-			case blobfilefs.GET_BLOCK_FAILED:
+			case GET_BLOCK_FAILED:
 				all_ok.Store(false)
 			}
 
-			f.job.progressCb(int64(bi.Size), false)
+			f.job.progressCb(int64(bi.Size), nil)
 		},
 		func(block protocol.BlockInfo) ([]byte, error) {
 			f.pullStarted()

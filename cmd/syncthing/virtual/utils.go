@@ -30,7 +30,7 @@ type OfflineStorageAccess struct {
 }
 
 func NewOfflineDataAccess(URL string, DeviceID string, FolderID string) (*OfflineStorageAccess, error) {
-	BlockStorage := blockstorage.NewGoCloudUrlStorageFromConfigStr(context.Background(), URL, "")
+	BlockStorage := blockstorage.NewGoCloudUrlStorageFromConfigStrConcrete(context.Background(), URL, "")
 
 	devices, err := listDeviceIDs(BlockStorage)
 	if err != nil {

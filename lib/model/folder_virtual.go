@@ -17,8 +17,6 @@ import (
 	"strings"
 	"time"
 
-	blobfilefs "github.com/syncthing/syncthing/lib/blob_file_fs"
-	"github.com/syncthing/syncthing/lib/blockstorage"
 	"github.com/syncthing/syncthing/lib/config"
 	"github.com/syncthing/syncthing/lib/db"
 	"github.com/syncthing/syncthing/lib/events"
@@ -49,15 +47,15 @@ type virtualFolderSyncthingService struct {
 	*folderBase
 	lifetimeCtxCancel                 context.CancelFunc // TODO: when to call this function?
 	mountPath                         string
-	blobFs                            blobfilefs.BlobFsI // blob FS needs to be early accessible as it is used to read the encryption token. TODO: when to close it?
-	getBlockDataFromCacheOrDownloadFn func(file *protocol.FileInfo, block protocol.BlockInfo) ([]byte, error, blobfilefs.GetBlockDataResult)
+	blobFs                            BlobFsI // blob FS needs to be early accessible as it is used to read the encryption token. TODO: when to close it?
+	getBlockDataFromCacheOrDownloadFn func(file *protocol.FileInfo, block protocol.BlockInfo) ([]byte, error, GetBlockDataResult)
 
 	running *runningVirtualFolderSyncthingService
 }
 
 type runningVirtualFolderSyncthingService struct {
 	parent            *virtualFolderSyncthingService
-	blobFs            blobfilefs.BlobFsI
+	blobFs            BlobFsI
 	serviceRunningCtx context.Context
 
 	backgroundDownloadQueue *jobQueue
@@ -69,7 +67,7 @@ type runningVirtualFolderSyncthingService struct {
 func (vFSS *virtualFolderSyncthingService) GetBlockDataFromCacheOrDownloadI(
 	file *protocol.FileInfo,
 	block protocol.BlockInfo,
-) ([]byte, error, blobfilefs.GetBlockDataResult) {
+) ([]byte, error, GetBlockDataResult) {
 	return vFSS.getBlockDataFromCacheOrDownloadFn(file, block)
 }
 
@@ -77,7 +75,7 @@ func (vFSS *virtualFolderSyncthingService) ReserveAndSetI(hash []byte, data []by
 	vFSS.blobFs.ReserveAndSetI(hash, data)
 }
 
-func newVirtualFolder(
+func NewVirtualFolder(
 	model *model,
 	fset *db.FileSet,
 	ignores *ignore.Matcher,
@@ -100,14 +98,14 @@ func newVirtualFolder(
 	logger.DefaultLogger.Infof("newVirtualFolder(): create storage: %v, mount: %v", blobUrl, mountPath)
 
 	lifetimeCtx, lifetimeCtxCancel := context.WithCancel(context.Background())
-	var blockCache blockstorage.HashBlockStorageI = blockstorage.NewGoCloudUrlStorageFromConfigStr(
+	var blockCache HashBlockStorageI = model.blockStorageFactory(
 		lifetimeCtx, blobUrl, folderBase.ownDeviceIdString())
 
 	if folderBase.Type.IsReceiveEncrypted() {
-		blockCache = blockstorage.NewEncryptedHashBlockStorage(blockCache)
+		blockCache = NewEncryptedHashBlockStorage(blockCache)
 	}
 
-	blobFs := NewBlockStorageFileBlobFs(
+	blobFs := model.blobFsFactory(
 		lifetimeCtx,
 		folderBase.ownDeviceIdString(),
 		folderBase.folderID,
@@ -121,8 +119,8 @@ func newVirtualFolder(
 		lifetimeCtxCancel: lifetimeCtxCancel,
 		mountPath:         mountPath,
 		blobFs:            blobFs,
-		getBlockDataFromCacheOrDownloadFn: func(file *protocol.FileInfo, block protocol.BlockInfo) ([]byte, error, blobfilefs.GetBlockDataResult) {
-			return blockstorage.GetBlockDataFromCacheOrDownload(blockCache, file, block, func(block protocol.BlockInfo) ([]byte, error) {
+		getBlockDataFromCacheOrDownloadFn: func(file *protocol.FileInfo, block protocol.BlockInfo) ([]byte, error, GetBlockDataResult) {
+			return GetBlockDataFromCacheOrDownload(blockCache, file, block, func(block protocol.BlockInfo) ([]byte, error) {
 				return folderBase.pullBlockBaseConvenient(protocol.BlockOfFile{File: file, Block: block})
 			}, false)
 		},
@@ -198,7 +196,7 @@ func (vf *virtualFolderSyncthingService) runVirtualFolderServiceCoroutine(
 			// TODO: rvf.Pull_x(ctx, PullOptions{false, true})
 			rvf.initialScanState = INITIAL_SCAN_COMPLETED
 			close(rvf.InitialScanDone)
-			rvf.pullOrScan_x(ctx, blobfilefs.PullOptions{true, false})
+			rvf.pullOrScan_x(ctx, PullOptions{true, false})
 		}
 
 		// unblock caller after successful init
@@ -217,28 +215,30 @@ func (vf *virtualFolderSyncthingService) runVirtualFolderServiceCoroutine(
 }
 
 func (f *virtualFolderSyncthingService) RequestBackgroundDownloadI(
-	filename string, size int64, modified time.Time, fn blobfilefs.JobQueueProgressFn,
+	filename string, size int64, modified time.Time, fn JobQueueProgressFn,
 ) {
 	if f.running == nil {
 		panic("RequestBackgroundDownloadI() called on non-running virtual folder")
 	}
 
-	f.running.RequestBackgroundDownloadI(filename, size, modified, jobQueueProgressFn(fn))
+	f.running.RequestBackgroundDownloadI(filename, size, modified, fn)
 }
 
 func (f *runningVirtualFolderSyncthingService) RequestBackgroundDownloadI(
-	filename string, size int64, modified time.Time, fn jobQueueProgressFn,
+	filename string, size int64, modified time.Time, fn JobQueueProgressFn,
 ) {
 	f.RequestBackgroundDownload(filename, size, modified, fn)
 }
 
 func (f *runningVirtualFolderSyncthingService) RequestBackgroundDownload(
-	filename string, size int64, modified time.Time, fn jobQueueProgressFn,
+	filename string, size int64, modified time.Time, fn JobQueueProgressFn,
 ) {
 	wasNew := f.backgroundDownloadQueue.PushIfNew(filename, size, modified, fn)
 	if !wasNew {
 		if fn != nil {
-			fn(size, true)
+			result := JobResultOK()
+			result.skipped = true
+			fn(size, result)
 		}
 		return
 	}
@@ -307,7 +307,7 @@ func (f *virtualFolderSyncthingService) Serve(ctx context.Context) error {
 		case <-f.pullScheduled: // TODO: replace with "doInSyncChan"
 			logger.DefaultLogger.Infof("virtualFolderServe: case <-f.pullScheduled")
 			l.Debugf("Serve: f.pullAllMissing(false) - START")
-			err := f.running.pullOrScan_x(ctx, blobfilefs.PullOptions{true, false})
+			err := f.running.pullOrScan_x(ctx, PullOptions{true, false})
 			l.Debugf("Serve: f.pullAllMissing(false) - DONE. Err: %v", err)
 			logger.DefaultLogger.Infof("virtualFolderServe: case <-f.pullScheduled - 2")
 			continue
@@ -326,7 +326,7 @@ func (f *virtualFolderSyncthingService) ScheduleScan() {
 		if f.running == nil {
 			return nil // ignore request
 		}
-		err := f.running.pullOrScan_x(f.ctx, blobfilefs.PullOptions{false, true})
+		err := f.running.pullOrScan_x(f.ctx, PullOptions{false, true})
 		logger.DefaultLogger.Infof("ScheduleScan - pull_x - DONE. Err: %v", err)
 		return err
 	})
@@ -356,10 +356,10 @@ func (vf *virtualFolderSyncthingService) Scan(subs []string) error {
 	}
 
 	logger.DefaultLogger.Infof("Scan(%+v) - pull_x", subs)
-	return vf.running.pullOrScan_x_doInSync(vf.ctx, blobfilefs.PullOptions{false, true})
+	return vf.running.pullOrScan_x_doInSync(vf.ctx, PullOptions{false, true})
 }
 
-func (f *runningVirtualFolderSyncthingService) pullOrScan_x_doInSync(ctx context.Context, opts blobfilefs.PullOptions) error {
+func (f *runningVirtualFolderSyncthingService) pullOrScan_x_doInSync(ctx context.Context, opts PullOptions) error {
 	logger.DefaultLogger.Infof("request pullOrScan_x_doInSync - %+v", opts)
 	return f.parent.doInSync(func() error {
 		logger.DefaultLogger.Infof("execute pullOrScan_x_doInSync - %+v", opts)
@@ -367,7 +367,7 @@ func (f *runningVirtualFolderSyncthingService) pullOrScan_x_doInSync(ctx context
 	})
 }
 
-func (vf *runningVirtualFolderSyncthingService) pullOrScan_x(ctx context.Context, opts blobfilefs.PullOptions) error {
+func (vf *runningVirtualFolderSyncthingService) pullOrScan_x(ctx context.Context, opts PullOptions) error {
 	defer logger.DefaultLogger.Infof("pull_x END z - opts: %+v", opts)
 	snap, err := vf.parent.fset.Snapshot()
 	if err != nil {
@@ -442,17 +442,71 @@ func (vf *runningVirtualFolderSyncthingService) pullOrScan_x(ctx context.Context
 			if !doScan {
 				logger.DefaultLogger.Infof("%v ONE - START, size: %v", actionName, myFileSize)
 			}
-			progressFn := func(deltaBytes int64, done bool) {
+			progressFn := func(deltaBytes int64, result *JobResult) {
 				asyncNotifier.Progress.Update(deltaBytes)
-				if done {
+				if result != nil {
 					doneFn()
 					if !doScan {
 						logger.DefaultLogger.Infof("%v ONE - DONE, size: %v", actionName, myFileSize)
 					}
+
+					if result.Err != nil {
+						// Revert means to throw away our local changes. We reset the
+						// version to the empty vector, which is strictly older than any
+						// other existing version. It is not in conflict with anything,
+						// either, so we will not create a conflict copy of our local
+						// changes.
+						f.Version = protocol.Vector{}
+						vf.parent.fset.UpdateOne(protocol.LocalDeviceID, &f)
+						// as this is NOT usual case, we don't store this to the meta data of block storage
+						// NOT: updateOneLocalFileInfo(&fi)
+					}
 				}
 			}
-			scanner.DoOne(&f, progressFn)
+			err := error(nil)
+			if opts.OnlyCheck {
+				err = scanner.DoOne(&f, progressFn)
+			} else {
+				// pull implementation is the same for all backends
+				err = func() error {
+					vf.parent.evLogger.Log(events.ItemStarted, map[string]string{
+						"folder": vf.parent.folderID,
+						"item":   f.FileName(),
+						"type":   "file",
+						"action": "update",
+					})
+
+					fn2 := func(deltaBytes int64, result *JobResult) {
+						progressFn(deltaBytes, result)
+
+						if result != nil {
+							vf.parent.evLogger.Log(events.ItemFinished, map[string]interface{}{
+								"folder": vf.parent.folderID,
+								"item":   f.FileName(),
+								"error":  events.Error(err),
+								"type":   "dir",
+								"action": "update",
+							})
+						}
+					}
+
+					if f.IsDirectory() {
+						// no work to do for directories.
+						fn2(f.FileSize(), JobResultOK())
+					} else {
+						vf.RequestBackgroundDownloadI(f.Name, f.Size, f.ModTime(), fn2)
+					}
+
+					return nil
+				}()
+			}
+
+			if err != nil {
+				logger.DefaultLogger.Infof("%v ONE - ERR, size: %v, err: %v", actionName, myFileSize, err)
+				progressFn(0, JobResultError(err))
+			}
 		}
+
 		leases.AsyncRunOneWithDoneFn(f.FileName(), workF)
 
 		select {
@@ -504,7 +558,7 @@ func (vf *virtualFolderSyncthingService) Update(fs []protocol.FileInfo) {
 }
 
 func (vf *virtualFolderSyncthingService) UpdateOneLocalFileInfoLocalChangeDetected(fi *protocol.FileInfo) {
-	err := vf.blobFs.UpdateFile(vf.ctx, fi, func(block protocol.BlockInfo, status blobfilefs.GetBlockDataResult) {},
+	err := vf.blobFs.UpdateFile(vf.ctx, fi, func(block protocol.BlockInfo, status GetBlockDataResult) {},
 		func(block protocol.BlockInfo) ([]byte, error) {
 			panic("UpdateOneLocalFileInfoLocalChangeDetected(): download callback should not be called for already processed local block changes")
 		})

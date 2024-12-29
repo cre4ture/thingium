@@ -4,10 +4,11 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this file,
 // You can obtain one at https://mozilla.org/MPL/2.0/.
 
-package blobfilefs
+package model
 
 import (
 	"context"
+	"errors"
 
 	"github.com/syncthing/syncthing/lib/protocol"
 )
@@ -20,12 +21,12 @@ const (
 	GET_BLOCK_DOWNLOAD GetBlockDataResult = iota
 )
 
+var ErrMissingBlockData = errors.New("missing block data")
+
 type PullOptions struct {
 	OnlyMissing bool
 	OnlyCheck   bool
 }
-
-type JobQueueProgressFn func(deltaBytes int64, done bool)
 
 type BlobFsI interface {
 	UpdateFile(

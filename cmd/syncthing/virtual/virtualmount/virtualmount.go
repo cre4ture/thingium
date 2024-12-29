@@ -15,7 +15,6 @@ import (
 
 	"github.com/patrickmn/go-cache"
 	"github.com/syncthing/syncthing/cmd/syncthing/virtual"
-	blobfilefs "github.com/syncthing/syncthing/lib/blob_file_fs"
 	"github.com/syncthing/syncthing/lib/blockstorage"
 	"github.com/syncthing/syncthing/lib/config"
 	"github.com/syncthing/syncthing/lib/hashutil"
@@ -86,13 +85,13 @@ type OfflineBlockDataAccess struct {
 type CachedBlock struct {
 	data   []byte
 	err    error
-	result blobfilefs.GetBlockDataResult
+	result model.GetBlockDataResult
 }
 
 // GetBlockDataFromCacheOrDownloadI implements model.BlockDataAccessI.
 func (o *OfflineBlockDataAccess) GetBlockDataFromCacheOrDownloadI(
 	file *protocol.FileInfo, block protocol.BlockInfo,
-) ([]byte, error, blobfilefs.GetBlockDataResult) {
+) ([]byte, error, model.GetBlockDataResult) {
 
 	cacheKey := hashutil.HashToStringMapKey(block.Hash)
 	var dataBuffer *CachedBlock = nil
@@ -123,9 +122,9 @@ func (o *OfflineBlockDataAccess) GetBlockDataFromCacheOrDownloadI(
 	dataBuffer.data = data
 	dataBuffer.err = err
 	if err != nil {
-		dataBuffer.result = blobfilefs.GET_BLOCK_FAILED
+		dataBuffer.result = model.GET_BLOCK_FAILED
 	} else {
-		dataBuffer.result = blobfilefs.GET_BLOCK_CACHED
+		dataBuffer.result = model.GET_BLOCK_CACHED
 	}
 
 	return dataBuffer.data, dataBuffer.err, dataBuffer.result
@@ -133,7 +132,7 @@ func (o *OfflineBlockDataAccess) GetBlockDataFromCacheOrDownloadI(
 
 // RequestBackgroundDownloadI implements model.BlockDataAccessI.
 func (o *OfflineBlockDataAccess) RequestBackgroundDownloadI(
-	filename string, size int64, modified time.Time, fn blobfilefs.JobQueueProgressFn,
+	filename string, size int64, modified time.Time, fn model.JobQueueProgressFn,
 ) {
 	// ignore
 }

@@ -13,6 +13,7 @@ import (
 
 	"github.com/syncthing/syncthing/lib/hashutil"
 	"github.com/syncthing/syncthing/lib/logger"
+	"github.com/syncthing/syncthing/lib/model"
 	"github.com/syncthing/syncthing/lib/utils"
 )
 
@@ -20,7 +21,7 @@ type AsyncCheckedDeleteService struct {
 	// io.Closer
 	ctx            context.Context
 	cancel         context.CancelFunc
-	hbs            HashBlockStorageI
+	hbs            model.HashBlockStorageI
 	serviceDone    sync.WaitGroup
 	todoList       chan []byte // hashes
 	pendingDeletes chan PendingDelete
@@ -35,7 +36,7 @@ const MAX_PENDING_DELETES = 10 // this needs to be limited to keep timing constr
 const TIME_CONSTANT_BASE = time.Minute
 const TIME_CONSTANT = TIME_CONSTANT_BASE / 3 // grace period + deletion window + another grace period
 
-func NewAsyncCheckedDeleteService(ctx context.Context, hbs HashBlockStorageI) *AsyncCheckedDeleteService {
+func NewAsyncCheckedDeleteService(ctx context.Context, hbs model.HashBlockStorageI) *AsyncCheckedDeleteService {
 	myCtx, cancel := context.WithCancel(ctx)
 	instance := &AsyncCheckedDeleteService{
 		ctx:            myCtx,

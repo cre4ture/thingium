@@ -12,6 +12,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/syncthing/syncthing/lib/hashutil"
+	"github.com/syncthing/syncthing/lib/model"
 )
 
 const MY_NAME = "MY-OWN-NAME"
@@ -25,10 +26,10 @@ var hash_2 string = hashutil.HashToStringMapKey(byteHash_2[:])
 
 func TestHashBlockStorageMapBuilder_addData(t *testing.T) {
 	calls := 0
-	lastState := HashBlockState{}
-	builder := NewHashBlockStorageMapBuilder(MY_NAME, hashutil.StringMapKeyToHashNoError, func(d HashAndState) {
+	lastState := model.HashBlockState{}
+	builder := NewHashBlockStorageMapBuilder(MY_NAME, hashutil.StringMapKeyToHashNoError, func(d model.HashAndState) {
 		calls += 1
-		lastState = d.state
+		lastState = d.State
 	})
 
 	builder.addData(hash_1)
@@ -40,10 +41,10 @@ func TestHashBlockStorageMapBuilder_addData(t *testing.T) {
 
 func TestHashBlockStorageMapBuilder_addUse(t *testing.T) {
 	calls := 0
-	lastState := HashBlockState{}
-	builder := NewHashBlockStorageMapBuilder(MY_NAME, hashutil.StringMapKeyToHashNoError, func(d HashAndState) {
+	lastState := model.HashBlockState{}
+	builder := NewHashBlockStorageMapBuilder(MY_NAME, hashutil.StringMapKeyToHashNoError, func(d model.HashAndState) {
 		calls += 1
-		lastState = d.state
+		lastState = d.State
 	})
 
 	builder.addData(hash_1)
@@ -56,13 +57,13 @@ func TestHashBlockStorageMapBuilder_addUse(t *testing.T) {
 
 func TestHashBlockStorageMapBuilder_SlashedHashStrings_addUse(t *testing.T) {
 	calls := 0
-	lastState := HashBlockState{}
+	lastState := model.HashBlockState{}
 	slashStrategy := hashutil.NewHashStringStrategy("s")
 	builder := NewHashBlockStorageMapBuilder(MY_NAME, func(str string) []byte {
 		return slashStrategy.SlashedStringMapKeyToHashNoError(str)
-	}, func(d HashAndState) {
+	}, func(d model.HashAndState) {
 		calls += 1
-		lastState = d.state
+		lastState = d.State
 	})
 
 	var slashedHash_1 string = slashStrategy.HashToSlashedStringMapKey(byteHash_1[:])
@@ -78,10 +79,10 @@ func TestHashBlockStorageMapBuilder_SlashedHashStrings_addUse(t *testing.T) {
 
 func TestHashBlockStorageMapBuilder_addDelete(t *testing.T) {
 	calls := 0
-	lastState := HashBlockState{}
-	builder := NewHashBlockStorageMapBuilder(MY_NAME, hashutil.StringMapKeyToHashNoError, func(d HashAndState) {
+	lastState := model.HashBlockState{}
+	builder := NewHashBlockStorageMapBuilder(MY_NAME, hashutil.StringMapKeyToHashNoError, func(d model.HashAndState) {
 		calls += 1
-		lastState = d.state
+		lastState = d.State
 	})
 
 	builder.addData(hash_1)
@@ -94,10 +95,10 @@ func TestHashBlockStorageMapBuilder_addDelete(t *testing.T) {
 
 func TestHashBlockStorageMapBuilder_addUseOther(t *testing.T) {
 	calls := 0
-	lastState := HashBlockState{}
-	builder := NewHashBlockStorageMapBuilder(MY_NAME, hashutil.StringMapKeyToHashNoError, func(d HashAndState) {
+	lastState := model.HashBlockState{}
+	builder := NewHashBlockStorageMapBuilder(MY_NAME, hashutil.StringMapKeyToHashNoError, func(d model.HashAndState) {
 		calls += 1
-		lastState = d.state
+		lastState = d.State
 	})
 
 	builder.addData(hash_1)
@@ -106,16 +107,16 @@ func TestHashBlockStorageMapBuilder_addUseOther(t *testing.T) {
 
 	assert.Equal(t, 1, calls)
 	assert.Equal(t, true, lastState.IsReservedBySomeone())
-	assert.Equal(t, true, lastState.reservedByOthers)
-	assert.Equal(t, false, lastState.reservedByMe)
+	assert.Equal(t, true, lastState.ReservedByOthers)
+	assert.Equal(t, false, lastState.ReservedByMe)
 }
 
 func TestHashBlockStorageMapBuilder_addUseMeAndOther(t *testing.T) {
 	calls := 0
-	lastState := HashBlockState{}
-	builder := NewHashBlockStorageMapBuilder(MY_NAME, hashutil.StringMapKeyToHashNoError, func(d HashAndState) {
+	lastState := model.HashBlockState{}
+	builder := NewHashBlockStorageMapBuilder(MY_NAME, hashutil.StringMapKeyToHashNoError, func(d model.HashAndState) {
 		calls += 1
-		lastState = d.state
+		lastState = d.State
 	})
 
 	builder.addData(hash_1)

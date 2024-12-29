@@ -131,7 +131,32 @@ type Model interface {
 	RequestGlobal(ctx context.Context, deviceID protocol.DeviceID, folder, name string, blockNo int, offset int64, size int, hash []byte, weakHash uint32, fromTemporary bool) ([]byte, error)
 }
 
+type VirtualFolderFactoryFn func(
+	model *model,
+	fset *db.FileSet,
+	ignores *ignore.Matcher,
+	cfg config.FolderConfiguration,
+	ver versioner.Versioner,
+	evLogger events.Logger,
+	ioLimiter *semaphore.Semaphore,
+) service
+
+type BlobFsFactoryFn func(
+	ctx context.Context,
+	ownDeviceID string,
+	folderID string,
+	evLogger events.Logger,
+	fset *db.FileSet,
+	blockCache HashBlockStorageI,
+) BlobFsI
+
+type BlockStorageFactoryFn func(ctx context.Context, configStr string, myDeviceId string) HashBlockStorageI
+
 type model struct {
+	virtualFolderFactory VirtualFolderFactoryFn
+	blobFsFactory        BlobFsFactoryFn
+	blockStorageFactory  BlockStorageFactoryFn
+
 	*suture.Supervisor
 
 	// constructor parameters
@@ -213,9 +238,23 @@ var (
 // where it sends index information to connected peers and responds to requests
 // for file data without altering the local folder in any way.
 func NewModel(cfg config.Wrapper, id protocol.DeviceID, ldb *db.Lowlevel, protectedFiles []string, evLogger events.Logger, keyGen *protocol.KeyGenerator) Model {
+	return NewFullModel(cfg, id, ldb, protectedFiles, evLogger, keyGen, nil, nil, nil)
+}
+
+// NewModel creates and starts a new model. The model starts in read-only mode,
+// where it sends index information to connected peers and responds to requests
+// for file data without altering the local folder in any way.
+func NewFullModel(cfg config.Wrapper, id protocol.DeviceID, ldb *db.Lowlevel, protectedFiles []string, evLogger events.Logger, keyGen *protocol.KeyGenerator,
+	virtualFolderFactory VirtualFolderFactoryFn,
+	blobFsFactory BlobFsFactoryFn,
+	blockStorageFactory BlockStorageFactoryFn,
+) Model {
 	spec := svcutil.SpecWithDebugLogger(l)
 	m := &model{
-		Supervisor: suture.New("model", spec),
+		virtualFolderFactory: virtualFolderFactory,
+		blobFsFactory:        blobFsFactory,
+		blockStorageFactory:  blockStorageFactory,
+		Supervisor:           suture.New("model", spec),
 
 		// constructor parameters
 		cfg:            cfg,
@@ -393,7 +432,7 @@ func (m *model) addAndStartFolderLockedWithIgnores(cfg config.FolderConfiguratio
 	isVirtual := !cfg.IsBasedOnNativeFileSystem()
 	if isVirtual {
 		// new folder type based on a hash block storage instead of native filesystem
-		p = newVirtualFolder(m, fset, ignores, cfg, ver, m.evLogger, m.folderIOLimiter)
+		p = m.virtualFolderFactory(m, fset, ignores, cfg, ver, m.evLogger, m.folderIOLimiter)
 	} else {
 		// traditional folder based on a native filesystem
 		folderFactory, ok := folderFactories[cfg.Type]
