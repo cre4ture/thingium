@@ -13,6 +13,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/syncthing/syncthing/lib/config"
 	"github.com/syncthing/syncthing/lib/db"
 	"github.com/syncthing/syncthing/lib/events"
 	"github.com/syncthing/syncthing/lib/hashutil"
@@ -66,14 +67,14 @@ func (vf *BlockStorageFileBlobFs) Close() {
 	vf.deleteService.Close()
 }
 
-// GetMeta implements BlobFsI.
-func (b *BlockStorageFileBlobFs) GetMeta(name string) (data []byte, err error) {
-	return b.blockCache.GetMeta(name)
+// GetEncryptionToken implements model.BlobFsI.
+func (vf *BlockStorageFileBlobFs) GetEncryptionToken() (data []byte, err error) {
+	return vf.blockCache.GetMeta(config.EncryptionTokenName)
 }
 
-// SetMeta implements BlobFsI.
-func (b *BlockStorageFileBlobFs) SetMeta(name string, data []byte) error {
-	return b.blockCache.SetMeta(name, data)
+// SetEncryptionToken implements model.BlobFsI.
+func (vf *BlockStorageFileBlobFs) SetEncryptionToken(data []byte) error {
+	return vf.blockCache.SetMeta(config.EncryptionTokenName, data)
 }
 
 // StartScan implements BlobFsI.

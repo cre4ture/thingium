@@ -580,7 +580,7 @@ func (vf *virtualFolderSyncthingService) GetHashBlockData(hash []byte, response_
 }
 
 func (f *virtualFolderSyncthingService) ReadEncryptionToken() ([]byte, error) {
-	data, err := f.blobFs.GetMeta(config.EncryptionTokenName)
+	data, err := f.blobFs.GetEncryptionToken()
 	if err != nil {
 		return nil, err
 	}
@@ -600,6 +600,6 @@ func (f *virtualFolderSyncthingService) WriteEncryptionToken(token []byte) error
 	if err != nil {
 		return err
 	}
-	f.blobFs.SetMeta(config.EncryptionTokenName, data.Bytes())
+	f.blobFs.SetEncryptionToken(data.Bytes())
 	return nil
 }

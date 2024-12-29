@@ -8,53 +8,60 @@ package blobfilefs
 
 import (
 	"context"
+	"crypto/sha256"
 	"os"
 	"sync/atomic"
+	"time"
 
 	archiver "github.com/restic/restic/lib/archiver"
 	restic_model "github.com/restic/restic/lib/model"
+	"github.com/syncthing/syncthing/lib/config"
 	"github.com/syncthing/syncthing/lib/model"
 	"github.com/syncthing/syncthing/lib/protocol"
-	"golang.org/x/sync/errgroup"
 )
 
 type ResticAdapterBase struct {
-	options archiver.EasyArchiverOptions
+	hostname string
+	options  archiver.EasyArchiverOptions
 }
 
 type ResticAdapter struct {
 	*ResticAdapterBase
+	ctx       context.Context
+	cancelCtx context.CancelFunc
 
-	reader atomic.Pointer[ResticScannerOrPuller]
+	reader *atomic.Pointer[archiver.EasyArchiveReader]
+	puller *atomic.Pointer[ResticScannerOrPuller]
 }
 
 func NewResticAdapter(options archiver.EasyArchiverOptions) (*ResticAdapter, error) {
 	base := &ResticAdapterBase{
 		options: options,
 	}
-	reader, err := base.StartScanOrPullConcrete(
-		context.Background(),
-		model.PullOptions{OnlyCheck: true},
-	)
+	ctx, cancel := context.WithCancel(context.Background())
+	reader, err := archiver.NewEasyArchiveReader(ctx, options)
 	if err != nil {
 		return nil, err
 	}
-	ptr := atomic.Pointer[ResticScannerOrPuller]{}
+	ptr := &atomic.Pointer[archiver.EasyArchiveReader]{}
 	ptr.Store(reader)
 	return &ResticAdapter{
 		ResticAdapterBase: base,
+		ctx:               ctx,
+		cancelCtx:         cancel,
 		reader:            ptr,
 	}, nil
 }
 
 func (r *ResticAdapter) Close() {
-	r.replaceReader(nil)
+	r.cancelCtx()
+	r.replaceReader(nil) // waits internally
 }
 
-func (r *ResticAdapter) replaceReader(newPtr *ResticScannerOrPuller) {
+func (r *ResticAdapter) replaceReader(newPtr *archiver.EasyArchiveReader) {
 	readerPtr := r.reader.Swap(newPtr)
 	if readerPtr != nil {
-		readerPtr.Finish()
+		readerPtr.Close()
 	}
 }
 
@@ -63,7 +70,7 @@ type ResticScannerOrPuller struct {
 	scanOpts model.PullOptions
 	ctx      context.Context
 
-	snw    *archiver.EasyArchiver
+	snw    *archiver.EasyArchiveWriter
 	cancel context.CancelFunc
 }
 
@@ -80,15 +87,17 @@ func (r *ResticAdapter) StartScanOrPull(ctx context.Context, opts model.PullOpti
 func (r *ResticAdapterBase) StartScanOrPullConcrete(ctx context.Context, opts model.PullOptions) (*ResticScannerOrPuller, error) {
 
 	snapshotCtx, cancel := context.WithCancel(ctx)
-	arch, err := archiver.NewEasyArchiver(
+	arch, err := archiver.NewEasyArchiveWriter(
 		ctx,
 		r.options,
-		func(ctx context.Context, g *errgroup.Group) error {
+		func(ctx context.Context, eaw *archiver.EasyArchiveWriter) error {
+			// wait till work is done externally
 			<-snapshotCtx.Done()
 			return nil
 		},
 	)
 	if err != nil {
+		cancel()
 		return nil, err
 	}
 
@@ -134,22 +143,12 @@ func (r *ResticAdapter) GetHashBlockData(ctx context.Context, hash []byte, respo
 	if readerPtr == nil {
 		return 0, model.ErrConnectionFailed
 	}
-	data, err := readerPtr.snw.LoadDataBlob(ctx, restic_model.ID(hash))
+	data, err := readerPtr.LoadDataBlob(ctx, restic_model.ID(hash))
 	if err != nil {
 		return 0, err
 	}
 	n := copy(response_data, data)
 	return n, nil
-}
-
-// GetMeta implements BlobFsI.
-func (r *ResticAdapter) GetMeta(name string) (data []byte, err error) {
-	panic("unimplemented")
-}
-
-// SetMeta implements BlobFsI.
-func (r *ResticAdapter) SetMeta(name string, data []byte) error {
-	panic("unimplemented")
 }
 
 // convertToResticIDs converts []protocol.BlockInfo to restic.IDs
@@ -205,12 +204,11 @@ func ConvertFileInfoToResticNode(fi *protocol.FileInfo) *restic_model.Node {
 
 func UpdateFile(
 	ctx context.Context,
-	snw *archiver.EasyArchiver,
+	snw *archiver.EasyArchiveWriter,
 	fi *protocol.FileInfo,
 	blockStatusCb func(block protocol.BlockInfo, status model.GetBlockDataResult),
 	downloadBlockDataCb func(block protocol.BlockInfo) ([]byte, error),
 ) error {
-
 	node := ConvertFileInfoToResticNode(fi)
 	return snw.UpdateFile(
 		ctx,
@@ -232,4 +230,81 @@ func (r *ResticAdapter) UpdateFile(ctx context.Context, fi *protocol.FileInfo, b
 	}
 	defer tmpSnw.Finish()
 	return UpdateFile(ctx, tmpSnw.snw, fi, blockStatusCb, downloadBlockDataCb)
+}
+
+// GetEncryptionToken implements model.BlobFsI.
+func (r *ResticAdapter) GetEncryptionToken() (data []byte, err error) {
+	readerPtr := r.reader.Load()
+	if readerPtr == nil {
+		return nil, model.ErrConnectionFailed
+	}
+
+	data = nil
+	readerPtr.ReadFile(
+		context.Background(),
+		[]string{r.ResticAdapterBase.hostname},
+		archiver.TagLists{},
+		[]string{},
+		"latest",
+		config.EncryptionTokenName,
+	)
+	return data, nil
+}
+
+// SetEncryptionToken implements model.BlobFsI.
+func (r *ResticAdapter) SetEncryptionToken(data []byte) error {
+
+	dataHash := sha256.Sum256(data)
+	dataHashList := restic_model.IDs{restic_model.ID(dataHash[:])}
+
+	node := &restic_model.Node{
+		Name:               config.EncryptionTokenName,
+		Type:               restic_model.NodeTypeFile,
+		Mode:               0777,
+		ModTime:            time.Now(),
+		AccessTime:         time.Now(),
+		ChangeTime:         time.Now(),
+		UID:                0,
+		GID:                0,
+		User:               "root",
+		Group:              "root",
+		Inode:              0,
+		DeviceID:           0,
+		Size:               uint64(len(data)),
+		Links:              0,
+		LinkTarget:         "",
+		LinkTargetRaw:      nil,
+		ExtendedAttributes: nil,
+		GenericAttributes:  nil,
+		Device:             0,
+		Content:            dataHashList,
+		Subtree:            nil,
+		Error:              "",
+		Path:               "/",
+	}
+
+	writer, err := archiver.NewEasyArchiveWriter(
+		context.Background(),
+		r.options,
+		func(ctx context.Context, eaw *archiver.EasyArchiveWriter) error {
+			eaw.UpdateFile(
+				ctx,
+				config.EncryptionTokenName,
+				node,
+				uint64(len(data)),
+				dataHashList,
+				func(blockIdx uint64, hash []byte) ([]byte, error) {
+					// will be called only once
+					return data, nil
+				},
+			)
+			return nil
+		},
+	)
+	if err != nil {
+		return err
+	}
+
+	writer.Close()
+	return nil
 }

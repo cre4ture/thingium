@@ -39,8 +39,8 @@ type BlobFsI interface {
 	GetHashBlockData(ctx context.Context, hash []byte, response_data []byte) (int, error)
 	ReserveAndSetI(hash []byte, data []byte)
 
-	GetMeta(name string) (data []byte, err error)
-	SetMeta(name string, data []byte) error
+	GetEncryptionToken() (data []byte, err error)
+	SetEncryptionToken(data []byte) error
 
 	StartScanOrPull(ctx context.Context, opts PullOptions) (BlobFsScanOrPullI, error)
 }
