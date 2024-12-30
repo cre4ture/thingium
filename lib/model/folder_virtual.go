@@ -577,7 +577,9 @@ func (vf *runningVirtualFolderSyncthingService) pullOrScan_x(ctx context.Context
 	}
 
 	leases.WaitAllFinished()
+	logger.DefaultLogger.Infof("pull_x - leases.WaitAllFinished() - DONE")
 	err = scanner.Finish()
+	logger.DefaultLogger.Infof("pull_x - scanner.Finish() - DONE, result: %v", err)
 	if err != nil {
 		logger.DefaultLogger.Warnf("pull_x - scanner.Finish() - ERR: %v", err)
 	}
