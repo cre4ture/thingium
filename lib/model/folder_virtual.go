@@ -102,7 +102,7 @@ func NewVirtualFolder(
 
 	logger.DefaultLogger.Infof("newVirtualFolder(): create storage: %v, mount: %v", blobUrl, mountPath)
 
-	remaining, hasResticPrefix := strings.CutPrefix(blobUrl, ":restic:")
+	remaining, hasResticPrefix := strings.CutPrefix(blobUrl, ":virtual::restic:")
 	if hasResticPrefix {
 		blobFs = model.blobFsRestic(
 			lifetimeCtx,
