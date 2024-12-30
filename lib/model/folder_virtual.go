@@ -576,13 +576,15 @@ func (vf *runningVirtualFolderSyncthingService) pullOrScan_x(ctx context.Context
 		}
 	}
 
+	leases.WaitAllFinished()
+	err = scanner.Finish()
+	if err != nil {
+		logger.DefaultLogger.Warnf("pull_x - scanner.Finish() - ERR: %v", err)
+	}
+
 	if isAbortOrErr {
 		return nil
 	}
-
-	leases.WaitAllFinished()
-
-	scanner.Finish()
 
 	if doScan {
 		vf.parent.ScanCompleted()
