@@ -138,7 +138,7 @@ func (vf *BlockStorageFileBlobFsPullOrScan) ScanOne(fi *protocol.FileInfo, progr
 	if vf.scanOpts.OnlyCheck {
 		return vf.scanOne(vf.scanCtx, fi, progressFn)
 	} else {
-		panic("BlockStorageFileBlobFsPullOrScan::DoOne(): should not be called for pull!")
+		panic("BlockStorageFileBlobFsPullOrScan::ScanOne(): should not be called for pull!")
 	}
 }
 
@@ -147,8 +147,8 @@ func (vf *BlockStorageFileBlobFsPullOrScan) PullOne(
 	blockStatusCb func(block protocol.BlockInfo, status model.GetBlockDataResult),
 	downloadCb func(block protocol.BlockInfo) ([]byte, error),
 ) error {
-	if !vf.scanOpts.OnlyCheck {
-		panic("BlockStorageFileBlobFsPullOrScan::DoOne(): should not be called for pull!")
+	if vf.scanOpts.OnlyCheck {
+		panic("BlockStorageFileBlobFsPullOrScan::PullOne(): should not be called for scan!")
 	} else {
 		return vf.parent.UpdateFile(vf.scanCtx, fi, blockStatusCb, downloadCb)
 	}
