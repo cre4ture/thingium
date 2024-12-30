@@ -266,6 +266,19 @@ func ConvertFileInfoToResticNode(fi *protocol.FileInfo) *restic_model.Node {
 	}
 }
 
+func convertBlockStatusFromRestic(status archiver.BlockUpdateStatus) model.GetBlockDataResult {
+	switch status {
+	case archiver.BlockUpdateStatusDownloaded:
+		return model.GET_BLOCK_DOWNLOAD
+	case archiver.BlockUpdateStatusCached:
+		return model.GET_BLOCK_CACHED
+	case archiver.BlockUpdateStatusError:
+		return model.GET_BLOCK_FAILED
+	default:
+		return model.GET_BLOCK_FAILED
+	}
+}
+
 func UpdateFile(
 	ctx context.Context,
 	snw *archiver.EasyArchiveWriter,
@@ -279,6 +292,12 @@ func UpdateFile(
 		fi.Name,
 		node,
 		uint64(fi.BlockSize()),
+		func(offset, blockSize uint64, status archiver.BlockUpdateStatus) {
+			blockStatusCb(protocol.BlockInfo{
+				Offset: int64(offset),
+				Size:   int(blockSize),
+			}, convertBlockStatusFromRestic(status))
+		},
 		func(blockIdx uint64, hash []byte) ([]byte, error) {
 			return downloadBlockDataCb(fi.Blocks[blockIdx])
 		},
@@ -365,6 +384,7 @@ func (r *ResticAdapter) SetEncryptionToken(data []byte) error {
 				config.EncryptionTokenName,
 				node,
 				uint64(len(data)),
+				func(offset, blockSize uint64, status archiver.BlockUpdateStatus) {},
 				func(blockIdx uint64, hash []byte) ([]byte, error) {
 					// will be called only once
 					return data, nil
