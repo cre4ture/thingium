@@ -9,6 +9,7 @@ package model
 import (
 	"errors"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/samber/lo"
@@ -48,7 +49,7 @@ type jobQueueEntry struct {
 	name       string
 	size       int64
 	modified   time.Time
-	progressCb JobQueueProgressFn
+	progressCb atomic.Pointer[JobQueueProgressFn]
 }
 
 func newJobQueue() *jobQueue {
@@ -63,9 +64,9 @@ func (e *jobQueueEntry) abort() {
 }
 
 func (e *jobQueueEntry) Done(err error) {
-	if e.progressCb != nil {
-		e.progressCb(0, &JobResult{Err: err})
-		e.progressCb = nil
+	fn := e.progressCb.Swap(nil)
+	if fn != nil {
+		(*fn)(0, &JobResult{Err: err})
 	}
 }
 
@@ -90,11 +91,13 @@ func inverseModifiedDateComparer(jqe1, jqe2 *jobQueueEntry) int {
 }
 
 func (q *jobQueue) PushIfNew(file string, size int64, modified time.Time, fn JobQueueProgressFn) bool {
-	return q.queued.PushIfNew(&jobQueueEntry{file, size, modified, fn}, nameComparer)
+	entry := &jobQueueEntry{file, size, modified, atomic.Pointer[JobQueueProgressFn]{}}
+	entry.progressCb.Store(&fn)
+	return q.queued.PushIfNew(entry, nameComparer)
 }
 
 func (q *jobQueue) Push(file string, size int64, modified time.Time) {
-	q.queued.Push(&jobQueueEntry{file, size, modified, nil})
+	q.queued.Push(&jobQueueEntry{file, size, modified, atomic.Pointer[JobQueueProgressFn]{}})
 }
 
 func (q *jobQueue) Pop() (*jobQueueEntry, bool) {

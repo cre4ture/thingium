@@ -105,7 +105,10 @@ func (f *VirtualFolderFilePuller) doPull() {
 				all_ok.Store(false)
 			}
 
-			f.job.progressCb(int64(bi.Size), nil)
+			fn := f.job.progressCb.Load()
+			if fn != nil {
+				(*fn)(int64(bi.Size), nil)
+			}
 		},
 		func(block protocol.BlockInfo) ([]byte, error) {
 			// downloadCb
