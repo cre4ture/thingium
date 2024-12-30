@@ -144,10 +144,7 @@ func TestResticAdapter_WriteReadEncryptionToken(t *testing.T) {
 	}()
 }
 
-func TestResticAdapter_WriteFileReadBlockDataByHash(t *testing.T) {
-
-	tmpDir := t.TempDir()
-
+func generateTestFile() (*protocol.FileInfo, [][]byte) {
 	fullBlocks := 5
 	lastBlockSize := 500
 	blocks := fullBlocks + 1
@@ -179,6 +176,15 @@ func TestResticAdapter_WriteFileReadBlockDataByHash(t *testing.T) {
 		}
 	}
 
+	return fi, blockData
+}
+
+func TestResticAdapter_WriteFileReadBlockDataByHash(t *testing.T) {
+
+	tmpDir := t.TempDir()
+
+	fi, blockData := generateTestFile()
+
 	func() {
 		resticRepo := CreateRepoForTest(t, tmpDir, true)
 		defer resticRepo.Close()
@@ -198,7 +204,7 @@ func TestResticAdapter_WriteFileReadBlockDataByHash(t *testing.T) {
 		resticRepo := CreateRepoForTest(t, tmpDir, false)
 		defer resticRepo.Close()
 
-		for bIdx := 0; bIdx < blocks; bIdx++ {
+		for bIdx := 0; bIdx < len(blockData); bIdx++ {
 			expectedHash := sha256.Sum256(blockData[bIdx])
 			buf := make([]byte, fi.BlockSize())
 			dataLen, err := resticRepo.GetHashBlockData(context.Background(), expectedHash[:], buf)
@@ -207,4 +213,57 @@ func TestResticAdapter_WriteFileReadBlockDataByHash(t *testing.T) {
 			assert.Equal(t, blockData[bIdx], buf[:dataLen])
 		}
 	}()
+}
+
+func TestResticAdapter_WriteFileReadBlockDataByHashAfterWritingEncryptionToken(t *testing.T) {
+
+	tmpDir := t.TempDir()
+
+	fi, blockData := generateTestFile()
+
+	func() {
+		resticRepo := CreateRepoForTest(t, tmpDir, true)
+		defer resticRepo.Close()
+
+		assert.Nil(t, resticRepo.SetEncryptionToken([]byte("test_token")))
+	}()
+
+	func() {
+		resticRepo := CreateRepoForTest(t, tmpDir, false)
+		defer resticRepo.Close()
+
+		assert.Nil(t, resticRepo.UpdateFile(
+			context.Background(),
+			fi, func(block protocol.BlockInfo, status model.GetBlockDataResult) {
+				// blockStatusCb
+			}, func(block protocol.BlockInfo) ([]byte, error) {
+				// downloadBlockDataCb
+				bIdx := block.Offset / int64(fi.BlockSize())
+				return blockData[bIdx], nil
+			}))
+	}()
+
+	func() {
+		resticRepo := CreateRepoForTest(t, tmpDir, false)
+		defer resticRepo.Close()
+
+		for bIdx := 0; bIdx < len(blockData); bIdx++ {
+			expectedHash := sha256.Sum256(blockData[bIdx])
+			buf := make([]byte, fi.BlockSize())
+			dataLen, err := resticRepo.GetHashBlockData(context.Background(), expectedHash[:], buf)
+			assert.NoError(t, err)
+			assert.Equal(t, len(blockData[bIdx]), dataLen)
+			assert.Equal(t, blockData[bIdx], buf[:dataLen])
+		}
+	}()
+
+	func() {
+		resticRepo := CreateRepoForTest(t, tmpDir, false)
+		defer resticRepo.Close()
+
+		data, err := resticRepo.GetEncryptionToken()
+		assert.NoError(t, err)
+		assert.Equal(t, []byte("test_token"), data)
+	}()
+
 }
