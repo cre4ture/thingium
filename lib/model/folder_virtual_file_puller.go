@@ -33,7 +33,7 @@ type VirtualFolderFilePuller struct {
 func createVirtualFolderFilePullerAndPull(
 	f *runningVirtualFolderSyncthingService,
 	job *jobQueueEntry,
-	filePullerImpl BlobFsI,
+	filePullerImpl BlobFsScanOrPullI,
 ) {
 	defer f.backgroundDownloadQueue.Done(job.name)
 
@@ -50,9 +50,12 @@ func createVirtualFolderFilePullerAndPull(
 		return
 	}
 
-	puller, err := filePullerImpl.StartScanOrPull(f.serviceRunningCtx, PullOptions{OnlyMissing: false, OnlyCheck: false})
-	if err != nil {
-		return
+	if filePullerImpl == nil {
+		filePullerImpl, err = f.blobFs.StartScanOrPull(f.serviceRunningCtx, PullOptions{OnlyMissing: false, OnlyCheck: false})
+		if err != nil {
+			return
+		}
+		defer filePullerImpl.Finish()
 	}
 
 	instance := &VirtualFolderFilePuller{
@@ -74,7 +77,7 @@ func createVirtualFolderFilePullerAndPull(
 		backgroundDownloadQueue: f.backgroundDownloadQueue,
 		fset:                    f.parent.fset,
 		ctx:                     f.serviceRunningCtx,
-		filePullerImpl:          puller,
+		filePullerImpl:          filePullerImpl,
 	}
 
 	f.parent.model.progressEmitter.Register(instance)

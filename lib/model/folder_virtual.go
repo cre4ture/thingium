@@ -15,6 +15,7 @@ import (
 	"math"
 	"os"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/syncthing/syncthing/lib/config"
@@ -62,6 +63,8 @@ type runningVirtualFolderSyncthingService struct {
 
 	initialScanState InitialScanState
 	InitialScanDone  chan struct{}
+
+	puller atomic.Pointer[BlobFsScanOrPullI]
 }
 
 func (vFSS *virtualFolderSyncthingService) GetBlockDataFromCacheOrDownloadI(
@@ -291,7 +294,7 @@ func (f *runningVirtualFolderSyncthingService) serve_backgroundDownloadTask() {
 			f.backgroundDownloadQueue.Done(jobPtr.name)
 			jobPtr.abort()
 		} else {
-			createVirtualFolderFilePullerAndPull(f, jobPtr, f.blobFs)
+			createVirtualFolderFilePullerAndPull(f, jobPtr, *f.puller.Load())
 		}
 	}
 }
@@ -465,6 +468,16 @@ func (vf *runningVirtualFolderSyncthingService) pullOrScan_x(ctx context.Context
 	}
 	leases := utils.NewParallelLeases(leaseCnt, actionName)
 	defer leases.AbortAndWait()
+
+	puller, err := vf.blobFs.StartScanOrPull(ctx, opts)
+	if err != nil {
+		return err
+	}
+	vf.puller.Store(&puller)
+	defer func() {
+		puller.Finish()
+		vf.puller.Store(nil)
+	}()
 
 	isAbortOrErr := false
 	pullF := func(f protocol.FileInfo) bool /* true to continue */ {
