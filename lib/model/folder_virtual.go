@@ -465,7 +465,7 @@ func (vf *runningVirtualFolderSyncthingService) pullOrScan_x(ctx context.Context
 			}
 			err := error(nil)
 			if opts.OnlyCheck {
-				err = scanner.DoOne(&f, progressFn)
+				err = scanner.ScanOne(&f, progressFn)
 			} else {
 				// pull implementation is the same for all backends
 				err = func() error {

@@ -37,6 +37,11 @@ type BlockStorageFileBlobFs struct {
 	deleteService *AsyncCheckedDeleteService
 }
 
+// ReadFileData implements model.BlobFsI.
+func (vf *BlockStorageFileBlobFs) ReadFileData(ctx context.Context, name string) ([]byte, error) {
+	panic("unimplemented")
+}
+
 type BlockStorageFileBlobFsPullOrScan struct {
 	parent   *BlockStorageFileBlobFs
 	scanCtx  context.Context
@@ -129,11 +134,23 @@ func (b *BlockStorageFileBlobFsPullOrScan) Finish() error {
 	return nil
 }
 
-func (vf *BlockStorageFileBlobFsPullOrScan) DoOne(fi *protocol.FileInfo, progressFn model.JobQueueProgressFn) error {
+func (vf *BlockStorageFileBlobFsPullOrScan) ScanOne(fi *protocol.FileInfo, progressFn model.JobQueueProgressFn) error {
 	if vf.scanOpts.OnlyCheck {
 		return vf.scanOne(vf.scanCtx, fi, progressFn)
 	} else {
 		panic("BlockStorageFileBlobFsPullOrScan::DoOne(): should not be called for pull!")
+	}
+}
+
+func (vf *BlockStorageFileBlobFsPullOrScan) PullOne(
+	fi *protocol.FileInfo,
+	blockStatusCb func(block protocol.BlockInfo, status model.GetBlockDataResult),
+	downloadCb func(block protocol.BlockInfo) ([]byte, error),
+) error {
+	if !vf.scanOpts.OnlyCheck {
+		panic("BlockStorageFileBlobFsPullOrScan::DoOne(): should not be called for pull!")
+	} else {
+		return vf.parent.UpdateFile(vf.scanCtx, fi, blockStatusCb, downloadCb)
 	}
 }
 

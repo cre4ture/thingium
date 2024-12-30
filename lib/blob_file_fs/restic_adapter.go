@@ -10,6 +10,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"os"
+	"path/filepath"
 	"sync/atomic"
 	"time"
 
@@ -45,6 +46,7 @@ func NewResticAdapter(hostname string, folderID string, options archiver.EasyArc
 	ctx, cancel := context.WithCancel(context.Background())
 	reader, err := archiver.NewEasyArchiveReader(ctx, options)
 	if err != nil {
+		cancel()
 		return nil, err
 	}
 	ptr := &atomic.Pointer[archiver.EasyArchiveReader]{}
@@ -120,19 +122,29 @@ func (r *ResticAdapterBase) StartScanOrPullConcrete(ctx context.Context, opts mo
 	}, nil
 }
 
-// DoOne implements BlobFsScanOrPullI.
-func (r *ResticScannerOrPuller) DoOne(fi *protocol.FileInfo, fn model.JobQueueProgressFn) error {
+func (r *ResticScannerOrPuller) ScanOne(fi *protocol.FileInfo, fn model.JobQueueProgressFn) error {
 	if r.scanOpts.OnlyCheck {
 		return UpdateFile(r.ctx, r.snw, fi, func(block protocol.BlockInfo, status model.GetBlockDataResult) {
-			// noop
+			fn(int64(block.Size), nil)
 		}, func(block protocol.BlockInfo) ([]byte, error) {
 			// if this is called, it means that the block data is missing and should be downloaded
 			// but we are in scan mode, so no download is desired
 			return nil, model.ErrMissingBlockData
 		})
 	} else {
-		panic("ResticScannerOrPuller::DoOne(): should not be called for pull!")
+		panic("ResticScannerOrPuller::ScanOne(): should not be called for pull!")
 	}
+}
+
+func (r *ResticScannerOrPuller) PullOne(
+	fi *protocol.FileInfo,
+	blockStatusCb func(block protocol.BlockInfo, status model.GetBlockDataResult),
+	downloadCb func(block protocol.BlockInfo) ([]byte, error),
+) error {
+	if r.scanOpts.OnlyCheck {
+		panic("ResticScannerOrPuller::PullOne(): should not be called for scan!")
+	}
+	return UpdateFile(r.ctx, r.snw, fi, blockStatusCb, downloadCb)
 }
 
 // Finish implements BlobFsScanOrPullI.
@@ -186,8 +198,9 @@ func MapFileInfoTypeToResticNodeType(t protocol.FileInfoType) restic_model.NodeT
 }
 
 func ConvertFileInfoToResticNode(fi *protocol.FileInfo) *restic_model.Node {
+	path, name := filepath.Split(fi.Name)
 	return &restic_model.Node{
-		Name:               fi.FileName(),
+		Name:               name,
 		Type:               MapFileInfoTypeToResticNodeType(fi.Type),
 		Mode:               os.FileMode(fi.Permissions),
 		ModTime:            fi.ModTime(),
@@ -208,7 +221,7 @@ func ConvertFileInfoToResticNode(fi *protocol.FileInfo) *restic_model.Node {
 		Content:            convertToResticIDs(fi.Blocks),
 		Subtree:            nil,
 		Error:              "",
-		Path:               fi.Name,
+		Path:               path,
 	}
 }
 
@@ -246,8 +259,8 @@ func (r *ResticAdapter) UpdateFile(
 	return UpdateFile(ctx, tmpSnw.snw, fi, blockStatusCb, downloadBlockDataCb)
 }
 
-// GetEncryptionToken implements model.BlobFsI.
-func (r *ResticAdapter) GetEncryptionToken() ([]byte, error) {
+// ReadFile implements model.BlobFsI.
+func (r *ResticAdapter) ReadFileData(ctx context.Context, name string) ([]byte, error) {
 	readerPtr := r.reader.Load()
 	if readerPtr == nil {
 		return nil, model.ErrConnectionFailed
@@ -259,8 +272,13 @@ func (r *ResticAdapter) GetEncryptionToken() ([]byte, error) {
 		archiver.TagLists{},
 		[]string{},
 		"latest",
-		"/"+config.EncryptionTokenName,
+		name,
 	)
+}
+
+// GetEncryptionToken implements model.BlobFsI.
+func (r *ResticAdapter) GetEncryptionToken() ([]byte, error) {
+	return r.ReadFileData(r.ctx, "/"+config.EncryptionTokenName)
 }
 
 // SetEncryptionToken implements model.BlobFsI.

@@ -29,12 +29,14 @@ type PullOptions struct {
 }
 
 type BlobFsI interface {
+	// this also handles deletes and directories
 	UpdateFile(
 		ctx context.Context,
 		fi *protocol.FileInfo,
 		blockStatusCb func(block protocol.BlockInfo, status GetBlockDataResult),
 		downloadBlockDataCb func(block protocol.BlockInfo) ([]byte, error),
 	) error
+	ReadFileData(ctx context.Context, name string) ([]byte, error)
 
 	GetHashBlockData(ctx context.Context, hash []byte, response_data []byte) (int, error)
 	ReserveAndSetI(hash []byte, data []byte)
@@ -46,6 +48,12 @@ type BlobFsI interface {
 }
 
 type BlobFsScanOrPullI interface {
-	DoOne(fi *protocol.FileInfo, fn JobQueueProgressFn) error
+	// this also handles deletes and directories
+	ScanOne(fi *protocol.FileInfo, fn JobQueueProgressFn) error
+	PullOne(
+		fi *protocol.FileInfo,
+		blockStatusCb func(block protocol.BlockInfo, status GetBlockDataResult),
+		downloadCb func(block protocol.BlockInfo) ([]byte, error),
+	) error
 	Finish() error
 }

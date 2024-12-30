@@ -26,7 +26,7 @@ type VirtualFolderFilePuller struct {
 	fset                    *db.FileSet
 	ctx                     context.Context
 
-	filePullerImpl BlobFsI
+	filePullerImpl BlobFsScanOrPullI
 }
 
 func createVirtualFolderFilePullerAndPull(
@@ -49,6 +49,11 @@ func createVirtualFolderFilePullerAndPull(
 		return
 	}
 
+	puller, err := filePullerImpl.StartScanOrPull(f.serviceRunningCtx, PullOptions{OnlyMissing: false, OnlyCheck: false})
+	if err != nil {
+		return
+	}
+
 	instance := &VirtualFolderFilePuller{
 		sharedPullerStateBase: sharedPullerStateBase{
 			created:          now,
@@ -68,7 +73,7 @@ func createVirtualFolderFilePullerAndPull(
 		backgroundDownloadQueue: f.backgroundDownloadQueue,
 		fset:                    f.parent.fset,
 		ctx:                     f.serviceRunningCtx,
-		filePullerImpl:          filePullerImpl,
+		filePullerImpl:          puller,
 	}
 
 	f.parent.model.progressEmitter.Register(instance)
@@ -82,8 +87,9 @@ func (f *VirtualFolderFilePuller) doPull() {
 	all_ok := atomic.Bool{}
 	all_ok.Store(true)
 
-	err := f.filePullerImpl.UpdateFile(f.ctx, &f.file,
+	err := f.filePullerImpl.PullOne(&f.file,
 		func(bi protocol.BlockInfo, status GetBlockDataResult) {
+			// blockStatusCb
 			switch status {
 			case GET_BLOCK_CACHED:
 				f.copiedFromElsewhere(bi.Size)
@@ -97,6 +103,7 @@ func (f *VirtualFolderFilePuller) doPull() {
 			f.job.progressCb(int64(bi.Size), nil)
 		},
 		func(block protocol.BlockInfo) ([]byte, error) {
+			// downloadCb
 			f.pullStarted()
 			var data []byte = nil
 			err := f.folderService.pullBlockBase(func(blockData []byte) {
