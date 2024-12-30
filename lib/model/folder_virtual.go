@@ -582,7 +582,7 @@ func (vf *virtualFolderSyncthingService) updateOneLocalFileInfo(fi *protocol.Fil
 	vf.fset.UpdateOne(protocol.LocalDeviceID, fi)
 	vf.ReceivedFile(fi.Name, fi.IsDeleted())
 	vf.emitDiskChangeEvents([]protocol.FileInfo{*fi}, typeOfEvent)
-	logger.DefaultLogger.Infof("VFolder: updateOneLocalFileInfo(): updated file info: %v, event: %v", fi, typeOfEvent)
+	logger.DefaultLogger.Infof("VFolder: updateOneLocalFileInfo(%v): updated file info: %v, blocks: %v", typeOfEvent, fi.Name, len(fi.Blocks))
 }
 
 func (vf *virtualFolderSyncthingService) Update(fs []protocol.FileInfo) {
