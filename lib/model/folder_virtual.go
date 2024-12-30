@@ -425,6 +425,10 @@ func (vf *runningVirtualFolderSyncthingService) pullOrScan_x(ctx context.Context
 	if err != nil {
 		return err
 	}
+	vf.puller.Store(&scanner)
+	defer func() {
+		vf.puller.Store(nil)
+	}()
 
 	jobs := newJobQueue()
 	totalBytes := uint64(0)
@@ -468,16 +472,6 @@ func (vf *runningVirtualFolderSyncthingService) pullOrScan_x(ctx context.Context
 	}
 	leases := utils.NewParallelLeases(leaseCnt, actionName)
 	defer leases.AbortAndWait()
-
-	puller, err := vf.blobFs.StartScanOrPull(ctx, opts)
-	if err != nil {
-		return err
-	}
-	vf.puller.Store(&puller)
-	defer func() {
-		puller.Finish()
-		vf.puller.Store(nil)
-	}()
 
 	isAbortOrErr := false
 	pullF := func(f protocol.FileInfo) bool /* true to continue */ {
@@ -585,6 +579,8 @@ func (vf *runningVirtualFolderSyncthingService) pullOrScan_x(ctx context.Context
 	if isAbortOrErr {
 		return nil
 	}
+
+	leases.WaitAllFinished()
 
 	scanner.Finish()
 
