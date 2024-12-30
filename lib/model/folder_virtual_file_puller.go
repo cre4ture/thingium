@@ -13,6 +13,7 @@ import (
 
 	"github.com/syncthing/syncthing/lib/db"
 	"github.com/syncthing/syncthing/lib/events"
+	"github.com/syncthing/syncthing/lib/logger"
 	"github.com/syncthing/syncthing/lib/protocol"
 	"github.com/syncthing/syncthing/lib/sync"
 )
@@ -90,6 +91,7 @@ func (f *VirtualFolderFilePuller) doPull() {
 	err := f.filePullerImpl.PullOne(&f.file,
 		func(bi protocol.BlockInfo, status GetBlockDataResult) {
 			// blockStatusCb
+			logger.DefaultLogger.Debugf("VirtualFolderFilePuller-blockStatusCb: %v %v", bi, status)
 			switch status {
 			case GET_BLOCK_CACHED:
 				f.copiedFromElsewhere(bi.Size)
