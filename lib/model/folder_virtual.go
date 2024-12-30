@@ -488,6 +488,7 @@ func (vf *runningVirtualFolderSyncthingService) pullOrScan_x(ctx context.Context
 						// either, so we will not create a conflict copy of our local
 						// changes.
 						f.Version = protocol.Vector{}
+						logger.DefaultLogger.Infof("%v reset version to zero, size: %v, err: %v", actionName, myFileSize, result.Err)
 						vf.parent.fset.UpdateOne(protocol.LocalDeviceID, &f)
 						// as this is NOT usual case, we don't store this to the meta data of block storage
 						// NOT: updateOneLocalFileInfo(&fi)

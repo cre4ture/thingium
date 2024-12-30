@@ -19,6 +19,7 @@ import (
 	"github.com/syncthing/syncthing/internal/gen/dbproto"
 	"github.com/syncthing/syncthing/lib/db/backend"
 	"github.com/syncthing/syncthing/lib/fs"
+	"github.com/syncthing/syncthing/lib/logger"
 	"github.com/syncthing/syncthing/lib/osutil"
 	"github.com/syncthing/syncthing/lib/protocol"
 	"github.com/syncthing/syncthing/lib/sync"
@@ -119,7 +120,8 @@ func (s *FileSet) UpdateOne(device protocol.DeviceID, fi *protocol.FileInfo) {
 }
 
 func (s *FileSet) Update(device protocol.DeviceID, fs []protocol.FileInfo) {
-	opStr := fmt.Sprintf("%s Update(%v, [%d])", s.folder, device, len(fs))
+	opStr := fmt.Sprintf("%s FileSet::Update(%v, [%d])", s.folder, device, len(fs))
+	logger.DefaultLogger.Infof(opStr)
 	l.Debugf(opStr)
 
 	// do not modify fs in place, it is still used in outer scope
