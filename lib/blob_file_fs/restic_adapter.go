@@ -54,10 +54,10 @@ func FactoryResticAdapter(
 	if len(parts) > 1 {
 		region = parts[1]
 	}
-	opts := archiver.EasyArchiverOptions{
-		Repo:    url,
-		Options: []string{"s3.region=" + region},
-	}
+	opts := archiver.GetDefaultEasyArchiverOptions()
+	opts.Repo = url
+	opts.Options = []string{"s3.region=" + region}
+
 	instance, err := NewResticAdapter(ownDeviceID, folderID, opts)
 	if err != nil {
 		log.Panicf("Failed to create ResticAdapter: %v", err)
