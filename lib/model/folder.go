@@ -103,7 +103,7 @@ func (f *folderBase) pullBlockBase(
 ) error {
 	var lastError error
 	grp := fmt.Sprintf("pullBlockBase(%s)", b.String())
-	watch := utils.PerformanceStopWatchStart()
+	watch := utils.PerformanceStopWatchStartDisabled()
 	defer watch.LastStep(grp, "FINAL")
 
 	candidates := f.model.blockAvailability(f.FolderConfiguration, snap, *b.File, b.Block)

@@ -18,18 +18,31 @@ type PerformanceStep struct {
 }
 
 type PerformanceStopWatch struct {
-	start time.Time
-	steps []PerformanceStep
+	start   time.Time
+	steps   []PerformanceStep
+	enabled bool
 }
 
 func PerformanceStopWatchStart() *PerformanceStopWatch {
 	return &PerformanceStopWatch{
-		start: time.Now(),
-		steps: []PerformanceStep{},
+		start:   time.Now(),
+		steps:   []PerformanceStep{},
+		enabled: true,
+	}
+}
+
+func PerformanceStopWatchStartDisabled() *PerformanceStopWatch {
+	return &PerformanceStopWatch{
+		start:   time.Now(),
+		steps:   []PerformanceStep{},
+		enabled: false,
 	}
 }
 
 func (sw *PerformanceStopWatch) Step(name string) {
+	if !sw.enabled {
+		return
+	}
 	sw.steps = append(sw.steps, PerformanceStep{
 		time: time.Now(),
 		name: name,
@@ -37,6 +50,9 @@ func (sw *PerformanceStopWatch) Step(name string) {
 }
 
 func (sw *PerformanceStopWatch) LastStep(groupName, name string) {
+	if !sw.enabled {
+		return
+	}
 	sw.Step(name)
 	statement := groupName + ": "
 	start := sw.start
