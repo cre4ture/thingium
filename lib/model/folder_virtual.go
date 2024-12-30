@@ -580,25 +580,10 @@ func (vf *runningVirtualFolderSyncthingService) pullOrScan_x(ctx context.Context
 }
 
 func (vf *virtualFolderSyncthingService) updateOneLocalFileInfo(fi *protocol.FileInfo, typeOfEvent events.EventType) {
-	copy := *fi
-	copy.Version = protocol.Vector{}
-	//vf.fset.UpdateOne(protocol.LocalDeviceID, &copy)
 	vf.fset.UpdateOne(protocol.LocalDeviceID, fi)
 	vf.ReceivedFile(fi.Name, fi.IsDeleted())
 	vf.emitDiskChangeEvents([]protocol.FileInfo{*fi}, typeOfEvent)
 	logger.DefaultLogger.Infof("VFolder: updateOneLocalFileInfo(%v): updated file info: %v, blocks: %v", typeOfEvent, fi.Name, len(fi.Blocks))
-
-	snap, err := vf.fset.Snapshot()
-	if err != nil {
-		return
-	}
-	defer snap.Release()
-	global, hasGlobal := snap.GetGlobal(fi.Name)
-	local, hasLocal := snap.Get(protocol.LocalDeviceID, fi.Name)
-
-	logger.DefaultLogger.Infof("VFolder: updateOneLocalFileInfo(%v): stored: %+v", fi.Name, fi)
-	logger.DefaultLogger.Infof("VFolder: updateOneLocalFileInfo(%v): global(%v): %+v", fi.Name, hasGlobal, global)
-	logger.DefaultLogger.Infof("VFolder: updateOneLocalFileInfo(%v): local(%v): %+v", fi.Name, hasLocal, local)
 }
 
 func (vf *virtualFolderSyncthingService) Update(fs []protocol.FileInfo) {
