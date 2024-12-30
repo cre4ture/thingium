@@ -9,14 +9,18 @@ package blobfilefs
 import (
 	"context"
 	"crypto/sha256"
+	"log"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"time"
 
 	archiver "github.com/restic/restic/lib/archiver"
 	restic_model "github.com/restic/restic/lib/model"
 	"github.com/syncthing/syncthing/lib/config"
+	"github.com/syncthing/syncthing/lib/db"
+	"github.com/syncthing/syncthing/lib/events"
 	"github.com/syncthing/syncthing/lib/model"
 	"github.com/syncthing/syncthing/lib/protocol"
 )
@@ -34,6 +38,31 @@ type ResticAdapter struct {
 
 	reader *atomic.Pointer[archiver.EasyArchiveReader]
 	puller *atomic.Pointer[ResticScannerOrPuller]
+}
+
+func FactoryResticAdapter(
+	ctx context.Context,
+	ownDeviceID string,
+	folderID string,
+	path string,
+	evLogger events.Logger,
+	fset *db.FileSet,
+) model.BlobFsI {
+	parts := strings.Split(path, ":s3-region:")
+	region := "us-east-1"
+	url := parts[0]
+	if len(parts) > 1 {
+		region = parts[1]
+	}
+	opts := archiver.EasyArchiverOptions{
+		Repo:    url,
+		Options: []string{"s3.region=" + region},
+	}
+	instance, err := NewResticAdapter(ownDeviceID, folderID, opts)
+	if err != nil {
+		log.Panicf("Failed to create ResticAdapter: %v", err)
+	}
+	return instance
 }
 
 func NewResticAdapter(hostname string, folderID string, options archiver.EasyArchiverOptions) (*ResticAdapter, error) {

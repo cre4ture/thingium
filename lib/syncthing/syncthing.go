@@ -24,6 +24,7 @@ import (
 	"github.com/thejerf/suture/v4"
 
 	"github.com/syncthing/syncthing/lib/api"
+	blobfilefs "github.com/syncthing/syncthing/lib/blob_file_fs"
 	"github.com/syncthing/syncthing/lib/blockstorage"
 	"github.com/syncthing/syncthing/lib/build"
 	"github.com/syncthing/syncthing/lib/config"
@@ -249,7 +250,9 @@ func (a *App) startup() error {
 	m := model.NewFullModel(a.cfg, a.myID, a.ll, protectedFiles, a.evLogger, keyGen,
 		model.NewVirtualFolder,
 		blockstorage.NewBlockStorageFileBlobFs,
-		blockstorage.NewGoCloudUrlStorageFromConfigStr)
+		blockstorage.NewGoCloudUrlStorageFromConfigStr,
+		blobfilefs.FactoryResticAdapter,
+	)
 	a.Internals = newInternals(m)
 
 	a.mainService.Add(m)

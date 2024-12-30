@@ -141,7 +141,7 @@ type VirtualFolderFactoryFn func(
 	ioLimiter *semaphore.Semaphore,
 ) service
 
-type BlobFsFactoryFn func(
+type BlockStorageBlobFsFactoryFn func(
 	ctx context.Context,
 	ownDeviceID string,
 	folderID string,
@@ -150,12 +150,22 @@ type BlobFsFactoryFn func(
 	blockCache HashBlockStorageI,
 ) BlobFsI
 
+type BlobFsFactoryFn func(
+	ctx context.Context,
+	ownDeviceID string,
+	folderID string,
+	path string,
+	evLogger events.Logger,
+	fset *db.FileSet,
+) BlobFsI
+
 type BlockStorageFactoryFn func(ctx context.Context, configStr string, myDeviceId string) HashBlockStorageI
 
 type model struct {
 	virtualFolderFactory VirtualFolderFactoryFn
-	blobFsFactory        BlobFsFactoryFn
+	blobFsFactory        BlockStorageBlobFsFactoryFn
 	blockStorageFactory  BlockStorageFactoryFn
+	blobFsRestic         BlobFsFactoryFn
 
 	*suture.Supervisor
 
@@ -238,7 +248,7 @@ var (
 // where it sends index information to connected peers and responds to requests
 // for file data without altering the local folder in any way.
 func NewModel(cfg config.Wrapper, id protocol.DeviceID, ldb *db.Lowlevel, protectedFiles []string, evLogger events.Logger, keyGen *protocol.KeyGenerator) Model {
-	return NewFullModel(cfg, id, ldb, protectedFiles, evLogger, keyGen, nil, nil, nil)
+	return NewFullModel(cfg, id, ldb, protectedFiles, evLogger, keyGen, nil, nil, nil, nil)
 }
 
 // NewModel creates and starts a new model. The model starts in read-only mode,
@@ -246,14 +256,16 @@ func NewModel(cfg config.Wrapper, id protocol.DeviceID, ldb *db.Lowlevel, protec
 // for file data without altering the local folder in any way.
 func NewFullModel(cfg config.Wrapper, id protocol.DeviceID, ldb *db.Lowlevel, protectedFiles []string, evLogger events.Logger, keyGen *protocol.KeyGenerator,
 	virtualFolderFactory VirtualFolderFactoryFn,
-	blobFsFactory BlobFsFactoryFn,
+	blobFsFactory BlockStorageBlobFsFactoryFn,
 	blockStorageFactory BlockStorageFactoryFn,
+	blobFsRestic BlobFsFactoryFn,
 ) Model {
 	spec := svcutil.SpecWithDebugLogger(l)
 	m := &model{
 		virtualFolderFactory: virtualFolderFactory,
 		blobFsFactory:        blobFsFactory,
 		blockStorageFactory:  blockStorageFactory,
+		blobFsRestic:         blobFsRestic,
 		Supervisor:           suture.New("model", spec),
 
 		// constructor parameters

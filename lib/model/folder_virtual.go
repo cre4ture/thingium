@@ -85,6 +85,8 @@ func NewVirtualFolder(
 	ioLimiter *semaphore.Semaphore,
 ) service {
 
+	lifetimeCtx, lifetimeCtxCancel := context.WithCancel(context.Background())
+
 	folderBase := newFolderBase(cfg, evLogger, model, fset)
 
 	parts := strings.Split(folderBase.Path, ":mount_at:")
@@ -95,36 +97,65 @@ func NewVirtualFolder(
 		mountPath = parts[1]
 	}
 
+	blobFs := BlobFsI(nil)
+	downloadFunction := (func(file *protocol.FileInfo, block protocol.BlockInfo) ([]byte, error, GetBlockDataResult))(nil)
+
 	logger.DefaultLogger.Infof("newVirtualFolder(): create storage: %v, mount: %v", blobUrl, mountPath)
 
-	lifetimeCtx, lifetimeCtxCancel := context.WithCancel(context.Background())
-	var blockCache HashBlockStorageI = model.blockStorageFactory(
-		lifetimeCtx, blobUrl, folderBase.ownDeviceIdString())
+	remaining, hasResticPrefix := strings.CutPrefix(blobUrl, ":restic:")
+	if hasResticPrefix {
+		blobFs = model.blobFsRestic(
+			lifetimeCtx,
+			folderBase.ownDeviceIdString(),
+			folderBase.folderID,
+			remaining,
+			folderBase.evLogger,
+			fset)
 
-	if folderBase.Type.IsReceiveEncrypted() {
-		blockCache = NewEncryptedHashBlockStorage(blockCache)
-	}
+		downloadFunction = func(file *protocol.FileInfo, block protocol.BlockInfo) ([]byte, error, GetBlockDataResult) {
+			buf := make([]byte, block.Size)
+			dataSize, err := blobFs.GetHashBlockData(lifetimeCtx, block.Hash, buf)
+			if err == nil {
+				return buf[:dataSize], nil, GET_BLOCK_CACHED
+			}
+			data, err := folderBase.pullBlockBaseConvenient(protocol.BlockOfFile{File: file, Block: block})
+			if err == nil {
+				return data, nil, GET_BLOCK_DOWNLOAD
+			}
+			return nil, err, GET_BLOCK_FAILED
+		}
+	} else {
 
-	blobFs := model.blobFsFactory(
-		lifetimeCtx,
-		folderBase.ownDeviceIdString(),
-		folderBase.folderID,
-		folderBase.evLogger,
-		folderBase.fset,
-		blockCache,
-	)
+		var blockCache HashBlockStorageI = model.blockStorageFactory(
+			lifetimeCtx, blobUrl, folderBase.ownDeviceIdString())
 
-	f := &virtualFolderSyncthingService{
-		folderBase:        folderBase,
-		lifetimeCtxCancel: lifetimeCtxCancel,
-		mountPath:         mountPath,
-		blobFs:            blobFs,
-		getBlockDataFromCacheOrDownloadFn: func(file *protocol.FileInfo, block protocol.BlockInfo) ([]byte, error, GetBlockDataResult) {
+		if folderBase.Type.IsReceiveEncrypted() {
+			blockCache = NewEncryptedHashBlockStorage(blockCache)
+		}
+
+		blobFs = model.blobFsFactory(
+			lifetimeCtx,
+			folderBase.ownDeviceIdString(),
+			folderBase.folderID,
+			folderBase.evLogger,
+			folderBase.fset,
+			blockCache,
+		)
+
+		downloadFunction = func(file *protocol.FileInfo, block protocol.BlockInfo) ([]byte, error, GetBlockDataResult) {
 			return GetBlockDataFromCacheOrDownload(blockCache, file, block, func(block protocol.BlockInfo) ([]byte, error) {
 				return folderBase.pullBlockBaseConvenient(protocol.BlockOfFile{File: file, Block: block})
 			}, false)
-		},
-		running: nil,
+		}
+	}
+
+	f := &virtualFolderSyncthingService{
+		folderBase:                        folderBase,
+		lifetimeCtxCancel:                 lifetimeCtxCancel,
+		mountPath:                         mountPath,
+		blobFs:                            blobFs,
+		getBlockDataFromCacheOrDownloadFn: downloadFunction,
+		running:                           nil,
 	}
 
 	return f
