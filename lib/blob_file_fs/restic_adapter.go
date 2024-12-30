@@ -9,6 +9,7 @@ package blobfilefs
 import (
 	"context"
 	"crypto/sha256"
+	"errors"
 	"log"
 	"os"
 	"path/filepath"
@@ -56,6 +57,7 @@ func FactoryResticAdapter(
 	}
 	opts := archiver.GetDefaultEasyArchiverOptions()
 	opts.Repo = url
+	opts.SetPassword("syncthing")
 	opts.Options = []string{"s3.region=" + region}
 
 	instance, err := NewResticAdapter(ownDeviceID, folderID, opts)
@@ -74,6 +76,16 @@ func NewResticAdapter(hostname string, folderID string, options archiver.EasyArc
 
 	ctx, cancel := context.WithCancel(context.Background())
 	reader, err := archiver.NewEasyArchiveReader(ctx, options)
+	if errors.Is(err, archiver.ErrNoRepository) {
+		initOpts := archiver.EasyArchiverInitOptions{}
+		err = archiver.InitNewRepository(ctx, initOpts, options)
+		if err != nil {
+			cancel()
+			return nil, err
+		}
+
+		reader, err = archiver.NewEasyArchiveReader(ctx, options)
+	}
 	if err != nil {
 		cancel()
 		return nil, err
