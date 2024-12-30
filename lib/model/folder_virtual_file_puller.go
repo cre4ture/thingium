@@ -125,6 +125,9 @@ func (f *VirtualFolderFilePuller) doPull() {
 	// the loop before is just skipped
 	f.folderService.updateOneLocalFileInfo(&f.file, events.RemoteChangeDetected)
 
+	f.job.progressCb(0, JobResultOK())
+	f.job = nil
+
 	seq := f.fset.Sequence(protocol.LocalDeviceID)
 	f.folderService.evLogger.Log(events.LocalIndexUpdated, map[string]interface{}{
 		"folder":    f.folderService.ID,
