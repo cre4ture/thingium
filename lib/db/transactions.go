@@ -10,6 +10,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"log"
 
 	"google.golang.org/protobuf/proto"
 
@@ -789,22 +790,27 @@ func (t readWriteTransaction) updateLocalNeed(keyBuf, folder, name []byte, add b
 }
 
 func Need(global *dbproto.FileVersion, haveLocal bool, localVersion protocol.Vector) bool {
-	// We never need an invalid file or a file without a valid version (just
-	// another way of expressing "invalid", really, until we fix that
-	// part...).
-	globalVersion := protocol.VectorFromWire(global.Version)
-	if fvIsInvalid(global) || globalVersion.IsEmpty() {
-		return false
-	}
-	// We don't need a deleted file if we don't have it.
-	if global.Deleted && !haveLocal {
-		return false
-	}
-	// We don't need the global file if we already have the same version.
-	if haveLocal && localVersion.GreaterEqual(globalVersion) {
-		return false
-	}
-	return true
+	result := func() bool {
+		// We never need an invalid file or a file without a valid version (just
+		// another way of expressing "invalid", really, until we fix that
+		// part...).
+		globalVersion := protocol.VectorFromWire(global.Version)
+		if fvIsInvalid(global) || globalVersion.IsEmpty() {
+			return false
+		}
+		// We don't need a deleted file if we don't have it.
+		if global.Deleted && !haveLocal {
+			return false
+		}
+		// We don't need the global file if we already have the same version.
+		if haveLocal && localVersion.GreaterEqual(globalVersion) {
+			return false
+		}
+		return true
+	}()
+
+	log.Default().Printf("Need(%+v, %+v, %+v) = %v", global, haveLocal, localVersion, result)
+	return result
 }
 
 // removeFromGlobal removes the device from the global version list for the
