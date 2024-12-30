@@ -113,10 +113,12 @@ func (f *VirtualFolderFilePuller) doPull() {
 		})
 
 	if err != nil {
+		f.job.Done(err)
 		return
 	}
 
 	if !all_ok.Load() {
+		f.job.Done(ErrMissingBlockData)
 		return
 	}
 
@@ -125,8 +127,7 @@ func (f *VirtualFolderFilePuller) doPull() {
 	// the loop before is just skipped
 	f.folderService.updateOneLocalFileInfo(&f.file, events.RemoteChangeDetected)
 
-	f.job.progressCb(0, JobResultOK())
-	f.job = nil
+	f.job.Done(nil)
 
 	seq := f.fset.Sequence(protocol.LocalDeviceID)
 	f.folderService.evLogger.Log(events.LocalIndexUpdated, map[string]interface{}{

@@ -59,8 +59,12 @@ func newJobQueue() *jobQueue {
 }
 
 func (e *jobQueueEntry) abort() {
+	e.Done(ErrAborted)
+}
+
+func (e *jobQueueEntry) Done(err error) {
 	if e.progressCb != nil {
-		e.progressCb(0, &JobResult{Err: ErrAborted})
+		e.progressCb(0, &JobResult{Err: err})
 		e.progressCb = nil
 	}
 }
