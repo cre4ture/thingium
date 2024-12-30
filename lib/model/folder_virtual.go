@@ -478,14 +478,14 @@ func (vf *runningVirtualFolderSyncthingService) pullOrScan_x(ctx context.Context
 		myFileSize := f.FileSize()
 		workF := func(doneFn func()) {
 			if !doScan {
-				logger.DefaultLogger.Infof("%v ONE - START, size: %v", actionName, myFileSize)
+				//logger.DefaultLogger.Infof("%v ONE - START, size: %v", actionName, myFileSize)
 			}
 			progressFn := func(deltaBytes int64, result *JobResult) {
 				asyncNotifier.Progress.Update(deltaBytes)
 				if result != nil {
 					doneFn()
 					if !doScan {
-						logger.DefaultLogger.Infof("%v ONE - DONE, size: %v", actionName, myFileSize)
+						//logger.DefaultLogger.Infof("%v ONE - DONE, size: %v", actionName, myFileSize)
 					}
 
 					if result.Err != nil {
