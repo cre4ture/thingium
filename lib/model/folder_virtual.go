@@ -555,7 +555,7 @@ func (vf *runningVirtualFolderSyncthingService) pullOrScan_x(ctx context.Context
 	}
 
 	for job, ok := jobs.Pop(); ok; job, ok = jobs.Pop() {
-		fi, ok := snap.GetGlobalTruncated(job.name)
+		fi, ok := snap.GetGlobal(job.name)
 		if ok {
 			good := pullF(fi)
 			if !good {
