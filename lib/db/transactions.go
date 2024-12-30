@@ -10,7 +10,6 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
-	"log"
 
 	"google.golang.org/protobuf/proto"
 
@@ -818,7 +817,7 @@ func Need(global *dbproto.FileVersion, haveLocal bool, localVersion protocol.Vec
 		return true
 	}()
 
-	log.Default().Printf("Need(%+v, %+v, %+v) = %v", global, haveLocal, localVersion, result)
+	//log.Default().Printf("Need(%+v, %+v, %+v) = %v", global, haveLocal, localVersion, result)
 	return result
 }
 
