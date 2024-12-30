@@ -482,6 +482,9 @@ func (vf *runningVirtualFolderSyncthingService) pullOrScan_x(ctx context.Context
 					}
 
 					if result.Err != nil {
+						if errors.Is(result.Err, ErrAborted) {
+							return
+						}
 						// Revert means to throw away our local changes. We reset the
 						// version to the empty vector, which is strictly older than any
 						// other existing version. It is not in conflict with anything,
