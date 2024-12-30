@@ -579,6 +579,9 @@ func (vf *runningVirtualFolderSyncthingService) pullOrScan_x(ctx context.Context
 }
 
 func (vf *virtualFolderSyncthingService) updateOneLocalFileInfo(fi *protocol.FileInfo, typeOfEvent events.EventType) {
+	copy := *fi
+	copy.Version = protocol.Vector{}
+	vf.fset.UpdateOne(protocol.LocalDeviceID, &copy)
 	vf.fset.UpdateOne(protocol.LocalDeviceID, fi)
 	vf.ReceivedFile(fi.Name, fi.IsDeleted())
 	vf.emitDiskChangeEvents([]protocol.FileInfo{*fi}, typeOfEvent)
