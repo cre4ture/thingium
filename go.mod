@@ -190,4 +190,4 @@ require (
 replace github.com/gobwas/glob v0.2.3 => github.com/calmh/glob v0.0.0-20220615080505-1d823af5017b
 
 // replace github.com/restic/restic v0.17.3 => /home/uli/dev-go/restic
-replace github.com/restic/restic v0.17.3 => github.com/cre4ture/restic v0.0.0-20241231010058-dd08c298c66e
+replace github.com/restic/restic v0.17.3 => github.com/cre4ture/restic v0.0.0-20241231010607-984dd075f16c
