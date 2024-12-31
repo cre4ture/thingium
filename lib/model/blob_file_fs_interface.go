@@ -49,11 +49,12 @@ type BlobFsI interface {
 
 type BlobFsScanOrPullI interface {
 	// this also handles deletes and directories
-	ScanOne(fi *protocol.FileInfo, fn JobQueueProgressFn) error
+	ScanOne(workCtx context.Context, fi *protocol.FileInfo, fn JobQueueProgressFn) error
 	PullOne(
+		workCtx context.Context,
 		fi *protocol.FileInfo,
 		blockStatusCb func(block protocol.BlockInfo, status GetBlockDataResult),
 		downloadCb func(block protocol.BlockInfo) ([]byte, error),
 	) error
-	Finish() error
+	Finish(workCtx context.Context) error
 }

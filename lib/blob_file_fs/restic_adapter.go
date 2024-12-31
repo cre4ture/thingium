@@ -112,9 +112,9 @@ func (r *ResticAdapter) replaceReader(newPtr *archiver.EasyArchiveReader) {
 }
 
 type ResticScannerOrPuller struct {
-	parent   *ResticAdapterBase
-	scanOpts model.PullOptions
-	ctx      context.Context
+	parent     *ResticAdapterBase
+	scanOpts   model.PullOptions
+	serviceCtx context.Context
 
 	snw          *archiver.EasyArchiveWriter
 	snapshotDone context.CancelFunc
@@ -134,38 +134,38 @@ func (r *ResticAdapter) StartScanOrPull(ctx context.Context, opts model.PullOpti
 }
 
 // StartScanOrPull implements BlobFsI.
-func (r *ResticAdapterBase) StartScanOrPullConcrete(ctx context.Context, opts model.PullOptions) (*ResticScannerOrPuller, error) {
+func (r *ResticAdapterBase) StartScanOrPullConcrete(serviceCtx context.Context, opts model.PullOptions) (*ResticScannerOrPuller, error) {
 
-	snapshotCtx, snapshotDone := context.WithCancel(ctx)
+	workCtx, workDone := context.WithCancel(serviceCtx)
 	arch, err := archiver.NewEasyArchiveWriter(
-		ctx,
+		serviceCtx,
 		r.hostname,
 		r.getTargets(),
 		r.options,
 		func(ctx context.Context, eaw *archiver.EasyArchiveWriter) error {
 			// wait till work is done externally
-			<-snapshotCtx.Done()
+			<-workCtx.Done()
 			log.Println("ResticAdapterBase::StartScanOrPullConcrete(): snapshot done")
 			return nil
 		},
 	)
 	if err != nil {
-		snapshotDone()
+		workDone()
 		return nil, err
 	}
 
 	return &ResticScannerOrPuller{
 		parent:       r,
 		scanOpts:     opts,
-		ctx:          ctx,
+		serviceCtx:   serviceCtx,
 		snw:          arch,
-		snapshotDone: snapshotDone,
+		snapshotDone: workDone,
 	}, nil
 }
 
-func (r *ResticScannerOrPuller) ScanOne(fi *protocol.FileInfo, fn model.JobQueueProgressFn) error {
+func (r *ResticScannerOrPuller) ScanOne(workCtx context.Context, fi *protocol.FileInfo, fn model.JobQueueProgressFn) error {
 	if r.scanOpts.OnlyCheck {
-		return UpdateFile(r.ctx, r.snw, fi, func(block protocol.BlockInfo, status model.GetBlockDataResult) {
+		return UpdateFile(workCtx, r.snw, fi, func(block protocol.BlockInfo, status model.GetBlockDataResult) {
 			fn(int64(block.Size), nil)
 		}, func(block protocol.BlockInfo) ([]byte, error) {
 			// if this is called, it means that the block data is missing and should be downloaded
@@ -178,6 +178,7 @@ func (r *ResticScannerOrPuller) ScanOne(fi *protocol.FileInfo, fn model.JobQueue
 }
 
 func (r *ResticScannerOrPuller) PullOne(
+	workCtx context.Context,
 	fi *protocol.FileInfo,
 	blockStatusCb func(block protocol.BlockInfo, status model.GetBlockDataResult),
 	downloadCb func(block protocol.BlockInfo) ([]byte, error),
@@ -185,11 +186,11 @@ func (r *ResticScannerOrPuller) PullOne(
 	if r.scanOpts.OnlyCheck {
 		panic("ResticScannerOrPuller::PullOne(): should not be called for scan!")
 	}
-	return UpdateFile(r.ctx, r.snw, fi, blockStatusCb, downloadCb)
+	return UpdateFile(workCtx, r.snw, fi, blockStatusCb, downloadCb)
 }
 
 // Finish implements BlobFsScanOrPullI.
-func (r *ResticScannerOrPuller) Finish() error {
+func (r *ResticScannerOrPuller) Finish(ctx context.Context) error {
 	log.Println("ResticScannerOrPuller::Finish()")
 	r.snapshotDone()
 	log.Println("ResticScannerOrPuller::Finish(): waiting for snapshot to finish")
@@ -318,7 +319,7 @@ func (r *ResticAdapter) UpdateFile(
 	if err != nil {
 		return err
 	}
-	defer tmpSnw.Finish()
+	defer tmpSnw.Finish(ctx)
 	return UpdateFile(ctx, tmpSnw.snw, fi, blockStatusCb, downloadBlockDataCb)
 }
 

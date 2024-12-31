@@ -58,6 +58,7 @@ type runningVirtualFolderSyncthingService struct {
 	parent            *virtualFolderSyncthingService
 	blobFs            BlobFsI
 	serviceRunningCtx context.Context
+	doWorkCtx         context.Context
 
 	backgroundDownloadQueue *jobQueue
 
@@ -165,7 +166,7 @@ func NewVirtualFolder(
 }
 
 func (vf *virtualFolderSyncthingService) runVirtualFolderServiceCoroutine(
-	ctx context.Context,
+	doWorkCtx context.Context,
 	ping_pong_chan chan error, /* simulate coroutine */
 ) {
 
@@ -175,7 +176,7 @@ func (vf *virtualFolderSyncthingService) runVirtualFolderServiceCoroutine(
 			return errors.New("internal error. virtual folder already running")
 		}
 
-		serviceRunningCtx, lifetimeCtxCancel := context.WithCancel(ctx)
+		serviceRunningCtx, lifetimeCtxCancel := context.WithCancel(context.Background())
 		defer lifetimeCtxCancel()
 
 		jobQ := newJobQueue()
@@ -183,6 +184,7 @@ func (vf *virtualFolderSyncthingService) runVirtualFolderServiceCoroutine(
 			parent:                  vf,
 			blobFs:                  vf.blobFs,
 			serviceRunningCtx:       serviceRunningCtx,
+			doWorkCtx:               doWorkCtx,
 			backgroundDownloadQueue: jobQ,
 			initialScanState:        INITIAL_SCAN_IDLE,
 			InitialScanDone:         make(chan struct{}, 1),
@@ -230,7 +232,7 @@ func (vf *virtualFolderSyncthingService) runVirtualFolderServiceCoroutine(
 			// TODO: rvf.Pull_x(ctx, PullOptions{false, true})
 			rvf.initialScanState = INITIAL_SCAN_COMPLETED
 			close(rvf.InitialScanDone)
-			rvf.pullOrScan_x(ctx, PullOptions{true, false})
+			rvf.pullOrScan_x(doWorkCtx, PullOptions{true, false})
 		}
 
 		// unblock caller after successful init
@@ -289,21 +291,21 @@ func (f *runningVirtualFolderSyncthingService) serve_backgroundDownloadTask() {
 			continue
 		}
 
-		if utils.IsDone(f.serviceRunningCtx) {
+		if utils.IsDone(f.doWorkCtx) {
 			// empty queue as quick as possible
 			f.backgroundDownloadQueue.Done(jobPtr.name)
 			jobPtr.abort()
 		} else {
 			puller := *f.puller.Load()
 			logger.DefaultLogger.Debugf("serve_backgroundDownloadTask: createVirtualFolderFilePullerAndPull, using puller: %p", puller)
-			createVirtualFolderFilePullerAndPull(f, jobPtr, puller)
+			createVirtualFolderFilePullerAndPull(f.doWorkCtx, f, jobPtr, puller)
 		}
 	}
 }
 
 // model.service API
-func (f *virtualFolderSyncthingService) Serve(ctx context.Context) error {
-	f.ctx = ctx // legacy compatibility
+func (f *virtualFolderSyncthingService) Serve(doWorkCtx context.Context) error {
+	f.ctx = doWorkCtx // legacy compatibility
 
 	f.model.foldersRunning.Add(1)
 	defer f.model.foldersRunning.Add(-1)
@@ -311,7 +313,7 @@ func (f *virtualFolderSyncthingService) Serve(ctx context.Context) error {
 	defer l.Infof("vf.Serve exits")
 
 	co_chan := make(chan error) // un-buffered!
-	go f.runVirtualFolderServiceCoroutine(ctx, co_chan)
+	go f.runVirtualFolderServiceCoroutine(doWorkCtx, co_chan)
 	initError := <-co_chan
 	if initError != nil {
 		return initError
@@ -343,7 +345,7 @@ func (f *virtualFolderSyncthingService) Serve(ctx context.Context) error {
 		case <-f.pullScheduled: // TODO: replace with "doInSyncChan"
 			logger.DefaultLogger.Infof("virtualFolderServe: case <-f.pullScheduled")
 			l.Debugf("Serve: f.pullAllMissing(false) - START")
-			err := f.running.pullOrScan_x(ctx, PullOptions{true, false})
+			err := f.running.pullOrScan_x(doWorkCtx, PullOptions{true, false})
 			l.Debugf("Serve: f.pullAllMissing(false) - DONE. Err: %v", err)
 			logger.DefaultLogger.Infof("virtualFolderServe: case <-f.pullScheduled - 2")
 			continue
@@ -395,15 +397,15 @@ func (vf *virtualFolderSyncthingService) Scan(subs []string) error {
 	return vf.running.pullOrScan_x_doInSync(vf.ctx, PullOptions{false, true})
 }
 
-func (f *runningVirtualFolderSyncthingService) pullOrScan_x_doInSync(ctx context.Context, opts PullOptions) error {
+func (f *runningVirtualFolderSyncthingService) pullOrScan_x_doInSync(doWorkCtx context.Context, opts PullOptions) error {
 	logger.DefaultLogger.Infof("request pullOrScan_x_doInSync - %+v", opts)
 	return f.parent.doInSync(func() error {
 		logger.DefaultLogger.Infof("execute pullOrScan_x_doInSync - %+v", opts)
-		return f.pullOrScan_x(ctx, opts)
+		return f.pullOrScan_x(doWorkCtx, opts)
 	})
 }
 
-func (vf *runningVirtualFolderSyncthingService) pullOrScan_x(ctx context.Context, opts PullOptions) error {
+func (vf *runningVirtualFolderSyncthingService) pullOrScan_x(doWorkCtx context.Context, opts PullOptions) error {
 	defer logger.DefaultLogger.Infof("pull_x END z - opts: %+v", opts)
 	snap, err := vf.parent.fset.Snapshot()
 	if err != nil {
@@ -423,7 +425,9 @@ func (vf *runningVirtualFolderSyncthingService) pullOrScan_x(ctx context.Context
 	logger.DefaultLogger.Infof("pull_x START - opts: %+v", opts)
 	defer logger.DefaultLogger.Infof("pull_x END a")
 
-	scanner, err := vf.blobFs.StartScanOrPull(ctx, opts)
+	serviceWorkerCtx, serviceWorkerCtxCancel := context.WithCancel(context.Background())
+	defer serviceWorkerCtxCancel()
+	scanner, err := vf.blobFs.StartScanOrPull(serviceWorkerCtx, opts)
 	if err != nil {
 		return err
 	}
@@ -509,7 +513,7 @@ func (vf *runningVirtualFolderSyncthingService) pullOrScan_x(ctx context.Context
 			}
 			err := error(nil)
 			if opts.OnlyCheck {
-				err = scanner.ScanOne(&f, progressFn)
+				err = scanner.ScanOne(doWorkCtx, &f, progressFn)
 			} else {
 				// pull implementation is the same for all backends
 				err = func() error {
@@ -554,7 +558,7 @@ func (vf *runningVirtualFolderSyncthingService) pullOrScan_x(ctx context.Context
 		leases.AsyncRunOneWithDoneFn(f.FileName(), workF)
 
 		select {
-		case <-vf.serviceRunningCtx.Done():
+		case <-doWorkCtx.Done():
 			logger.DefaultLogger.Infof("pull ONE - stop continue")
 			isAbortOrErr = true
 			return false
@@ -567,6 +571,7 @@ func (vf *runningVirtualFolderSyncthingService) pullOrScan_x(ctx context.Context
 		return nil
 	}
 
+	// do work:
 	for job, ok := jobs.Pop(); ok; job, ok = jobs.Pop() {
 		fi, ok := snap.GetGlobal(job.name)
 		if ok {
@@ -580,7 +585,7 @@ func (vf *runningVirtualFolderSyncthingService) pullOrScan_x(ctx context.Context
 
 	leases.WaitAllFinished()
 	logger.DefaultLogger.Infof("pull_x - leases.WaitAllFinished() - DONE")
-	err = scanner.Finish()
+	err = scanner.Finish(serviceWorkerCtx)
 	logger.DefaultLogger.Infof("pull_x - scanner.Finish() - DONE, result: %v", err)
 	if err != nil {
 		logger.DefaultLogger.Warnf("pull_x - scanner.Finish() - ERR: %v", err)

@@ -25,12 +25,13 @@ type VirtualFolderFilePuller struct {
 	folderService           *virtualFolderSyncthingService
 	backgroundDownloadQueue *jobQueue
 	fset                    *db.FileSet
-	ctx                     context.Context
+	doWorkCtx               context.Context
 
 	filePullerImpl BlobFsScanOrPullI
 }
 
 func createVirtualFolderFilePullerAndPull(
+	doWorkCtx context.Context,
 	f *runningVirtualFolderSyncthingService,
 	job *jobQueueEntry,
 	filePullerImpl BlobFsScanOrPullI,
@@ -58,7 +59,7 @@ func createVirtualFolderFilePullerAndPull(
 		}
 		defer func() {
 			logger.DefaultLogger.Debugf("createVirtualFolderFilePullerAndPull: Finish")
-			filePullerImpl.Finish()
+			filePullerImpl.Finish(f.serviceRunningCtx)
 		}()
 	}
 
@@ -82,7 +83,7 @@ func createVirtualFolderFilePullerAndPull(
 		folderService:           f.parent,
 		backgroundDownloadQueue: f.backgroundDownloadQueue,
 		fset:                    f.parent.fset,
-		ctx:                     f.serviceRunningCtx,
+		doWorkCtx:               doWorkCtx,
 		filePullerImpl:          filePullerImpl,
 	}
 
@@ -97,7 +98,9 @@ func (f *VirtualFolderFilePuller) doPull() {
 	all_ok := atomic.Bool{}
 	all_ok.Store(true)
 
-	err := f.filePullerImpl.PullOne(&f.file,
+	err := f.filePullerImpl.PullOne(
+		f.doWorkCtx,
+		&f.file,
 		func(bi protocol.BlockInfo, status GetBlockDataResult) {
 			// blockStatusCb
 			//logger.DefaultLogger.Debugf("VirtualFolderFilePuller-blockStatusCb: %v %v", bi, status)

@@ -127,14 +127,14 @@ func (vf *BlockStorageFileBlobFs) StartScanOrPull(
 }
 
 // FinishScan implements BlobFsI.
-func (b *BlockStorageFileBlobFsPullOrScan) Finish() error {
+func (b *BlockStorageFileBlobFsPullOrScan) Finish(workCtx context.Context) error {
 	if b.checkMap != nil {
 		b.parent.cleanupUnneededReservations(b.checkMap)
 	}
 	return nil
 }
 
-func (vf *BlockStorageFileBlobFsPullOrScan) ScanOne(fi *protocol.FileInfo, progressFn model.JobQueueProgressFn) error {
+func (vf *BlockStorageFileBlobFsPullOrScan) ScanOne(workCtx context.Context, fi *protocol.FileInfo, progressFn model.JobQueueProgressFn) error {
 	if vf.scanOpts.OnlyCheck {
 		return vf.scanOne(vf.scanCtx, fi, progressFn)
 	} else {
@@ -143,6 +143,7 @@ func (vf *BlockStorageFileBlobFsPullOrScan) ScanOne(fi *protocol.FileInfo, progr
 }
 
 func (vf *BlockStorageFileBlobFsPullOrScan) PullOne(
+	workCtx context.Context,
 	fi *protocol.FileInfo,
 	blockStatusCb func(block protocol.BlockInfo, status model.GetBlockDataResult),
 	downloadCb func(block protocol.BlockInfo) ([]byte, error),
