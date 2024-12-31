@@ -164,17 +164,25 @@ func (r *ResticAdapterBase) StartScanOrPullConcrete(serviceCtx context.Context, 
 }
 
 func (r *ResticScannerOrPuller) ScanOne(workCtx context.Context, fi *protocol.FileInfo, fn model.JobQueueProgressFn) error {
+	result := &model.JobResult{}
+	defer func() {
+		fn(0, result)
+	}()
+
 	if r.scanOpts.OnlyCheck {
-		return UpdateFile(workCtx, r.snw, fi, func(block protocol.BlockInfo, status model.GetBlockDataResult) {
+		result.Err = UpdateFile(workCtx, r.snw, fi, func(block protocol.BlockInfo, status model.GetBlockDataResult) {
 			fn(int64(block.Size), nil)
 		}, func(block protocol.BlockInfo) ([]byte, error) {
 			// if this is called, it means that the block data is missing and should be downloaded
 			// but we are in scan mode, so no download is desired
+			log.Println("ResticScannerOrPuller::ScanOne(): missing block data")
 			return nil, model.ErrMissingBlockData
 		})
 	} else {
 		panic("ResticScannerOrPuller::ScanOne(): should not be called for pull!")
 	}
+
+	return result.Err
 }
 
 func (r *ResticScannerOrPuller) PullOne(
