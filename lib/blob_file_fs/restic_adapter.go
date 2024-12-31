@@ -146,6 +146,7 @@ func (r *ResticAdapterBase) StartScanOrPullConcrete(ctx context.Context, opts mo
 		func(ctx context.Context, eaw *archiver.EasyArchiveWriter) error {
 			// wait till work is done externally
 			<-snapshotCtx.Done()
+			log.Println("ResticAdapterBase::StartScanOrPullConcrete(): snapshot done")
 			return nil
 		},
 	)
@@ -190,8 +191,11 @@ func (r *ResticScannerOrPuller) PullOne(
 
 // Finish implements BlobFsScanOrPullI.
 func (r *ResticScannerOrPuller) Finish() error {
+	log.Println("ResticScannerOrPuller::Finish()")
 	r.snapshotDone()
+	log.Println("ResticScannerOrPuller::Finish(): waiting for snapshot to finish")
 	r.snw.Close()
+	log.Println("ResticScannerOrPuller::Finish(): snapshot finished")
 	return nil
 }
 
