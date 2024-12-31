@@ -539,9 +539,12 @@ func (vf *runningVirtualFolderSyncthingService) pullOrScan_x(doWorkCtx context.C
 					}
 
 					if f.IsDirectory() {
-						// no work to do for directories.
-						fn2(f.FileSize(), JobResultOK())
-						scanner.PullOne(doWorkCtx, &f, nil, nil)
+						// not much work to do for directories. do it synchronously
+						err := scanner.PullOne(doWorkCtx, &f, nil, nil)
+						if err == nil {
+							vf.parent.updateOneLocalFileInfo(&f, events.RemoteChangeDetected)
+						}
+						fn2(f.FileSize(), JobResultError(err))
 					} else {
 						vf.RequestBackgroundDownloadI(f.Name, f.Size, f.ModTime(), fn2)
 					}
