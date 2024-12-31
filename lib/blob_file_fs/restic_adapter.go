@@ -38,7 +38,6 @@ type ResticAdapter struct {
 	cancelCtx context.CancelFunc
 
 	reader *atomic.Pointer[archiver.EasyArchiveReader]
-	puller *atomic.Pointer[ResticScannerOrPuller]
 }
 
 func FactoryResticAdapter(

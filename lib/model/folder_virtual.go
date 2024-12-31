@@ -294,7 +294,9 @@ func (f *runningVirtualFolderSyncthingService) serve_backgroundDownloadTask() {
 			f.backgroundDownloadQueue.Done(jobPtr.name)
 			jobPtr.abort()
 		} else {
-			createVirtualFolderFilePullerAndPull(f, jobPtr, *f.puller.Load())
+			puller := *f.puller.Load()
+			logger.DefaultLogger.Debugf("serve_backgroundDownloadTask: createVirtualFolderFilePullerAndPull, using puller: %p", puller)
+			createVirtualFolderFilePullerAndPull(f, jobPtr, puller)
 		}
 	}
 }

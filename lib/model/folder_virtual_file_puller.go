@@ -13,6 +13,7 @@ import (
 
 	"github.com/syncthing/syncthing/lib/db"
 	"github.com/syncthing/syncthing/lib/events"
+	"github.com/syncthing/syncthing/lib/logger"
 	"github.com/syncthing/syncthing/lib/protocol"
 	"github.com/syncthing/syncthing/lib/sync"
 )
@@ -50,12 +51,18 @@ func createVirtualFolderFilePullerAndPull(
 	}
 
 	if filePullerImpl == nil {
+		logger.DefaultLogger.Debugf("createVirtualFolderFilePullerAndPull: StartScanOrPull")
 		filePullerImpl, err = f.blobFs.StartScanOrPull(f.serviceRunningCtx, PullOptions{OnlyMissing: false, OnlyCheck: false})
 		if err != nil {
 			return
 		}
-		defer filePullerImpl.Finish()
+		defer func() {
+			logger.DefaultLogger.Debugf("createVirtualFolderFilePullerAndPull: Finish")
+			filePullerImpl.Finish()
+		}()
 	}
+
+	logger.DefaultLogger.Debugf("createVirtualFolderFilePullerAndPull: UpdateFile, using puller: %p", filePullerImpl)
 
 	instance := &VirtualFolderFilePuller{
 		sharedPullerStateBase: sharedPullerStateBase{
