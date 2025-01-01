@@ -49,6 +49,7 @@ type jobQueueEntry struct {
 	name       string
 	size       int64
 	modified   time.Time
+	workFn     func(job *jobQueueEntry)
 	progressCb atomic.Pointer[JobQueueProgressFn]
 }
 
@@ -90,14 +91,20 @@ func inverseModifiedDateComparer(jqe1, jqe2 *jobQueueEntry) int {
 	return modifiedDateComparer(jqe2, jqe1)
 }
 
-func (q *jobQueue) PushIfNew(file string, size int64, modified time.Time, fn JobQueueProgressFn) bool {
-	entry := &jobQueueEntry{file, size, modified, atomic.Pointer[JobQueueProgressFn]{}}
+func (q *jobQueue) PushIfNew(file string, size int64, modified time.Time, workFn func(job *jobQueueEntry), fn JobQueueProgressFn) bool {
+	entry := &jobQueueEntry{
+		name:       file,
+		size:       size,
+		modified:   modified,
+		workFn:     workFn,
+		progressCb: atomic.Pointer[JobQueueProgressFn]{},
+	}
 	entry.progressCb.Store(&fn)
 	return q.queued.PushIfNew(entry, nameComparer)
 }
 
 func (q *jobQueue) Push(file string, size int64, modified time.Time) {
-	q.queued.Push(&jobQueueEntry{file, size, modified, atomic.Pointer[JobQueueProgressFn]{}})
+	q.queued.Push(&jobQueueEntry{file, size, modified, nil, atomic.Pointer[JobQueueProgressFn]{}})
 }
 
 func (q *jobQueue) Pop() (*jobQueueEntry, bool) {

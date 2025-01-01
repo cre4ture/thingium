@@ -450,6 +450,19 @@ func (s *FileSet) updateAndGCMutexLock() {
 	s.db.gcMut.RLock()
 }
 
+func (s *FileSet) GetLatestGlobal(file string) (protocol.FileInfo, error) {
+	snap, err := s.Snapshot()
+	if err != nil {
+		return protocol.FileInfo{}, err
+	}
+	defer snap.Release()
+	fi, ok := snap.GetGlobal(file)
+	if !ok {
+		return protocol.FileInfo{}, errFileNotFound
+	}
+	return fi, nil
+}
+
 // DropFolder clears out all information related to the given folder from the
 // database.
 func DropFolder(db *Lowlevel, folder string) {

@@ -264,16 +264,24 @@ func (f *virtualFolderSyncthingService) RequestBackgroundDownloadI(
 	running.RequestBackgroundDownloadI(filename, size, modified, fn)
 }
 
+func (f *runningVirtualFolderSyncthingService) defaultJobWorkFn() func(job *jobQueueEntry) {
+	return func(job *jobQueueEntry) {
+		puller := *f.puller.Load()
+		logger.DefaultLogger.Debugf("serve_backgroundDownloadTask: createVirtualFolderFilePullerAndPull, using puller: %p", puller)
+		createVirtualFolderFilePullerAndPull(f.doWorkCtx, f, job, puller)
+	}
+}
+
 func (f *runningVirtualFolderSyncthingService) RequestBackgroundDownloadI(
 	filename string, size int64, modified time.Time, fn JobQueueProgressFn,
 ) {
-	f.RequestBackgroundDownload(filename, size, modified, fn)
+	f.RequestBackgroundDownload(filename, size, modified, f.defaultJobWorkFn(), fn)
 }
 
 func (f *runningVirtualFolderSyncthingService) RequestBackgroundDownload(
-	filename string, size int64, modified time.Time, fn JobQueueProgressFn,
+	filename string, size int64, modified time.Time, workFn func(job *jobQueueEntry), fn JobQueueProgressFn,
 ) {
-	wasNew := f.backgroundDownloadQueue.PushIfNew(filename, size, modified, fn)
+	wasNew := f.backgroundDownloadQueue.PushIfNew(filename, size, modified, workFn, fn)
 	if !wasNew {
 		if fn != nil {
 			result := JobResultOK()
@@ -300,9 +308,7 @@ func (f *runningVirtualFolderSyncthingService) serve_backgroundDownloadTask() {
 			f.backgroundDownloadQueue.Done(jobPtr.name)
 			jobPtr.abort()
 		} else {
-			puller := *f.puller.Load()
-			logger.DefaultLogger.Debugf("serve_backgroundDownloadTask: createVirtualFolderFilePullerAndPull, using puller: %p", puller)
-			createVirtualFolderFilePullerAndPull(f.doWorkCtx, f, jobPtr, puller)
+			jobPtr.workFn(jobPtr)
 		}
 	}
 }
@@ -548,6 +554,20 @@ func (vf *runningVirtualFolderSyncthingService) pullOrScan_x(doWorkCtx context.C
 						vf.parent.fset.UpdateOne(protocol.LocalDeviceID, &f)
 						// as this is NOT usual case, we don't store this to the meta data of block storage
 						// NOT: updateOneLocalFileInfo(&fi)
+					} else {
+						// note: this also handles deletes
+						// as the deleted file will not have any blocks,
+						// the loop before is just skipped
+						vf.parent.updateOneLocalFileInfo(&f, events.RemoteChangeDetected)
+
+						seq := vf.parent.fset.Sequence(protocol.LocalDeviceID)
+						vf.parent.evLogger.Log(events.LocalIndexUpdated, map[string]interface{}{
+							"folder":    vf.parent.ID,
+							"items":     1,
+							"filenames": append([]string(nil), f.Name),
+							"sequence":  seq,
+							"version":   seq, // legacy for sequence
+						})
 					}
 				}
 			}

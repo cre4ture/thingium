@@ -11,6 +11,7 @@ import (
 )
 
 type safeWorkGroupInternals struct {
+	maxPending      int
 	nextUnusedToken uint64
 	pendingTokens   map[uint64]struct{}
 	cancel          context.CancelFunc
@@ -21,10 +22,11 @@ type SafeWorkGroup struct {
 	workOngoing context.Context
 }
 
-func NewSafeWorkGroup(ctx context.Context) *SafeWorkGroup {
+func NewSafeWorkGroup(ctx context.Context, maxPending int) *SafeWorkGroup {
 	ctx, cancel := context.WithCancel(ctx)
 	return &SafeWorkGroup{
 		internals: NewProtectedCond[safeWorkGroupInternals](safeWorkGroupInternals{
+			maxPending:      maxPending,
 			nextUnusedToken: 0,
 			pendingTokens:   make(map[uint64]struct{}),
 			cancel:          cancel,
@@ -55,6 +57,14 @@ func (swg *SafeWorkGroup) GetToken() uint64 {
 	intern := swg.internals.Lock()
 	defer swg.internals.UnlockNoSignal()
 
+	for {
+		if (intern.maxPending > 0) && (len(intern.pendingTokens) >= intern.maxPending) {
+			swg.internals.cond.Wait()
+		} else {
+			break
+		}
+	}
+
 	// use a fixed xor token to avoid accidental token guessing
 	xorToken := uint64(0x2ab592cf9922445d)
 	newToken := intern.nextUnusedToken ^ xorToken
@@ -71,11 +81,7 @@ func (intern *safeWorkGroupInternals) IsDone(ctx context.Context) bool {
 func (swg *SafeWorkGroup) ReleaseToken(token uint64) {
 	intern := swg.internals.Lock()
 	delete(intern.pendingTokens, token)
-	if intern.IsDone(swg.workOngoing) {
-		swg.internals.UnlockWithBroadcast()
-	} else {
-		swg.internals.UnlockNoSignal()
-	}
+	swg.internals.UnlockWithBroadcast()
 }
 
 func (swg *SafeWorkGroup) WaitNoClose() {

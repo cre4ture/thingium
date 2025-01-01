@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"github.com/syncthing/syncthing/lib/db"
-	"github.com/syncthing/syncthing/lib/events"
 	"github.com/syncthing/syncthing/lib/logger"
 	"github.com/syncthing/syncthing/lib/protocol"
 	"github.com/syncthing/syncthing/lib/sync"
@@ -21,33 +20,26 @@ import (
 type VirtualFolderFilePuller struct {
 	sharedPullerStateBase
 	job                     *jobQueueEntry
-	snap                    *db.Snapshot
 	folderService           *virtualFolderSyncthingService
 	backgroundDownloadQueue *jobQueue
 	fset                    *db.FileSet
 	doWorkCtx               context.Context
 
-	filePullerImpl BlobFsScanOrPullI
+	filePullerImpl BlobPullI
 }
 
 func createVirtualFolderFilePullerAndPull(
 	doWorkCtx context.Context,
 	f *runningVirtualFolderSyncthingService,
 	job *jobQueueEntry,
-	filePullerImpl BlobFsScanOrPullI,
+	filePullerImpl BlobPullI,
 ) {
 	defer f.backgroundDownloadQueue.Done(job.name)
 
 	now := time.Now()
 
-	snap, err := f.parent.fset.Snapshot()
+	fi, err := f.parent.fset.GetLatestGlobal(job.name)
 	if err != nil {
-		return
-	}
-	defer snap.Release()
-
-	fi, ok := snap.GetGlobal(job.name)
-	if !ok {
 		return
 	}
 
@@ -79,7 +71,6 @@ func createVirtualFolderFilePullerAndPull(
 			mut:              sync.NewRWMutex(),
 		},
 		job:                     job,
-		snap:                    snap,
 		folderService:           f.parent,
 		backgroundDownloadQueue: f.backgroundDownloadQueue,
 		fset:                    f.parent.fset,
@@ -122,10 +113,16 @@ func (f *VirtualFolderFilePuller) doPull() {
 		func(block protocol.BlockInfo) ([]byte, error) {
 			// downloadCb
 			f.pullStarted()
+			snap, err := f.fset.Snapshot()
+			if err != nil {
+				return nil, err
+			}
+			defer snap.Release()
+
 			var data []byte = nil
-			err := f.folderService.pullBlockBase(func(blockData []byte) {
+			err = f.folderService.pullBlockBase(func(blockData []byte) {
 				data = blockData
-			}, f.snap, protocol.BlockOfFile{File: &f.file, Block: block})
+			}, snap, protocol.BlockOfFile{File: &f.file, Block: block})
 			return data, err
 		})
 
@@ -139,19 +136,5 @@ func (f *VirtualFolderFilePuller) doPull() {
 		return
 	}
 
-	// note: this also handles deletes
-	// as the deleted file will not have any blocks,
-	// the loop before is just skipped
-	f.folderService.updateOneLocalFileInfo(&f.file, events.RemoteChangeDetected)
-
 	f.job.Done(nil)
-
-	seq := f.fset.Sequence(protocol.LocalDeviceID)
-	f.folderService.evLogger.Log(events.LocalIndexUpdated, map[string]interface{}{
-		"folder":    f.folderService.ID,
-		"items":     1,
-		"filenames": append([]string(nil), f.file.Name),
-		"sequence":  seq,
-		"version":   seq, // legacy for sequence
-	})
 }

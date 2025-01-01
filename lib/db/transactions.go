@@ -26,6 +26,7 @@ var (
 	errEntryFromGlobalMissing = errors.New("device present in global list but missing as device/fileinfo entry")
 	errEmptyGlobal            = errors.New("no versions in global list")
 	errEmptyFileVersion       = errors.New("no devices in global file version")
+	errFileNotFound           = errors.New("file not found")
 )
 
 // A readOnlyTransaction represents a database snapshot.

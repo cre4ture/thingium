@@ -16,10 +16,10 @@ type ServingObject[T any] struct {
 	obj              *T
 }
 
-func NewServingObject[T any](workCtx context.Context, obj *T) *ServingObject[T] {
+func NewServingObject[T any](workCtx context.Context, obj *T, maxParallel int) *ServingObject[T] {
 	return &ServingObject[T]{
-		serviceWorkGroup: NewSafeWorkGroup(context.Background()),
-		normalWorkGroup:  NewSafeWorkGroup(workCtx),
+		serviceWorkGroup: NewSafeWorkGroup(context.Background(), 0),
+		normalWorkGroup:  NewSafeWorkGroup(workCtx, maxParallel),
 		obj:              obj,
 	}
 }

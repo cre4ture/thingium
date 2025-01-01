@@ -24,7 +24,7 @@ type testStruct struct {
 func TestServingObject(t *testing.T) {
 
 	workCtx, workCtxCancel := context.WithCancel(context.Background())
-	so := utils.NewServingObject(workCtx, &testStruct{workCounter: atomic.Int64{}, serviceCounter: atomic.Int64{}})
+	so := utils.NewServingObject(workCtx, &testStruct{workCounter: atomic.Int64{}, serviceCounter: atomic.Int64{}}, 0)
 
 	so.ServiceRoutineGo(func(obj *testStruct, ctx context.Context) {
 		obj.serviceCounter.Add(1)
@@ -65,6 +65,55 @@ func TestServingObject(t *testing.T) {
 		assert.Equal(t, int64(1), obj.serviceCounter.Load())
 	})
 
+	so.Close()
+
+	so.NormalWorkerRun(func(obj *testStruct, done func(), ctx context.Context) {
+		defer done()
+		assert.Equal(t, int64(0), obj.workCounter.Load())
+		assert.Equal(t, int64(0), obj.serviceCounter.Load())
+	})
+}
+
+func TestServingObject_maxParallel(t *testing.T) {
+
+	workCtx, workCtxCancel := context.WithCancel(context.Background())
+	so := utils.NewServingObject(workCtx, &testStruct{workCounter: atomic.Int64{}, serviceCounter: atomic.Int64{}}, 2)
+
+	workDoneChan := make(chan struct{})
+	for i := 0; i < 2; i++ {
+		so.NormalWorkerRun(func(obj *testStruct, done func(), ctx context.Context) {
+			obj.workCounter.Add(1)
+			go func() {
+				defer done()
+				<-workDoneChan
+				obj.workCounter.Add(-1)
+			}()
+		})
+	}
+
+	checkDone := atomic.Bool{}
+	go func() {
+		so.NormalWorkerRun(func(obj *testStruct, done func(), ctx context.Context) {
+			defer done()
+			assert.Equal(t, int64(1), obj.workCounter.Load())
+			assert.Equal(t, int64(0), obj.serviceCounter.Load())
+		})
+		checkDone.Store(true)
+	}()
+
+	time.Sleep(50 * time.Millisecond)
+
+	assert.False(t, checkDone.Load())
+
+	workDoneChan <- struct{}{}
+
+	time.Sleep(50 * time.Millisecond)
+
+	assert.True(t, checkDone.Load())
+
+	workDoneChan <- struct{}{}
+
+	workCtxCancel()
 	so.Close()
 
 	so.NormalWorkerRun(func(obj *testStruct, done func(), ctx context.Context) {

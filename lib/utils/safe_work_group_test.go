@@ -17,7 +17,7 @@ import (
 )
 
 func TestSafeWorkgroup(t *testing.T) {
-	wg := utils.NewSafeWorkGroup(context.Background())
+	wg := utils.NewSafeWorkGroup(context.Background(), 0)
 	counter := atomic.Int64{}
 
 	for i := 0; i < 10; i++ {

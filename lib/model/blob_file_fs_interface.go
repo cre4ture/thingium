@@ -50,9 +50,8 @@ type BlobFsI interface {
 	ForceDropDataBlock(hash []byte)
 }
 
-type BlobFsScanOrPullI interface {
+type BlobPullI interface {
 	// this also handles deletes and directories
-	ScanOne(workCtx context.Context, fi *protocol.FileInfo, fn JobQueueProgressFn) error
 	PullOne(
 		workCtx context.Context,
 		fi *protocol.FileInfo,
@@ -60,4 +59,9 @@ type BlobFsScanOrPullI interface {
 		downloadCb func(block protocol.BlockInfo) ([]byte, error),
 	) error
 	Finish(workCtx context.Context) error
+}
+
+type BlobFsScanOrPullI interface {
+	BlobPullI
+	ScanOne(workCtx context.Context, fi *protocol.FileInfo, fn JobQueueProgressFn) error
 }
