@@ -294,6 +294,11 @@ func NewOfflineDbFileSetRead(
 }
 
 // SnapshotI implements model.DbFileSetReadI.
-func (o *OfflineDbFileSetRead) SnapshotI() (db.DbSnapshotI, error) {
-	return &OfflineDbSnapshotI{o.metaPrefix, o.blockStorage, o.caches}, nil
+func (o *OfflineDbFileSetRead) SnapshotI(closer utils.Closer) (db.DbSnapshotI, error) {
+	snap := &OfflineDbSnapshotI{o.metaPrefix, o.blockStorage, o.caches}
+	closer.RegisterCleanupFunc(func() error {
+		snap.Release()
+		return nil
+	})
+	return snap, nil
 }

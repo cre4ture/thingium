@@ -123,6 +123,7 @@ type ResticScannerOrPuller struct {
 
 	snw          *archiver.EasyArchiveWriter
 	snapshotDone context.CancelFunc
+	done         func()
 }
 
 func (r *ResticAdapterBase) getTargets() []string {
@@ -130,8 +131,8 @@ func (r *ResticAdapterBase) getTargets() []string {
 }
 
 // StartScanOrPull implements BlobFsI.
-func (r *ResticAdapter) StartScanOrPull(ctx context.Context, opts model.PullOptions) (model.BlobFsScanOrPullI, error) {
-	upToDate, err := r.StartScanOrPullConcrete(ctx, opts)
+func (r *ResticAdapter) StartScanOrPull(ctx context.Context, opts model.PullOptions, done func()) (model.BlobFsScanOrPullI, error) {
+	upToDate, err := r.StartScanOrPullConcrete(ctx, opts, done)
 	if err != nil {
 		return nil, err
 	}
@@ -139,7 +140,7 @@ func (r *ResticAdapter) StartScanOrPull(ctx context.Context, opts model.PullOpti
 }
 
 // StartScanOrPull implements BlobFsI.
-func (r *ResticAdapterBase) StartScanOrPullConcrete(serviceCtx context.Context, opts model.PullOptions) (*ResticScannerOrPuller, error) {
+func (r *ResticAdapterBase) StartScanOrPullConcrete(serviceCtx context.Context, opts model.PullOptions, done func()) (*ResticScannerOrPuller, error) {
 
 	workCtx, workDone := context.WithCancel(serviceCtx)
 	arch, err := archiver.NewEasyArchiveWriter(
@@ -165,6 +166,7 @@ func (r *ResticAdapterBase) StartScanOrPullConcrete(serviceCtx context.Context, 
 		serviceCtx:   serviceCtx,
 		snw:          arch,
 		snapshotDone: workDone,
+		done:         done,
 	}, nil
 }
 
@@ -210,6 +212,9 @@ func (r *ResticScannerOrPuller) Finish(ctx context.Context) error {
 	log.Println("ResticScannerOrPuller::Finish(): waiting for snapshot to finish")
 	r.snw.Close()
 	log.Println("ResticScannerOrPuller::Finish(): snapshot finished")
+	if r.done != nil {
+		r.done()
+	}
 	return nil
 }
 
@@ -340,7 +345,7 @@ func (r *ResticAdapter) UpdateFile(
 	blockStatusCb func(block protocol.BlockInfo, status model.GetBlockDataResult),
 	downloadBlockDataCb func(block protocol.BlockInfo) ([]byte, error),
 ) error {
-	tmpSnw, err := r.StartScanOrPullConcrete(ctx, model.PullOptions{OnlyMissing: false, OnlyCheck: false})
+	tmpSnw, err := r.StartScanOrPullConcrete(ctx, model.PullOptions{OnlyMissing: false, OnlyCheck: false}, nil)
 	if err != nil {
 		return err
 	}

@@ -66,8 +66,6 @@ type runningVirtualFolderSyncthingService struct {
 
 	initialScanState InitialScanState
 	InitialScanDone  chan struct{}
-
-	puller atomic.Pointer[BlobFsScanOrPullI]
 }
 
 func (vFSS *virtualFolderSyncthingService) GetBlockDataFromCacheOrDownloadI(
@@ -263,23 +261,36 @@ func (f *virtualFolderSyncthingService) RequestBackgroundDownloadI(
 
 	running.RequestBackgroundDownloadI(filename, size, modified, fn)
 }
-
-func (f *runningVirtualFolderSyncthingService) defaultJobWorkFn() func(job *jobQueueEntry) {
-	return func(job *jobQueueEntry) {
-		puller := *f.puller.Load()
-		logger.DefaultLogger.Debugf("serve_backgroundDownloadTask: createVirtualFolderFilePullerAndPull, using puller: %p", puller)
-		createVirtualFolderFilePullerAndPull(f.doWorkCtx, f, job, puller)
-	}
-}
-
 func (f *runningVirtualFolderSyncthingService) RequestBackgroundDownloadI(
 	filename string, size int64, modified time.Time, fn JobQueueProgressFn,
 ) {
-	f.RequestBackgroundDownload(filename, size, modified, f.defaultJobWorkFn(), fn)
+	fi, err := f.parent.fset.GetLatestGlobal(filename)
+	if err != nil {
+		return
+	}
+
+	f.RequestBackgroundDownload(filename, size, modified, fn,
+		func(job *jobQueueEntry) error {
+			return runStatusReportingPull(f, fi,
+				func(blockStatusCb func(protocol.BlockInfo, GetBlockDataResult)) error {
+					closer := utils.NewCloser()
+					defer closer.Close()
+
+					snap, err := f.parent.fset.SnapshotInCloser(closer)
+					if err != nil {
+						return err
+					}
+
+					return f.blobFs.UpdateFile(f.doWorkCtx, &fi, blockStatusCb,
+						func(block protocol.BlockInfo) ([]byte, error) {
+							return f.parent.pullBlockBaseConvenientSnap(snap, protocol.BlockOfFile{File: &fi, Block: block})
+						})
+				})
+		})
 }
 
 func (f *runningVirtualFolderSyncthingService) RequestBackgroundDownload(
-	filename string, size int64, modified time.Time, workFn func(job *jobQueueEntry), fn JobQueueProgressFn,
+	filename string, size int64, modified time.Time, fn JobQueueProgressFn, workFn JobQueueWorkFn,
 ) {
 	wasNew := f.backgroundDownloadQueue.PushIfNew(filename, size, modified, workFn, fn)
 	if !wasNew {
@@ -308,7 +319,14 @@ func (f *runningVirtualFolderSyncthingService) serve_backgroundDownloadTask() {
 			f.backgroundDownloadQueue.Done(jobPtr.name)
 			jobPtr.abort()
 		} else {
-			jobPtr.workFn(jobPtr)
+			workFn := jobPtr.workFn.Swap(nil)
+			err := error(nil)
+			defer func() {
+				jobPtr.Done(err)
+			}()
+			if workFn != nil {
+				err = (*workFn)(jobPtr)
+			}
 		}
 	}
 }
@@ -433,14 +451,49 @@ func (f *runningVirtualFolderSyncthingService) pullOrScan_x_doInSync(doWorkCtx c
 	})
 }
 
+func (vf *runningVirtualFolderSyncthingService) generateSortedJobList(opts PullOptions) (*jobQueue, uint64, error) {
+
+	closer := utils.NewCloser()
+	defer closer.Close()
+
+	snap, err := vf.parent.fset.SnapshotInCloser(closer)
+	if err != nil {
+		return nil, 0, err
+	}
+
+	jobs := newJobQueue()
+	totalBytes := uint64(0)
+
+	prepareFn := func(f protocol.FileInfo) bool {
+		totalBytes += uint64(f.FileSize())
+		jobs.Push(f.FileName(), f.FileSize(), f.ModTime())
+		return true
+	}
+
+	if opts.OnlyMissing {
+		snap.WithNeedTruncated(protocol.LocalDeviceID, prepareFn)
+	} else {
+		if opts.OnlyCheck {
+			snap.WithHaveTruncated(protocol.LocalDeviceID, prepareFn)
+		} else {
+			snap.WithGlobalTruncated(prepareFn)
+		}
+	}
+
+	closer.Close()
+
+	jobs.SortAccordingToConfig(vf.parent.Order)
+
+	return jobs, totalBytes, nil
+}
+
 func (vf *runningVirtualFolderSyncthingService) pullOrScan_x(doWorkCtx context.Context, opts PullOptions) error {
 	defer logger.DefaultLogger.Infof("pull_x END z - opts: %+v", opts)
-	snap, err := vf.parent.fset.Snapshot()
-	if err != nil {
-		return err
-	}
+	closer := utils.NewCloser()
+	defer closer.Close()
+	err := error(nil)
+
 	defer logger.DefaultLogger.Infof("pull_x END snap - opts: %+v", opts)
-	defer snap.Release()
 
 	if opts.OnlyCheck {
 		vf.parent.setState(FolderScanning)
@@ -453,37 +506,22 @@ func (vf *runningVirtualFolderSyncthingService) pullOrScan_x(doWorkCtx context.C
 	logger.DefaultLogger.Infof("pull_x START - opts: %+v", opts)
 	defer logger.DefaultLogger.Infof("pull_x END a")
 
-	serviceWorkerCtx, serviceWorkerCtxCancel := context.WithCancel(context.Background())
-	defer serviceWorkerCtxCancel()
-	scanner, err := vf.blobFs.StartScanOrPull(serviceWorkerCtx, opts)
+	serviceObject := utils.NewServingObject(doWorkCtx, vf, 0)
+
+	scanner := BlobFsScanOrPullI(nil)
+	serviceObject.ServiceRoutineRun(func(obj *runningVirtualFolderSyncthingService, done func(), ctx context.Context) {
+		scanner, err = vf.blobFs.StartScanOrPull(ctx, opts, done)
+		if err != nil {
+			done()
+		}
+	})
 	if err != nil {
 		return err
 	}
-	vf.puller.Store(&scanner)
-	defer func() {
-		vf.puller.Store(nil)
-	}()
 
-	jobs := newJobQueue()
-	totalBytes := uint64(0)
-	{
-		prepareFn := func(f protocol.FileInfo) bool {
-			totalBytes += uint64(f.FileSize())
-			jobs.Push(f.FileName(), f.FileSize(), f.ModTime())
-			return true
-		}
-
-		if opts.OnlyMissing {
-			snap.WithNeedTruncated(protocol.LocalDeviceID, prepareFn)
-		} else {
-			if opts.OnlyCheck {
-				snap.WithHaveTruncated(protocol.LocalDeviceID, prepareFn)
-			} else {
-				snap.WithGlobalTruncated(prepareFn)
-			}
-		}
-
-		jobs.SortAccordingToConfig(vf.parent.Order)
+	jobs, totalBytes, err := vf.generateSortedJobList(opts)
+	if err != nil {
+		return err
 	}
 
 	asyncNotifier := utils.NewAsyncProgressNotifier(vf.serviceRunningCtx)
@@ -555,22 +593,25 @@ func (vf *runningVirtualFolderSyncthingService) pullOrScan_x(doWorkCtx context.C
 						// as this is NOT usual case, we don't store this to the meta data of block storage
 						// NOT: updateOneLocalFileInfo(&fi)
 					} else {
-						// note: this also handles deletes
-						// as the deleted file will not have any blocks,
-						// the loop before is just skipped
-						vf.parent.updateOneLocalFileInfo(&f, events.RemoteChangeDetected)
+						if !opts.OnlyCheck {
+							// note: this also handles deletes
+							// as the deleted file will not have any blocks,
+							// the loop before is just skipped
+							vf.parent.updateOneLocalFileInfo(&f, events.RemoteChangeDetected)
 
-						seq := vf.parent.fset.Sequence(protocol.LocalDeviceID)
-						vf.parent.evLogger.Log(events.LocalIndexUpdated, map[string]interface{}{
-							"folder":    vf.parent.ID,
-							"items":     1,
-							"filenames": append([]string(nil), f.Name),
-							"sequence":  seq,
-							"version":   seq, // legacy for sequence
-						})
+							seq := vf.parent.fset.Sequence(protocol.LocalDeviceID)
+							vf.parent.evLogger.Log(events.LocalIndexUpdated, map[string]interface{}{
+								"folder":    vf.parent.ID,
+								"items":     1,
+								"filenames": append([]string(nil), f.Name),
+								"sequence":  seq,
+								"version":   seq, // legacy for sequence
+							})
+						}
 					}
 				}
 			}
+
 			err := error(nil)
 			if opts.OnlyCheck {
 				err = scanner.ScanOne(doWorkCtx, &f, progressFn)
@@ -606,7 +647,31 @@ func (vf *runningVirtualFolderSyncthingService) pullOrScan_x(doWorkCtx context.C
 						}
 						fn2(f.FileSize(), JobResultError(err))
 					} else {
-						vf.RequestBackgroundDownloadI(f.Name, f.Size, f.ModTime(), fn2)
+						// for files, we do the work as part of the background download queue
+						vf.RequestBackgroundDownload(f.Name, f.Size, f.ModTime(), fn2,
+							func(job *jobQueueEntry) error {
+								closer := utils.NewCloser()
+								defer closer.Close()
+
+								snap, err := vf.parent.fset.SnapshotInCloser(closer)
+								if err != nil {
+									return err
+								}
+
+								fi, ok := snap.GetGlobal(job.name)
+								if !ok {
+									return protocol.ErrNoSuchFile
+								}
+								return runStatusReportingPull(vf, fi,
+									func(blockStatusCb func(protocol.BlockInfo, GetBlockDataResult)) error {
+										return scanner.PullOne(doWorkCtx, &fi, blockStatusCb,
+											func(block protocol.BlockInfo) ([]byte, error) {
+												return vf.parent.pullBlockBaseConvenientSnap(snap, protocol.BlockOfFile{File: &fi, Block: block})
+											},
+										)
+									})
+							},
+						)
 					}
 
 					return nil
@@ -635,6 +700,10 @@ func (vf *runningVirtualFolderSyncthingService) pullOrScan_x(doWorkCtx context.C
 		return nil
 	}
 
+	snap, err := vf.parent.fset.SnapshotInCloser(closer)
+	if err != nil {
+		return err
+	}
 	// do work:
 	for job, ok := jobs.Pop(); ok; job, ok = jobs.Pop() {
 		fi, ok := snap.GetGlobal(job.name)
@@ -649,11 +718,14 @@ func (vf *runningVirtualFolderSyncthingService) pullOrScan_x(doWorkCtx context.C
 
 	leases.WaitAllFinished()
 	logger.DefaultLogger.Infof("pull_x - leases.WaitAllFinished() - DONE")
-	err = scanner.Finish(serviceWorkerCtx)
-	logger.DefaultLogger.Infof("pull_x - scanner.Finish() - DONE, result: %v", err)
-	if err != nil {
-		logger.DefaultLogger.Warnf("pull_x - scanner.Finish() - ERR: %v", err)
-	}
+	serviceObject.ServiceRoutineRun(func(obj *runningVirtualFolderSyncthingService, done func(), ctx context.Context) {
+		defer done()
+		err = scanner.Finish(ctx)
+		logger.DefaultLogger.Infof("pull_x - scanner.Finish() - DONE, result: %v", err)
+		if err != nil {
+			logger.DefaultLogger.Warnf("pull_x - scanner.Finish() - ERR: %v", err)
+		}
+	})
 
 	if isAbortOrErr {
 		return nil

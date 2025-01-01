@@ -22,6 +22,7 @@ import (
 	"github.com/syncthing/syncthing/lib/osutil"
 	"github.com/syncthing/syncthing/lib/protocol"
 	"github.com/syncthing/syncthing/lib/sync"
+	"github.com/syncthing/syncthing/lib/utils"
 )
 
 type FileSet struct {
@@ -172,8 +173,20 @@ type Snapshot struct {
 	fatalError func(error, string)
 }
 
-func (s *FileSet) SnapshotI() (DbSnapshotI, error) {
-	return s.Snapshot()
+func (s *FileSet) SnapshotI(closer utils.Closer) (DbSnapshotI, error) {
+	return s.SnapshotInCloser(closer)
+}
+
+func (s *FileSet) SnapshotInCloser(closer utils.Closer) (*Snapshot, error) {
+	snap, err := s.Snapshot()
+	if err != nil {
+		return nil, err
+	}
+	closer.RegisterCleanupFunc(func() error {
+		snap.Release()
+		return nil
+	})
+	return snap, nil
 }
 
 func (s *FileSet) Snapshot() (*Snapshot, error) {

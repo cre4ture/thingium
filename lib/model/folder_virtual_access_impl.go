@@ -22,6 +22,7 @@ import (
 	"github.com/syncthing/syncthing/lib/protocol"
 	"github.com/syncthing/syncthing/lib/scanner"
 	"github.com/syncthing/syncthing/lib/sync"
+	"github.com/syncthing/syncthing/lib/utils"
 	"golang.org/x/exp/constraints"
 	"golang.org/x/exp/maps"
 )
@@ -47,7 +48,7 @@ type syncthingVirtualFolderFuseAdapter struct {
 var _ = (SyncthingVirtualFolderAccessI)((*syncthingVirtualFolderFuseAdapter)(nil))
 
 type DbFileSetReadI interface {
-	SnapshotI() (db.DbSnapshotI, error)
+	SnapshotI(closer utils.Closer) (db.DbSnapshotI, error)
 }
 
 type DbFileSetWriteI interface {
@@ -100,14 +101,17 @@ func (r *syncthingVirtualFolderFuseAdapter) getInoOf(path string) uint64 {
 }
 
 func (stf *syncthingVirtualFolderFuseAdapter) lookupFile(path string) (info *protocol.FileInfo, eno syscall.Errno) {
-	snap, err := stf.fset.SnapshotI()
+	closer := utils.NewCloser()
+	defer closer.Close()
+
+	snap, err := stf.fset.SnapshotI(closer)
 	if err != nil {
 		//stf..log()
 		return nil, syscall.EFAULT
 	}
-	defer snap.Release()
-
 	fi, ok := snap.GetGlobalTruncated(path)
+	closer.Close()
+
 	if !ok {
 		if stf.folderType.IsReceiveEncrypted() {
 			stf.directories_mu.Lock()
@@ -164,6 +168,9 @@ func (stf *syncthingVirtualFolderFuseAdapter) createFile(
 	Permissions *uint32, name string,
 ) (info *protocol.FileInfo, eno syscall.Errno) {
 
+	closer := utils.NewCloser()
+	defer closer.Close()
+
 	if stf.folderType.IsReceiveOnly() {
 		return nil, syscall.EACCES
 	}
@@ -171,11 +178,10 @@ func (stf *syncthingVirtualFolderFuseAdapter) createFile(
 	fi := createNewVirtualFileInfo(stf.modelID, Permissions, name)
 	stf.fsetRW.UpdateOneLocalFileInfoLocalChangeDetected(&fi)
 
-	snap, err := stf.fset.SnapshotI()
+	snap, err := stf.fset.SnapshotI(closer)
 	if err != nil {
 		return nil, syscall.EAGAIN
 	}
-	defer snap.Release()
 
 	db_fi, ok := snap.GetGlobalTruncated(name)
 	if !ok {
@@ -202,16 +208,18 @@ func (stf *syncthingVirtualFolderFuseAdapter) writeFile(
 	ctx context.Context, name string, offset uint64, inputData []byte,
 ) syscall.Errno {
 
+	closer := utils.NewCloser()
+	defer closer.Close()
+
 	if stf.folderType.IsReceiveOnly() {
 		return syscall.EACCES
 	}
 
-	snap, err := stf.fset.SnapshotI()
+	snap, err := stf.fset.SnapshotI(closer)
 	if err != nil {
 		//stf..log()
 		return syscall.EFAULT
 	}
-	defer snap.Release()
 
 	fi, ok := snap.GetGlobal(name)
 	if !ok {
@@ -291,16 +299,18 @@ func (stf *syncthingVirtualFolderFuseAdapter) writeFile(
 
 func (stf *syncthingVirtualFolderFuseAdapter) deleteFile(ctx context.Context, path string) syscall.Errno {
 
+	closer := utils.NewCloser()
+	defer closer.Close()
+
 	if stf.folderType.IsReceiveOnly() {
 		return syscall.EACCES
 	}
 
-	snap, err := stf.fset.SnapshotI()
+	snap, err := stf.fset.SnapshotI(closer)
 	if err != nil {
 		//stf..log()
 		return syscall.EFAULT
 	}
-	defer snap.Release()
 
 	fi, ok := snap.GetGlobal(path)
 	if !ok {
@@ -337,16 +347,18 @@ func (stf *syncthingVirtualFolderFuseAdapter) createDir(ctx context.Context, pat
 
 func (stf *syncthingVirtualFolderFuseAdapter) deleteDir(ctx context.Context, path string) syscall.Errno {
 
+	closer := utils.NewCloser()
+	defer closer.Close()
+
 	if stf.folderType.IsReceiveOnly() {
 		return syscall.EACCES
 	}
 
-	snap, err := stf.fset.SnapshotI()
+	snap, err := stf.fset.SnapshotI(closer)
 	if err != nil {
 		//stf..log()
 		return syscall.EFAULT
 	}
-	defer snap.Release()
 
 	fi, ok := snap.GetGlobal(path)
 	if !ok {
@@ -371,16 +383,18 @@ func (stf *syncthingVirtualFolderFuseAdapter) renameFileOrDir(
 	ctx context.Context, existingPath string, newPath string,
 ) syscall.Errno {
 
+	closer := utils.NewCloser()
+	defer closer.Close()
+
 	if stf.folderType.IsReceiveOnly() {
 		return syscall.EACCES
 	}
 
-	snap, err := stf.fset.SnapshotI()
+	snap, err := stf.fset.SnapshotI(closer)
 	if err != nil {
 		//stf..log()
 		return syscall.EFAULT
 	}
-	defer snap.Release()
 
 	fi, ok := snap.GetGlobal(existingPath)
 	if !ok {
@@ -404,16 +418,18 @@ func (stf *syncthingVirtualFolderFuseAdapter) renameExchangeFileOrDir(
 	ctx context.Context, path1 string, path2 string,
 ) syscall.Errno {
 
+	closer := utils.NewCloser()
+	defer closer.Close()
+
 	if stf.folderType.IsReceiveOnly() {
 		return syscall.EACCES
 	}
 
-	snap, err := stf.fset.SnapshotI()
+	snap, err := stf.fset.SnapshotI(closer)
 	if err != nil {
 		//stf..log()
 		return syscall.EFAULT
 	}
-	defer snap.Release()
 
 	fi1, ok := snap.GetGlobal(path1)
 	if !ok {
@@ -505,15 +521,17 @@ func (s *VirtualFolderDirStream) Close() {}
 
 func (f *syncthingVirtualFolderFuseAdapter) readDir(path string) (stream ffs.DirStream, eno syscall.Errno) {
 
+	closer := utils.NewCloser()
+	defer closer.Close()
+
 	var err error = nil
 	children := []*TreeEntry{}
 	levels := 0
 
-	snap, err := f.fset.SnapshotI()
+	snap, err := f.fset.SnapshotI(closer)
 	if err != nil {
 		return nil, syscall.EFAULT
 	}
-	defer snap.Release()
 
 	if f.folderType.IsReceiveEncrypted() {
 
@@ -686,24 +704,22 @@ func (vf *VirtualFileReadResult) Done() {
 func (f *syncthingVirtualFolderFuseAdapter) readFile(
 	path string, buf []byte, off int64,
 ) (res fuse.ReadResult, errno syscall.Errno) {
-	snap, err := f.fset.SnapshotI()
+
+	conditionalCloser := utils.NewCloser()
+	defer conditionalCloser.Close()
+
+	snap, err := f.fset.SnapshotI(conditionalCloser)
 	if err != nil {
 		//stf..log()
 		return nil, syscall.EFAULT
 	}
-	cancelDefer := false
-	defer func() {
-		if !cancelDefer {
-			snap.Release()
-		}
-	}()
 
 	fi, ok := snap.GetGlobal(path)
 	if !ok {
 		return nil, syscall.ENOENT
 	}
 
-	cancelDefer = true
+	conditionalCloser.UnregisterAll()
 	return &VirtualFileReadResult{
 		f:           f,
 		snap:        snap,

@@ -30,6 +30,12 @@ func (so *ServingObject[T]) ServiceRoutineGo(fn func(obj *T, ctx context.Context
 	})
 }
 
+func (so *ServingObject[T]) ServiceRoutineRun(fn func(obj *T, done func(), ctx context.Context)) {
+	so.serviceWorkGroup.Run(func(done func(), ctx context.Context) {
+		fn(so.obj, done, ctx)
+	})
+}
+
 func (so *ServingObject[T]) NormalWorkerRun(work func(obj *T, done func(), ctx context.Context)) {
 	so.normalWorkGroup.Run(func(done func(), ctx context.Context) {
 		work(so.obj, done, ctx)

@@ -52,6 +52,7 @@ type BlockStorageFileBlobFsPullOrScan struct {
 	scanCtx  context.Context
 	checkMap model.HashBlockStateMap
 	scanOpts model.PullOptions
+	done     func()
 }
 
 func NewBlockStorageFileBlobFs(
@@ -89,13 +90,14 @@ func (vf *BlockStorageFileBlobFs) SetEncryptionToken(data []byte) error {
 
 // StartScan implements BlobFsI.
 func (vf *BlockStorageFileBlobFs) StartScanOrPull(
-	ctx context.Context, opts model.PullOptions,
+	ctx context.Context, opts model.PullOptions, done func(),
 ) (model.BlobFsScanOrPullI, error) {
 	scanOrPull := &BlockStorageFileBlobFsPullOrScan{
 		parent:   vf,
 		scanCtx:  ctx,
 		checkMap: nil,
 		scanOpts: opts,
+		done:     done,
 	}
 	if opts.OnlyCheck {
 		err := func() error {
@@ -135,6 +137,9 @@ func (vf *BlockStorageFileBlobFs) StartScanOrPull(
 func (b *BlockStorageFileBlobFsPullOrScan) Finish(workCtx context.Context) error {
 	if b.checkMap != nil {
 		b.parent.cleanupUnneededReservations(b.checkMap)
+	}
+	if b.done != nil {
+		b.done()
 	}
 	return nil
 }
@@ -305,12 +310,13 @@ func (vf *BlockStorageFileBlobFs) GetHashBlockData(ctx context.Context, hash []b
 }
 
 func (vf *BlockStorageFileBlobFs) cleanupUnneededReservations(checkMap model.HashBlockStateMap) error {
-	snap, err := vf.fset.Snapshot()
+	closer := utils.NewCloser()
+	defer closer.Close()
+
+	snap, err := vf.fset.SnapshotInCloser(closer)
 	if err != nil {
 		return err
 	}
-	defer logger.DefaultLogger.Infof("cleanupUnneeded END snap")
-	defer snap.Release()
 
 	dummyValue := struct{}{}
 	usedBlockHashes := map[string]struct{}{}

@@ -45,12 +45,13 @@ type BlobFsI interface {
 	GetEncryptionToken() (data []byte, err error)
 	SetEncryptionToken(data []byte) error
 
-	StartScanOrPull(ctx context.Context, opts PullOptions) (BlobFsScanOrPullI, error)
+	StartScanOrPull(ctx context.Context, opts PullOptions, doneFn func()) (BlobFsScanOrPullI, error)
 
 	ForceDropDataBlock(hash []byte)
 }
 
 type BlobPullI interface {
+	// synchronously pull a single file
 	// this also handles deletes and directories
 	PullOne(
 		workCtx context.Context,

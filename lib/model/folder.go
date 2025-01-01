@@ -88,8 +88,12 @@ func (f *folderBase) pullBlockBaseConvenient(b protocol.BlockOfFile) ([]byte, er
 	}
 	defer snap.Release()
 
+	return f.pullBlockBaseConvenientSnap(snap, b)
+}
+
+func (f *folderBase) pullBlockBaseConvenientSnap(snap *db.Snapshot, b protocol.BlockOfFile) ([]byte, error) {
 	var data []byte = nil
-	err = f.pullBlockBase(func(blockData []byte) {
+	err := f.pullBlockBase(func(blockData []byte) {
 		data = blockData
 	}, snap, b)
 

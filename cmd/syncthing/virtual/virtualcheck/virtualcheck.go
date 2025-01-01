@@ -60,7 +60,10 @@ func (c *CLI) Run() error {
 		return err
 	}
 
-	snap, err := osa.FSetRO.SnapshotI()
+	closer := utils.NewCloser()
+	defer closer.Close()
+
+	snap, err := osa.FSetRO.SnapshotI(closer)
 	if err != nil {
 		return err
 	}
