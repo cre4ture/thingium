@@ -26,6 +26,7 @@ var ErrMissingBlockData = errors.New("missing block data")
 type PullOptions struct {
 	OnlyMissing bool
 	OnlyCheck   bool
+	CheckData   bool
 }
 
 type BlobFsI interface {
@@ -45,6 +46,8 @@ type BlobFsI interface {
 	SetEncryptionToken(data []byte) error
 
 	StartScanOrPull(ctx context.Context, opts PullOptions) (BlobFsScanOrPullI, error)
+
+	ForceDropDataBlock(hash []byte)
 }
 
 type BlobFsScanOrPullI interface {

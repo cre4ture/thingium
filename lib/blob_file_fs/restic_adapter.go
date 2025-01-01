@@ -40,6 +40,11 @@ type ResticAdapter struct {
 	reader *atomic.Pointer[archiver.EasyArchiveReader]
 }
 
+// ForceDropDataBlock implements model.BlobFsI.
+func (r *ResticAdapter) ForceDropDataBlock(hash []byte) {
+	// TODO: implement
+}
+
 func FactoryResticAdapter(
 	ctx context.Context,
 	ownDeviceID string,
@@ -170,14 +175,15 @@ func (r *ResticScannerOrPuller) ScanOne(workCtx context.Context, fi *protocol.Fi
 	}()
 
 	if r.scanOpts.OnlyCheck {
-		result.Err = UpdateFile(workCtx, r.snw, fi, func(block protocol.BlockInfo, status model.GetBlockDataResult) {
-			fn(int64(block.Size), nil)
-		}, func(block protocol.BlockInfo) ([]byte, error) {
-			// if this is called, it means that the block data is missing and should be downloaded
-			// but we are in scan mode, so no download is desired
-			log.Println("ResticScannerOrPuller::ScanOne(): missing block data")
-			return nil, model.ErrMissingBlockData
-		})
+		result.Err = UpdateFile(workCtx, r.snw, fi, r.parent.folderID,
+			func(block protocol.BlockInfo, status model.GetBlockDataResult) {
+				fn(int64(block.Size), nil)
+			}, func(block protocol.BlockInfo) ([]byte, error) {
+				// if this is called, it means that the block data is missing and should be downloaded
+				// but we are in scan mode, so no download is desired
+				log.Println("ResticScannerOrPuller::ScanOne(): missing block data")
+				return nil, model.ErrMissingBlockData
+			})
 	} else {
 		panic("ResticScannerOrPuller::ScanOne(): should not be called for pull!")
 	}
@@ -194,7 +200,7 @@ func (r *ResticScannerOrPuller) PullOne(
 	if r.scanOpts.OnlyCheck {
 		panic("ResticScannerOrPuller::PullOne(): should not be called for scan!")
 	}
-	return UpdateFile(workCtx, r.snw, fi, blockStatusCb, downloadCb)
+	return UpdateFile(workCtx, r.snw, fi, r.parent.folderID, blockStatusCb, downloadCb)
 }
 
 // Finish implements BlobFsScanOrPullI.
@@ -250,8 +256,19 @@ func MapFileInfoTypeToResticNodeType(t protocol.FileInfoType) restic_model.NodeT
 	}
 }
 
-func ConvertFileInfoToResticNode(fi *protocol.FileInfo) *restic_model.Node {
-	path, name := filepath.Split(fi.Name)
+func GenerateFullName(folderID string, name string) string {
+	fullName := "/" + folderID
+	if strings.HasPrefix(name, "/") {
+		fullName += name
+	} else {
+		fullName += "/" + name
+	}
+	return fullName
+}
+
+func ConvertFileInfoToResticNode(fi *protocol.FileInfo, folderID string) *restic_model.Node {
+	fullName := GenerateFullName(folderID, fi.Name)
+	path, name := filepath.Split(fullName)
 	return &restic_model.Node{
 		Name:               name,
 		Type:               MapFileInfoTypeToResticNodeType(fi.Type),
@@ -295,13 +312,13 @@ func UpdateFile(
 	ctx context.Context,
 	snw *archiver.EasyArchiveWriter,
 	fi *protocol.FileInfo,
+	folderID string,
 	blockStatusCb func(block protocol.BlockInfo, status model.GetBlockDataResult),
 	downloadBlockDataCb func(block protocol.BlockInfo) ([]byte, error),
 ) error {
-	node := ConvertFileInfoToResticNode(fi)
+	node := ConvertFileInfoToResticNode(fi, folderID)
 	return snw.UpdateFile(
 		ctx,
-		fi.Name,
 		node,
 		uint64(fi.BlockSize()),
 		func(offset, blockSize uint64, status archiver.BlockUpdateStatus) {
@@ -328,7 +345,7 @@ func (r *ResticAdapter) UpdateFile(
 		return err
 	}
 	defer tmpSnw.Finish(ctx)
-	return UpdateFile(ctx, tmpSnw.snw, fi, blockStatusCb, downloadBlockDataCb)
+	return UpdateFile(ctx, tmpSnw.snw, fi, r.folderID, blockStatusCb, downloadBlockDataCb)
 }
 
 // ReadFile implements model.BlobFsI.
@@ -342,9 +359,9 @@ func (r *ResticAdapter) ReadFileData(ctx context.Context, name string) ([]byte, 
 		context.Background(),
 		[]string{r.ResticAdapterBase.hostname},
 		archiver.TagLists{},
-		[]string{},
+		r.getTargets(),
 		"latest",
-		name,
+		GenerateFullName(r.folderID, name),
 	)
 }
 
@@ -382,7 +399,7 @@ func (r *ResticAdapter) SetEncryptionToken(data []byte) error {
 		Content:            dataHashList,
 		Subtree:            nil,
 		Error:              "",
-		Path:               "/",
+		Path:               "/" + r.folderID,
 	}
 
 	writer, err := archiver.NewEasyArchiveWriter(
@@ -391,9 +408,8 @@ func (r *ResticAdapter) SetEncryptionToken(data []byte) error {
 		r.getTargets(),
 		r.options,
 		func(ctx context.Context, eaw *archiver.EasyArchiveWriter) error {
-			eaw.UpdateFile(
+			return eaw.UpdateFile(
 				ctx,
-				config.EncryptionTokenName,
 				node,
 				uint64(len(data)),
 				func(offset, blockSize uint64, status archiver.BlockUpdateStatus) {},
@@ -402,7 +418,6 @@ func (r *ResticAdapter) SetEncryptionToken(data []byte) error {
 					return data, nil
 				},
 			)
-			return nil
 		},
 	)
 	if err != nil {

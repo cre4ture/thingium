@@ -115,6 +115,10 @@ func TestResticAdapter_InitializationSuccessfulFailsSecondTime(t *testing.T) {
 }
 
 func CreateRepoForTest(t *testing.T, tmpDir string, init bool) *blobfilefs.ResticAdapter {
+	return CreateRepoForTest2(t, tmpDir, init, "test-folder")
+}
+
+func CreateRepoForTest2(t *testing.T, tmpDir string, init bool, folder_name string) *blobfilefs.ResticAdapter {
 	repoDir := tmpDir + "/restic_repo"
 	os.Mkdir(repoDir, 0755)
 
@@ -133,7 +137,7 @@ func CreateRepoForTest(t *testing.T, tmpDir string, init bool) *blobfilefs.Resti
 		assert.NoError(t, err)
 	}
 
-	restic, err := blobfilefs.NewResticAdapter("test-host", "test-folder", gopts)
+	restic, err := blobfilefs.NewResticAdapter("test-host", folder_name, gopts)
 	assert.NoError(t, err, nil)
 	assert.NotNil(t, restic)
 
@@ -397,10 +401,11 @@ func TestResticAdapter_WriteFileReadFileDataOnlyOneSnapshot_nestedFiles(t *testi
 		defer resticRepo.Close()
 		writer, err := resticRepo.StartScanOrPull(context.Background(), model.PullOptions{OnlyMissing: false, OnlyCheck: false})
 		assert.NoError(t, err)
-		defer writer.Finish()
+		defer writer.Finish(context.Background())
 
 		for i := 0; i < fileCount; i++ {
 			assert.Nil(t, writer.PullOne(
+				context.Background(),
 				fis[i],
 				func(block protocol.BlockInfo, status model.GetBlockDataResult) {
 					// blockStatusCb
@@ -448,5 +453,130 @@ func TestResticAdapter_WriteFileReadFileDataOnlyOneSnapshot_nestedFiles(t *testi
 				)
 			}
 		}
+	}()
+}
+
+func TestResticAdapter_WriteFileReadBlockDataByHashAfterWritingEncryptionToken_twoDifferenfFoldersInterleaved(t *testing.T) {
+
+	tmpDir := t.TempDir()
+
+	randg := rand.New(rand.NewSource(10))
+	fi1, blockData1 := generateTestFile("/test_file", randg)
+	fi2, blockData2 := generateTestFile("/test_file", randg)
+
+	func() {
+		resticRepo := CreateRepoForTest2(t, tmpDir, true, "test-folder1")
+		defer resticRepo.Close()
+
+		existingToken, err := resticRepo.GetEncryptionToken()
+		assert.NotNil(t, err)
+		assert.Nil(t, existingToken)
+		assert.Nil(t, resticRepo.SetEncryptionToken([]byte("test_token1")))
+	}()
+
+	func() {
+		resticRepo := CreateRepoForTest2(t, tmpDir, false, "test-folder2")
+		defer resticRepo.Close()
+
+		existingToken, err := resticRepo.GetEncryptionToken()
+		assert.NotNil(t, err)
+		assert.Nil(t, existingToken)
+		assert.Nil(t, resticRepo.SetEncryptionToken([]byte("test_token2")))
+	}()
+
+	func() {
+		resticRepo := CreateRepoForTest2(t, tmpDir, false, "test-folder1")
+		defer resticRepo.Close()
+
+		assert.Nil(t, resticRepo.UpdateFile(
+			context.Background(),
+			fi1, func(block protocol.BlockInfo, status model.GetBlockDataResult) {
+				// blockStatusCb
+			}, func(block protocol.BlockInfo) ([]byte, error) {
+				// downloadBlockDataCb
+				bIdx := block.Offset / int64(fi1.BlockSize())
+				return blockData1[bIdx], nil
+			}))
+	}()
+
+	func() {
+		resticRepo := CreateRepoForTest2(t, tmpDir, false, "test-folder2")
+		defer resticRepo.Close()
+
+		assert.Nil(t, resticRepo.UpdateFile(
+			context.Background(),
+			fi2, func(block protocol.BlockInfo, status model.GetBlockDataResult) {
+				// blockStatusCb
+			}, func(block protocol.BlockInfo) ([]byte, error) {
+				// downloadBlockDataCb
+				bIdx := block.Offset / int64(fi2.BlockSize())
+				return blockData2[bIdx], nil
+			}))
+	}()
+
+	func() {
+		// data blocks from both file should be available in the repo
+		resticRepo := CreateRepoForTest2(t, tmpDir, false, "test-folder1")
+		defer resticRepo.Close()
+
+		for bIdx := 0; bIdx < len(blockData1); bIdx++ {
+			expectedHash := sha256.Sum256(blockData1[bIdx])
+			buf := make([]byte, fi1.BlockSize())
+			dataLen, err := resticRepo.GetHashBlockData(context.Background(), expectedHash[:], buf)
+			assert.NoError(t, err)
+			assert.Equal(t, len(blockData1[bIdx]), dataLen)
+			assert.Equal(t, blockData1[bIdx], buf[:dataLen])
+		}
+
+		for bIdx := 0; bIdx < len(blockData2); bIdx++ {
+			expectedHash := sha256.Sum256(blockData2[bIdx])
+			buf := make([]byte, fi1.BlockSize())
+			dataLen, err := resticRepo.GetHashBlockData(context.Background(), expectedHash[:], buf)
+			assert.NoError(t, err)
+			assert.Equal(t, len(blockData2[bIdx]), dataLen)
+			assert.Equal(t, blockData2[bIdx], buf[:dataLen])
+		}
+	}()
+
+	func() {
+		// data blocks from both file should be available in the repo
+		resticRepo := CreateRepoForTest2(t, tmpDir, false, "test-folder2")
+		defer resticRepo.Close()
+
+		for bIdx := 0; bIdx < len(blockData1); bIdx++ {
+			expectedHash := sha256.Sum256(blockData1[bIdx])
+			buf := make([]byte, fi1.BlockSize())
+			dataLen, err := resticRepo.GetHashBlockData(context.Background(), expectedHash[:], buf)
+			assert.NoError(t, err)
+			assert.Equal(t, len(blockData1[bIdx]), dataLen)
+			assert.Equal(t, blockData1[bIdx], buf[:dataLen])
+		}
+
+		for bIdx := 0; bIdx < len(blockData2); bIdx++ {
+			expectedHash := sha256.Sum256(blockData2[bIdx])
+			buf := make([]byte, fi1.BlockSize())
+			dataLen, err := resticRepo.GetHashBlockData(context.Background(), expectedHash[:], buf)
+			assert.NoError(t, err)
+			assert.Equal(t, len(blockData2[bIdx]), dataLen)
+			assert.Equal(t, blockData2[bIdx], buf[:dataLen])
+		}
+	}()
+
+	func() {
+		resticRepo := CreateRepoForTest2(t, tmpDir, false, "test-folder1")
+		defer resticRepo.Close()
+
+		data, err := resticRepo.GetEncryptionToken()
+		assert.NoError(t, err)
+		assert.Equal(t, []byte("test_token1"), data)
+	}()
+
+	func() {
+		resticRepo := CreateRepoForTest2(t, tmpDir, false, "test-folder2")
+		defer resticRepo.Close()
+
+		data, err := resticRepo.GetEncryptionToken()
+		assert.NoError(t, err)
+		assert.Equal(t, []byte("test_token2"), data)
 	}()
 }

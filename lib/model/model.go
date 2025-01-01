@@ -57,6 +57,7 @@ type service interface {
 	SchedulePull()                                      // something relevant changed, we should try a pull
 	Jobs(page, perpage uint) ([]string, []string, uint) // In progress, Queued, skipped
 	Scan(subs []string) error
+	Validate(subs []string) error
 	Errors() []FileError
 	WatchError() error
 	ScheduleForceRescan(path string)
@@ -90,6 +91,7 @@ type Model interface {
 	ScanFolder(folder string) error
 	ScanFolders() map[string]error
 	ScanFolderSubdirs(folder string, subs []string) error
+	ValidateFolderSubdirs(folder string, subs []string) error
 	State(folder string) (string, time.Time, error)
 	FolderErrors(folder string) ([]FileError, error)
 	WatchError(folder string) error
@@ -2634,6 +2636,19 @@ func (m *model) ScanFolderSubdirs(folder string, subs []string) error {
 	}
 
 	return runner.Scan(subs)
+}
+
+func (m *model) ValidateFolderSubdirs(folder string, subs []string) error {
+	m.mut.RLock()
+	err := m.checkFolderRunningRLocked(folder)
+	runner, _ := m.folderRunners.Get(folder)
+	m.mut.RUnlock()
+
+	if err != nil {
+		return err
+	}
+
+	return runner.Validate(subs)
 }
 
 func (m *model) DelayScan(folder string, next time.Duration) {

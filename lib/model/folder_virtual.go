@@ -9,8 +9,10 @@ package model
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log"
 	"math"
 	"os"
@@ -51,7 +53,7 @@ type virtualFolderSyncthingService struct {
 	blobFs                            BlobFsI // blob FS needs to be early accessible as it is used to read the encryption token. TODO: when to close it?
 	getBlockDataFromCacheOrDownloadFn func(file *protocol.FileInfo, block protocol.BlockInfo) ([]byte, error, GetBlockDataResult)
 
-	running *runningVirtualFolderSyncthingService
+	running atomic.Pointer[runningVirtualFolderSyncthingService]
 }
 
 type runningVirtualFolderSyncthingService struct {
@@ -159,7 +161,7 @@ func NewVirtualFolder(
 		mountPath:                         mountPath,
 		blobFs:                            blobFs,
 		getBlockDataFromCacheOrDownloadFn: downloadFunction,
-		running:                           nil,
+		running:                           atomic.Pointer[runningVirtualFolderSyncthingService]{},
 	}
 
 	return f
@@ -172,7 +174,8 @@ func (vf *virtualFolderSyncthingService) runVirtualFolderServiceCoroutine(
 
 	initError := func() error { // coroutine
 
-		if vf.running != nil {
+		running := vf.running.Load()
+		if running != nil {
 			return errors.New("internal error. virtual folder already running")
 		}
 
@@ -180,7 +183,7 @@ func (vf *virtualFolderSyncthingService) runVirtualFolderServiceCoroutine(
 		defer lifetimeCtxCancel()
 
 		jobQ := newJobQueue()
-		rvf := &runningVirtualFolderSyncthingService{
+		running = &runningVirtualFolderSyncthingService{
 			parent:                  vf,
 			blobFs:                  vf.blobFs,
 			serviceRunningCtx:       serviceRunningCtx,
@@ -189,7 +192,7 @@ func (vf *virtualFolderSyncthingService) runVirtualFolderServiceCoroutine(
 			initialScanState:        INITIAL_SCAN_IDLE,
 			InitialScanDone:         make(chan struct{}, 1),
 		}
-		vf.running = rvf
+		vf.running.Store(running)
 
 		backgroundDownloadTasks := vf.Copiers
 		if backgroundDownloadTasks == 0 {
@@ -202,7 +205,7 @@ func (vf *virtualFolderSyncthingService) runVirtualFolderServiceCoroutine(
 			backgroundDownloadTaskWaitGroup.Add(1)
 			go func() {
 				defer backgroundDownloadTaskWaitGroup.Done()
-				vf.running.serve_backgroundDownloadTask()
+				running.serve_backgroundDownloadTask()
 			}()
 		}
 		defer jobQ.Close()
@@ -227,12 +230,12 @@ func (vf *virtualFolderSyncthingService) runVirtualFolderServiceCoroutine(
 			}()
 		}
 
-		if rvf.initialScanState == INITIAL_SCAN_IDLE {
-			rvf.initialScanState = INITIAL_SCAN_RUNNING
+		if running.initialScanState == INITIAL_SCAN_IDLE {
+			running.initialScanState = INITIAL_SCAN_RUNNING
 			// TODO: rvf.Pull_x(ctx, PullOptions{false, true})
-			rvf.initialScanState = INITIAL_SCAN_COMPLETED
-			close(rvf.InitialScanDone)
-			rvf.pullOrScan_x(doWorkCtx, PullOptions{true, false})
+			running.initialScanState = INITIAL_SCAN_COMPLETED
+			close(running.InitialScanDone)
+			running.pullOrScan_x(doWorkCtx, PullOptions{true, false, false})
 		}
 
 		// unblock caller after successful init
@@ -253,11 +256,12 @@ func (vf *virtualFolderSyncthingService) runVirtualFolderServiceCoroutine(
 func (f *virtualFolderSyncthingService) RequestBackgroundDownloadI(
 	filename string, size int64, modified time.Time, fn JobQueueProgressFn,
 ) {
-	if f.running == nil {
+	running := f.running.Load()
+	if running == nil {
 		panic("RequestBackgroundDownloadI() called on non-running virtual folder")
 	}
 
-	f.running.RequestBackgroundDownloadI(filename, size, modified, fn)
+	running.RequestBackgroundDownloadI(filename, size, modified, fn)
 }
 
 func (f *runningVirtualFolderSyncthingService) RequestBackgroundDownloadI(
@@ -343,9 +347,13 @@ func (f *virtualFolderSyncthingService) Serve(doWorkCtx context.Context) error {
 			continue
 
 		case <-f.pullScheduled: // TODO: replace with "doInSyncChan"
+			running := f.running.Load()
+			if running == nil {
+				continue
+			}
 			logger.DefaultLogger.Infof("virtualFolderServe: case <-f.pullScheduled")
 			l.Debugf("Serve: f.pullAllMissing(false) - START")
-			err := f.running.pullOrScan_x(doWorkCtx, PullOptions{true, false})
+			err := running.pullOrScan_x(doWorkCtx, PullOptions{true, false, false})
 			l.Debugf("Serve: f.pullAllMissing(false) - DONE. Err: %v", err)
 			logger.DefaultLogger.Infof("virtualFolderServe: case <-f.pullScheduled - 2")
 			continue
@@ -361,10 +369,11 @@ func (f *virtualFolderSyncthingService) DelayScan(d time.Duration) {} // model.s
 func (f *virtualFolderSyncthingService) ScheduleScan() {
 	logger.DefaultLogger.Infof("ScheduleScan - pull_x")
 	f.doInSync(func() error {
-		if f.running == nil {
+		running := f.running.Load()
+		if running == nil {
 			return nil // ignore request
 		}
-		err := f.running.pullOrScan_x(f.ctx, PullOptions{false, true})
+		err := running.pullOrScan_x(f.ctx, PullOptions{false, true, false})
 		logger.DefaultLogger.Infof("ScheduleScan - pull_x - DONE. Err: %v", err)
 		return err
 	})
@@ -372,29 +381,42 @@ func (f *virtualFolderSyncthingService) ScheduleScan() {
 
 // model.service API
 func (f *virtualFolderSyncthingService) Jobs(page, per_page uint) ([]string, []string, uint) {
-	if f.running == nil {
+	running := f.running.Load()
+	if running == nil {
 		return []string{}, []string{}, 0
 	}
-	return f.running.backgroundDownloadQueue.Jobs(uint(page), uint(per_page))
+	return running.backgroundDownloadQueue.Jobs(uint(page), uint(per_page))
 }
 
 // model.service API
 func (f *virtualFolderSyncthingService) BringToFront(filename string) {
-	if f.running == nil {
+	running := f.running.Load()
+	if running == nil {
 		return
 	}
 
-	f.running.backgroundDownloadQueue.BringToFront(filename)
+	running.backgroundDownloadQueue.BringToFront(filename)
 }
 
 // model.service API
 func (vf *virtualFolderSyncthingService) Scan(subs []string) error {
-	if vf.running == nil {
-		return nil
+	running := vf.running.Load()
+	if running == nil {
+		return fmt.Errorf("virtual folder not running")
 	}
 
 	logger.DefaultLogger.Infof("Scan(%+v) - pull_x", subs)
-	return vf.running.pullOrScan_x_doInSync(vf.ctx, PullOptions{false, true})
+	return running.pullOrScan_x_doInSync(vf.ctx, PullOptions{false, true, false})
+}
+
+func (vf *virtualFolderSyncthingService) Validate(subs []string) error {
+	running := vf.running.Load()
+	if running == nil {
+		return fmt.Errorf("virtual folder not running")
+	}
+
+	logger.DefaultLogger.Infof("Validate(%+v) - pull_x", subs)
+	return running.pullOrScan_x_doInSync(vf.ctx, PullOptions{false, true, true})
 }
 
 func (f *runningVirtualFolderSyncthingService) pullOrScan_x_doInSync(doWorkCtx context.Context, opts PullOptions) error {
@@ -489,6 +511,24 @@ func (vf *runningVirtualFolderSyncthingService) pullOrScan_x(doWorkCtx context.C
 			progressFn := func(deltaBytes int64, result *JobResult) {
 				asyncNotifier.Progress.Update(deltaBytes)
 				if result != nil {
+
+					if result.Err == nil && opts.CheckData {
+						buf := make([]byte, f.BlockSize())
+						for _, block := range f.Blocks {
+							dataLen, err := vf.blobFs.GetHashBlockData(doWorkCtx, block.Hash, buf)
+							if err != nil {
+								result.Err = err
+								break
+							}
+
+							actualHashSum := sha256.Sum256(buf[:dataLen])
+							if !bytes.Equal(actualHashSum[:], block.Hash) {
+								vf.blobFs.ForceDropDataBlock(block.Hash)
+								result.Err = fmt.Errorf("block hash mismatch")
+							}
+						}
+					}
+
 					doneFn()
 					if !doScan {
 						//logger.DefaultLogger.Infof("%v ONE - DONE, size: %v", actionName, myFileSize)

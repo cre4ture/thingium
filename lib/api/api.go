@@ -287,6 +287,7 @@ func (s *service) Serve(ctx context.Context) error {
 	restMux.HandlerFunc(http.MethodPost, "/rest/db/override", s.postDBOverride)                  // folder
 	restMux.HandlerFunc(http.MethodPost, "/rest/db/revert", s.postDBRevert)                      // folder
 	restMux.HandlerFunc(http.MethodPost, "/rest/db/scan", s.postDBScan)                          // folder [sub...] [delay]
+	restMux.HandlerFunc(http.MethodPost, "/rest/db/validate", s.postDBValidation)                // folder
 	restMux.HandlerFunc(http.MethodPost, "/rest/folder/versions", s.postFolderVersionsRestore)   // folder <body>
 	restMux.HandlerFunc(http.MethodPost, "/rest/system/error", s.postSystemError)                // <body>
 	restMux.HandlerFunc(http.MethodPost, "/rest/system/error/clear", s.postSystemErrorClear)     // -
@@ -1620,6 +1621,19 @@ func (s *service) postDBScan(w http.ResponseWriter, r *http.Request) {
 		if len(errors) > 0 {
 			http.Error(w, "Error scanning folders", http.StatusInternalServerError)
 			sendJSON(w, errors)
+			return
+		}
+	}
+}
+
+func (s *service) postDBValidation(w http.ResponseWriter, r *http.Request) {
+	qs := r.URL.Query()
+	folder := qs.Get("folder")
+	if folder != "" {
+		subs := qs["sub"]
+		err := s.model.ValidateFolderSubdirs(folder, subs)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
 	}

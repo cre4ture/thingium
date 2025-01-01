@@ -427,6 +427,10 @@ func (f *folder) Scan(subdirs []string) error {
 	return f.doInSync(func() error { return f.scanSubdirs(subdirs) })
 }
 
+func (f *folder) Validate(subdirs []string) error {
+	return fmt.Errorf("folder %v does not support validation", f.ID)
+}
+
 // doInSync allows to run functions synchronously in folder.serve from exported,
 // asynchronously called methods.
 func (f *folderBase) newRequestDoInSync(fn func() error) syncRequest {

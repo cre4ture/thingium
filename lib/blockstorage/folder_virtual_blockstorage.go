@@ -37,6 +37,11 @@ type BlockStorageFileBlobFs struct {
 	deleteService *AsyncCheckedDeleteService
 }
 
+// ForceDropDataBlock implements model.BlobFsI.
+func (vf *BlockStorageFileBlobFs) ForceDropDataBlock(hash []byte) {
+	// TODO: implement
+}
+
 // ReadFileData implements model.BlobFsI.
 func (vf *BlockStorageFileBlobFs) ReadFileData(ctx context.Context, name string) ([]byte, error) {
 	panic("unimplemented")
