@@ -893,7 +893,7 @@ func windowsOwnershipEqual(a, b *WindowsData) bool {
 }
 
 type BlockOfFile struct {
-	File  *FileInfo
+	File  FileInfo
 	Block BlockInfo
 }
 

@@ -144,7 +144,7 @@ func (b *BlockStorageFileBlobFsPullOrScan) Finish(workCtx context.Context) error
 	return nil
 }
 
-func (vf *BlockStorageFileBlobFsPullOrScan) ScanOne(workCtx context.Context, fi *protocol.FileInfo, progressFn model.JobQueueProgressFn) error {
+func (vf *BlockStorageFileBlobFsPullOrScan) ScanOne(workCtx context.Context, fi protocol.FileInfo, progressFn model.JobQueueProgressFn) error {
 	if vf.scanOpts.OnlyCheck {
 		return vf.scanOne(vf.scanCtx, fi, progressFn)
 	} else {
@@ -154,7 +154,7 @@ func (vf *BlockStorageFileBlobFsPullOrScan) ScanOne(workCtx context.Context, fi 
 
 func (vf *BlockStorageFileBlobFsPullOrScan) PullOne(
 	workCtx context.Context,
-	fi *protocol.FileInfo,
+	fi protocol.FileInfo,
 	blockStatusCb model.BlobPullStatusFn,
 	downloadCb func(block protocol.BlockInfo) ([]byte, error),
 ) error {
@@ -166,7 +166,7 @@ func (vf *BlockStorageFileBlobFsPullOrScan) PullOne(
 }
 
 func (vf *BlockStorageFileBlobFsPullOrScan) scanOne(
-	ctx context.Context, fi *protocol.FileInfo, fn model.JobQueueProgressFn,
+	ctx context.Context, fi protocol.FileInfo, fn model.JobQueueProgressFn,
 ) error {
 
 	if fi.IsDirectory() {
@@ -215,7 +215,7 @@ var _ = model.BlobFsI(&BlockStorageFileBlobFs{})
 
 func (b *BlockStorageFileBlobFs) UpdateFile(
 	ctx context.Context,
-	fi *protocol.FileInfo,
+	fi protocol.FileInfo,
 	blockStatusCb func(block protocol.BlockInfo, status model.GetBlockDataResult),
 	downloadBlockDataCb func(block protocol.BlockInfo) ([]byte, error),
 ) error {
@@ -281,7 +281,7 @@ func (vf *BlockStorageFileBlobFs) ReserveAndSetI(hash []byte, data []byte) {
 }
 
 func (b *BlockStorageFileBlobFs) updateStoredFileMetadata(
-	fi *protocol.FileInfo,
+	fi protocol.FileInfo,
 ) error {
 	wireFi := fi.ToWire(false)
 	fiData, err := proto.Marshal(wireFi)

@@ -43,6 +43,8 @@ import (
 	"github.com/syncthing/syncthing/lib/tlsutil"
 	"github.com/syncthing/syncthing/lib/upgrade"
 	"github.com/syncthing/syncthing/lib/ur"
+
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
 const (
@@ -125,6 +127,10 @@ func (a *App) Start() error {
 }
 
 func (a *App) startup() error {
+
+	http.Handle("/metrics", promhttp.Handler())
+	go http.ListenAndServe("0.0.0.0:2112", nil)
+
 	a.mainService.Add(ur.NewFailureHandler(a.cfg, a.evLogger))
 
 	a.mainService.Add(a.ll)

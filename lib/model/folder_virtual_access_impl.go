@@ -53,12 +53,12 @@ type DbFileSetReadI interface {
 
 type DbFileSetWriteI interface {
 	Update(fs []protocol.FileInfo)
-	UpdateOneLocalFileInfoLocalChangeDetected(fi *protocol.FileInfo)
+	UpdateOneLocalFileInfoLocalChangeDetected(fi protocol.FileInfo)
 }
 
 type BlockDataAccessI interface {
 	GetBlockDataFromCacheOrDownloadI(
-		file *protocol.FileInfo,
+		file protocol.FileInfo,
 		block protocol.BlockInfo,
 	) ([]byte, error, GetBlockDataResult)
 	ReserveAndSetI(hash []byte, data []byte)
@@ -176,7 +176,7 @@ func (stf *syncthingVirtualFolderFuseAdapter) createFile(
 	}
 
 	fi := createNewVirtualFileInfo(stf.modelID, Permissions, name)
-	stf.fsetRW.UpdateOneLocalFileInfoLocalChangeDetected(&fi)
+	stf.fsetRW.UpdateOneLocalFileInfoLocalChangeDetected(fi)
 
 	snap, err := stf.fset.SnapshotI(closer)
 	if err != nil {
@@ -250,7 +250,7 @@ func (stf *syncthingVirtualFolderFuseAdapter) writeFile(
 		var blockData = []byte{}
 		if blockIdx < len(fi.Blocks) {
 			bi := fi.Blocks[blockIdx]
-			blockData, err, _ = stf.dataAccess.GetBlockDataFromCacheOrDownloadI(&fi, bi)
+			blockData, err, _ = stf.dataAccess.GetBlockDataFromCacheOrDownloadI(fi, bi)
 			ok = (err == nil)
 		}
 		if !ok {
@@ -285,7 +285,7 @@ func (stf *syncthingVirtualFolderFuseAdapter) writeFile(
 		fi.Version = fi.Version.Update(fi.ModifiedBy)
 
 		stf.dataAccess.ReserveAndSetI(biNew.Hash, blockData)
-		stf.fsetRW.UpdateOneLocalFileInfoLocalChangeDetected(&fi)
+		stf.fsetRW.UpdateOneLocalFileInfoLocalChangeDetected(fi)
 
 		blockIdx += 1
 		inputPos = inputPosNext
@@ -322,7 +322,7 @@ func (stf *syncthingVirtualFolderFuseAdapter) deleteFile(ctx context.Context, pa
 	fi.Size = 0
 	fi.Blocks = nil
 	fi.Version = fi.Version.Update(stf.modelID)
-	stf.fsetRW.UpdateOneLocalFileInfoLocalChangeDetected(&fi)
+	stf.fsetRW.UpdateOneLocalFileInfoLocalChangeDetected(fi)
 
 	return 0
 }
@@ -341,7 +341,7 @@ func (stf *syncthingVirtualFolderFuseAdapter) createDir(ctx context.Context, pat
 	fi := createNewVirtualFileInfo(stf.modelID, nil, path)
 	fi.Type = protocol.FileInfoTypeDirectory
 	fi.Blocks = nil
-	stf.fsetRW.UpdateOneLocalFileInfoLocalChangeDetected(&fi)
+	stf.fsetRW.UpdateOneLocalFileInfoLocalChangeDetected(fi)
 	return 0
 }
 
@@ -374,7 +374,7 @@ func (stf *syncthingVirtualFolderFuseAdapter) deleteDir(ctx context.Context, pat
 	fi.Size = 0
 	fi.Blocks = []protocol.BlockInfo{}
 	fi.Version = fi.Version.Update(stf.modelID)
-	stf.fsetRW.UpdateOneLocalFileInfoLocalChangeDetected(&fi)
+	stf.fsetRW.UpdateOneLocalFileInfoLocalChangeDetected(fi)
 
 	return 0
 }
@@ -409,7 +409,7 @@ func (stf *syncthingVirtualFolderFuseAdapter) renameFileOrDir(
 	fi.ModifiedBy = stf.modelID
 	fi.Name = newPath
 	fi.Version = fi.Version.Update(stf.modelID)
-	stf.fsetRW.UpdateOneLocalFileInfoLocalChangeDetected(&fi)
+	stf.fsetRW.UpdateOneLocalFileInfoLocalChangeDetected(fi)
 
 	return stf.deleteFile(ctx, existingPath)
 }
@@ -477,7 +477,7 @@ func (stf *syncthingVirtualFolderFuseAdapter) createSymlink(
 	fi.Blocks = nil
 	fi.SymlinkTarget = target
 
-	stf.fsetRW.UpdateOneLocalFileInfoLocalChangeDetected(&fi)
+	stf.fsetRW.UpdateOneLocalFileInfoLocalChangeDetected(fi)
 	return 0
 }
 
@@ -592,7 +592,7 @@ func (f *syncthingVirtualFolderFuseAdapter) readDir(path string) (stream ffs.Dir
 type VirtualFileReadResult struct {
 	f           *syncthingVirtualFolderFuseAdapter
 	snap        db.DbSnapshotI
-	fi          *protocol.FileInfo
+	fi          protocol.FileInfo
 	offset      uint64
 	maxToBeRead int
 }
@@ -723,7 +723,7 @@ func (f *syncthingVirtualFolderFuseAdapter) readFile(
 	return &VirtualFileReadResult{
 		f:           f,
 		snap:        snap,
-		fi:          &fi,
+		fi:          fi,
 		offset:      uint64(off),
 		maxToBeRead: len(buf),
 	}, 0

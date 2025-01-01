@@ -90,7 +90,7 @@ type CachedBlock struct {
 
 // GetBlockDataFromCacheOrDownloadI implements model.BlockDataAccessI.
 func (o *OfflineBlockDataAccess) GetBlockDataFromCacheOrDownloadI(
-	file *protocol.FileInfo, block protocol.BlockInfo,
+	file protocol.FileInfo, block protocol.BlockInfo,
 ) ([]byte, error, model.GetBlockDataResult) {
 
 	cacheKey := hashutil.HashToStringMapKey(block.Hash)
@@ -151,6 +151,6 @@ func (o *OfflineDbFileSetWrite) Update(fs []protocol.FileInfo) {
 }
 
 // UpdateOneLocalFileInfoLocalChangeDetected implements model.DbFileSetWriteI.
-func (o *OfflineDbFileSetWrite) UpdateOneLocalFileInfoLocalChangeDetected(fi *protocol.FileInfo) {
+func (o *OfflineDbFileSetWrite) UpdateOneLocalFileInfoLocalChangeDetected(fi protocol.FileInfo) {
 	panic("OfflineDbFileSetWrite::UpdateOneLocalFileInfoLocalChangeDetected(): should not be called for read only folder")
 }

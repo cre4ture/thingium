@@ -170,7 +170,7 @@ func (r *ResticAdapterBase) StartScanOrPullConcrete(serviceCtx context.Context, 
 	}, nil
 }
 
-func (r *ResticScannerOrPuller) ScanOne(workCtx context.Context, fi *protocol.FileInfo, fn model.JobQueueProgressFn) error {
+func (r *ResticScannerOrPuller) ScanOne(workCtx context.Context, fi protocol.FileInfo, fn model.JobQueueProgressFn) error {
 	result := &model.JobResult{}
 	defer func() {
 		fn(0, result)
@@ -195,7 +195,7 @@ func (r *ResticScannerOrPuller) ScanOne(workCtx context.Context, fi *protocol.Fi
 
 func (r *ResticScannerOrPuller) PullOne(
 	workCtx context.Context,
-	fi *protocol.FileInfo,
+	fi protocol.FileInfo,
 	blockStatusCb model.BlobPullStatusFn,
 	downloadCb func(block protocol.BlockInfo) ([]byte, error),
 ) error {
@@ -316,12 +316,12 @@ func convertBlockStatusFromRestic(status archiver.BlockUpdateStatus) model.GetBl
 func UpdateFile(
 	ctx context.Context,
 	snw *archiver.EasyArchiveWriter,
-	fi *protocol.FileInfo,
+	fi protocol.FileInfo,
 	folderID string,
 	blockStatusCb func(block protocol.BlockInfo, status model.GetBlockDataResult),
 	downloadBlockDataCb func(block protocol.BlockInfo) ([]byte, error),
 ) error {
-	node := ConvertFileInfoToResticNode(fi, folderID)
+	node := ConvertFileInfoToResticNode(&fi, folderID)
 	return snw.UpdateFile(
 		ctx,
 		node,
@@ -342,7 +342,7 @@ func UpdateFile(
 // UpdateFile implements model.BlobFsI.
 func (r *ResticAdapter) UpdateFile(
 	ctx context.Context,
-	fi *protocol.FileInfo,
+	fi protocol.FileInfo,
 	blockStatusCb func(block protocol.BlockInfo, status model.GetBlockDataResult),
 	downloadBlockDataCb func(block protocol.BlockInfo) ([]byte, error),
 ) error {

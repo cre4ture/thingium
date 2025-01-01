@@ -110,7 +110,7 @@ func (f *folderBase) pullBlockBase(
 	watch := utils.PerformanceStopWatchStartDisabled()
 	defer watch.LastStep(grp, "FINAL")
 
-	candidates := f.model.blockAvailability(f.FolderConfiguration, snap, *b.File, b.Block)
+	candidates := f.model.blockAvailability(f.FolderConfiguration, snap, b.File, b.Block)
 
 	watch.Step("candidates")
 

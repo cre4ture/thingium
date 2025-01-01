@@ -33,7 +33,7 @@ type BlobFsI interface {
 	// this also handles deletes and directories
 	UpdateFile(
 		ctx context.Context,
-		fi *protocol.FileInfo,
+		fi protocol.FileInfo,
 		blockStatusCb func(block protocol.BlockInfo, status GetBlockDataResult),
 		downloadBlockDataCb func(block protocol.BlockInfo) ([]byte, error),
 	) error
@@ -57,7 +57,7 @@ type BlobPullI interface {
 	// this also handles deletes and directories
 	PullOne(
 		workCtx context.Context,
-		fi *protocol.FileInfo,
+		fi protocol.FileInfo,
 		blockStatusCb BlobPullStatusFn,
 		downloadCb func(block protocol.BlockInfo) ([]byte, error),
 	) error
@@ -65,7 +65,7 @@ type BlobPullI interface {
 }
 
 type BlobFsScanI interface {
-	ScanOne(workCtx context.Context, fi *protocol.FileInfo, fn JobQueueProgressFn) error
+	ScanOne(workCtx context.Context, fi protocol.FileInfo, fn JobQueueProgressFn) error
 	Finish(workCtx context.Context) error
 }
 

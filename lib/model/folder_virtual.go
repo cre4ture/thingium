@@ -20,6 +20,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promauto"
 	"github.com/syncthing/syncthing/lib/config"
 	"github.com/syncthing/syncthing/lib/db"
 	"github.com/syncthing/syncthing/lib/events"
@@ -30,7 +32,6 @@ import (
 	"github.com/syncthing/syncthing/lib/sync"
 	"github.com/syncthing/syncthing/lib/utils"
 	"github.com/syncthing/syncthing/lib/versioner"
-	"golang.org/x/sync/errgroup"
 )
 
 func init() {
@@ -52,7 +53,7 @@ type virtualFolderSyncthingService struct {
 	lifetimeCtxCancel                 context.CancelFunc // TODO: when to call this function?
 	mountPath                         string
 	blobFs                            BlobFsI // blob FS needs to be early accessible as it is used to read the encryption token. TODO: when to close it?
-	getBlockDataFromCacheOrDownloadFn func(file *protocol.FileInfo, block protocol.BlockInfo) ([]byte, error, GetBlockDataResult)
+	getBlockDataFromCacheOrDownloadFn func(file protocol.FileInfo, block protocol.BlockInfo) ([]byte, error, GetBlockDataResult)
 
 	running atomic.Pointer[runningVirtualFolderSyncthingService]
 }
@@ -70,7 +71,7 @@ type runningVirtualFolderSyncthingService struct {
 }
 
 func (vFSS *virtualFolderSyncthingService) GetBlockDataFromCacheOrDownloadI(
-	file *protocol.FileInfo,
+	file protocol.FileInfo,
 	block protocol.BlockInfo,
 ) ([]byte, error, GetBlockDataResult) {
 	return vFSS.getBlockDataFromCacheOrDownloadFn(file, block)
@@ -103,7 +104,7 @@ func NewVirtualFolder(
 	}
 
 	blobFs := BlobFsI(nil)
-	downloadFunction := (func(file *protocol.FileInfo, block protocol.BlockInfo) ([]byte, error, GetBlockDataResult))(nil)
+	downloadFunction := (func(file protocol.FileInfo, block protocol.BlockInfo) ([]byte, error, GetBlockDataResult))(nil)
 
 	logger.DefaultLogger.Infof("newVirtualFolder(): create storage: %v, mount: %v", blobUrl, mountPath)
 
@@ -117,7 +118,7 @@ func NewVirtualFolder(
 			folderBase.evLogger,
 			fset)
 
-		downloadFunction = func(file *protocol.FileInfo, block protocol.BlockInfo) ([]byte, error, GetBlockDataResult) {
+		downloadFunction = func(file protocol.FileInfo, block protocol.BlockInfo) ([]byte, error, GetBlockDataResult) {
 			buf := make([]byte, block.Size)
 			dataSize, err := blobFs.GetHashBlockData(lifetimeCtx, block.Hash, buf)
 			if err == nil {
@@ -147,7 +148,7 @@ func NewVirtualFolder(
 			blockCache,
 		)
 
-		downloadFunction = func(file *protocol.FileInfo, block protocol.BlockInfo) ([]byte, error, GetBlockDataResult) {
+		downloadFunction = func(file protocol.FileInfo, block protocol.BlockInfo) ([]byte, error, GetBlockDataResult) {
 			return GetBlockDataFromCacheOrDownload(blockCache, file, block, func(block protocol.BlockInfo) ([]byte, error) {
 				return folderBase.pullBlockBaseConvenient(protocol.BlockOfFile{File: file, Block: block})
 			}, false)
@@ -282,9 +283,9 @@ func (f *runningVirtualFolderSyncthingService) RequestBackgroundDownloadI(
 						return err
 					}
 
-					return f.blobFs.UpdateFile(f.doWorkCtx, &fi, blockStatusCb,
+					return f.blobFs.UpdateFile(f.doWorkCtx, fi, blockStatusCb,
 						func(block protocol.BlockInfo) ([]byte, error) {
-							return f.parent.pullBlockBaseConvenientSnap(snap, protocol.BlockOfFile{File: &fi, Block: block})
+							return f.parent.pullBlockBaseConvenientSnap(snap, protocol.BlockOfFile{File: fi, Block: block})
 						})
 				})
 		})
@@ -500,17 +501,78 @@ func (d *DataCheckerScan) Finish(workCtx context.Context) error {
 	return d.impl.Finish(workCtx)
 }
 
-// PullOne implements BlobPullI.
-func (d *DataCheckerScan) ScanOne(workCtx context.Context, fi *protocol.FileInfo, fn JobQueueProgressFn) error {
+var (
+	syncthing_file_scan_duration = promauto.NewGauge(prometheus.GaugeOpts{
+		Name: "syncthing_file_scan_duration",
+		Help: "The total number of blocks validated",
+	})
+	syncthing_scanned_files_total = promauto.NewCounter(prometheus.CounterOpts{
+		Name: "syncthing_scanned_files_total",
+		Help: "The total number of files scanned",
+	})
+	syncthing_scanned_files_total2 = promauto.NewCounter(prometheus.CounterOpts{
+		Name: "syncthing_scanned_files_total2",
+		Help: "The total number of files scanned",
+	})
+	syncthing_queued_for_scan_files_total = promauto.NewCounter(prometheus.CounterOpts{
+		Name: "syncthing_queued_for_scan_files_total",
+		Help: "The total number of files scanned",
+	})
+	syncthing_validated_blocks_total = promauto.NewCounter(prometheus.CounterOpts{
+		Name: "syncthing_validated_blocks_total",
+		Help: "The total number of blocks validated",
+	})
+	syncthing_queued_for_validation_blocks_total = promauto.NewCounter(prometheus.CounterOpts{
+		Name: "syncthing_queued_for_validation_blocks_total",
+		Help: "The total number of blocks validated",
+	})
+)
 
-	eg := errgroup.Group{}
-	eg.SetLimit(11)
-	eg.Go(func() error {
-		return d.impl.ScanOne(workCtx, fi, fn)
+type ErrorCollector struct {
+	err atomic.Pointer[error]
+}
+
+func NewErrorCollector() *ErrorCollector {
+	return &ErrorCollector{
+		err: atomic.Pointer[error]{},
+	}
+}
+
+func (ec *ErrorCollector) Collect(err error) {
+	ec.err.CompareAndSwap(nil, &err)
+}
+
+func (ec *ErrorCollector) Error() error {
+	return *ec.err.Load()
+}
+
+// PullOne implements BlobPullI.
+func (d *DataCheckerScan) ScanOne(workCtx context.Context, fi protocol.FileInfo, progressReportedFn JobQueueProgressFn) error {
+
+	start := time.Now()
+	collector := NewErrorCollector()
+	sg := utils.NewSafeWorkGroup(workCtx, 11)
+	sg.Run(func(done func(), ctx context.Context) {
+		syncthing_queued_for_scan_files_total.Inc()
+		go func() {
+			defer syncthing_scanned_files_total.Inc()
+			collector.Collect(d.impl.ScanOne(workCtx, fi, func(deltaBytes int64, result *JobResult) {
+				progressReportedFn(deltaBytes, nil)
+				if result != nil {
+					collector.Collect(result.Err)
+					syncthing_scanned_files_total2.Inc()
+					end := time.Now()
+					syncthing_file_scan_duration.Set(float64(end.Sub(start).Milliseconds()))
+					done()
+				}
+			}))
+		}()
 	})
 
 	for _, block := range fi.Blocks {
-		eg.Go(func() error {
+		sg.Go(func(ctx context.Context) {
+			syncthing_queued_for_validation_blocks_total.Inc()
+			defer syncthing_validated_blocks_total.Inc()
 			buf := make([]byte, block.Size)
 			n, errData := d.fs.GetHashBlockData(workCtx, block.Hash, buf)
 			if errData == nil {
@@ -519,12 +581,16 @@ func (d *DataCheckerScan) ScanOne(workCtx context.Context, fi *protocol.FileInfo
 					errData = fmt.Errorf("block hash mismatch")
 				}
 			}
-			fn(int64(block.Size), JobResultError(errData))
-			return errData
+			progressReportedFn(int64(block.Size), nil)
+			collector.Collect(errData)
 		})
 	}
 
-	return eg.Wait()
+	sg.CloseAndWait()
+
+	err := collector.Error()
+	progressReportedFn(0, JobResultError(err))
+	return err
 }
 
 func (vf *runningVirtualFolderSyncthingService) pullOrScan_x(doWorkCtx context.Context, opts PullOptions) error {
@@ -593,8 +659,12 @@ func (vf *runningVirtualFolderSyncthingService) pullOrScan_x(doWorkCtx context.C
 		// unlimited for pull
 		leaseCnt = math.MaxUint
 	}
-	leases := utils.NewParallelLeases(leaseCnt, actionName)
-	defer leases.AbortAndWait()
+	if opts.CheckData {
+		// check data is more expensive
+		leaseCnt = 10
+	}
+	leases := utils.NewSafeWorkGroup(doWorkCtx, int(leaseCnt))
+	defer leases.CloseAndWait()
 
 	isAbortOrErr := false
 	pullF := func(f protocol.FileInfo) bool /* true to continue */ {
@@ -604,23 +674,6 @@ func (vf *runningVirtualFolderSyncthingService) pullOrScan_x(doWorkCtx context.C
 			progressFn := func(deltaBytes int64, result *JobResult) {
 				asyncNotifier.Progress.Update(deltaBytes)
 				if result != nil {
-
-					if result.Err == nil && opts.CheckData {
-						buf := make([]byte, f.BlockSize())
-						for _, block := range f.Blocks {
-							dataLen, err := vf.blobFs.GetHashBlockData(doWorkCtx, block.Hash, buf)
-							if err != nil {
-								result.Err = err
-								break
-							}
-
-							actualHashSum := sha256.Sum256(buf[:dataLen])
-							if !bytes.Equal(actualHashSum[:], block.Hash) {
-								vf.blobFs.ForceDropDataBlock(block.Hash)
-								result.Err = fmt.Errorf("block hash mismatch")
-							}
-						}
-					}
 
 					doneFn()
 
@@ -660,7 +713,15 @@ func (vf *runningVirtualFolderSyncthingService) pullOrScan_x(doWorkCtx context.C
 
 			err := error(nil)
 			if scanner != nil {
-				err = scanner.ScanOne(doWorkCtx, &f, progressFn)
+				//start := time.Now()
+				err = scanner.ScanOne(doWorkCtx, f, func(deltaBytes int64, result *JobResult) {
+					//if result != nil {
+					//	//time.Sleep(5 * time.Millisecond)
+					//	//end := time.Now()
+					//	//syncthing_file_scan_duration.Set(float64(end.Sub(start).Milliseconds()))
+					//}
+					progressFn(deltaBytes, result)
+				})
 			} else {
 				// pull implementation is the same for all backends
 				err = func() error {
@@ -687,7 +748,7 @@ func (vf *runningVirtualFolderSyncthingService) pullOrScan_x(doWorkCtx context.C
 
 					if f.IsDirectory() {
 						// not much work to do for directories. do it synchronously
-						err := puller.PullOne(doWorkCtx, &f, nil, nil)
+						err := puller.PullOne(doWorkCtx, f, nil, nil)
 						if err == nil {
 							vf.parent.updateOneLocalFileInfo(&f, events.RemoteChangeDetected)
 						}
@@ -710,13 +771,13 @@ func (vf *runningVirtualFolderSyncthingService) pullOrScan_x(doWorkCtx context.C
 								}
 								return runStatusReportingPull(vf, fi,
 									func(blockStatusCb BlobPullStatusFn) error {
-										return puller.PullOne(doWorkCtx, &fi,
+										return puller.PullOne(doWorkCtx, fi,
 											func(block protocol.BlockInfo, status GetBlockDataResult) {
 												blockStatusCb(block, status)
 												progressFn(int64(block.Size), nil)
 											},
 											func(block protocol.BlockInfo) ([]byte, error) {
-												return vf.parent.pullBlockBaseConvenientSnap(snap, protocol.BlockOfFile{File: &fi, Block: block})
+												return vf.parent.pullBlockBaseConvenientSnap(snap, protocol.BlockOfFile{File: fi, Block: block})
 											},
 										)
 									})
@@ -734,7 +795,9 @@ func (vf *runningVirtualFolderSyncthingService) pullOrScan_x(doWorkCtx context.C
 			}
 		}
 
-		leases.AsyncRunOneWithDoneFn(f.FileName(), workF)
+		leases.Run(func(done func(), ctx context.Context) {
+			go workF(done)
+		})
 
 		select {
 		case <-doWorkCtx.Done():
@@ -766,7 +829,8 @@ func (vf *runningVirtualFolderSyncthingService) pullOrScan_x(doWorkCtx context.C
 		}
 	}
 
-	leases.WaitAllFinished()
+	leases.CloseAndWait()
+
 	logger.DefaultLogger.Infof("pull_x - leases.WaitAllFinished() - DONE")
 	serviceObject.ServiceRoutineRun(func(obj *runningVirtualFolderSyncthingService, done func(), ctx context.Context) {
 		defer done()
@@ -803,7 +867,7 @@ func (vf *virtualFolderSyncthingService) Update(fs []protocol.FileInfo) {
 	vf.fset.Update(protocol.LocalDeviceID, fs) // TODO: check if store to blockCache meta needed
 }
 
-func (vf *virtualFolderSyncthingService) UpdateOneLocalFileInfoLocalChangeDetected(fi *protocol.FileInfo) {
+func (vf *virtualFolderSyncthingService) UpdateOneLocalFileInfoLocalChangeDetected(fi protocol.FileInfo) {
 	err := vf.blobFs.UpdateFile(vf.ctx, fi, func(block protocol.BlockInfo, status GetBlockDataResult) {},
 		func(block protocol.BlockInfo) ([]byte, error) {
 			panic("UpdateOneLocalFileInfoLocalChangeDetected(): download callback should not be called for already processed local block changes")
@@ -811,7 +875,7 @@ func (vf *virtualFolderSyncthingService) UpdateOneLocalFileInfoLocalChangeDetect
 	if err != nil {
 		logger.DefaultLogger.Warnf("VFolder: UpdateOneLocalFileInfoLocalChangeDetected(): failed to update file. Err: %+v", err)
 	}
-	vf.updateOneLocalFileInfo(fi, events.LocalChangeDetected)
+	vf.updateOneLocalFileInfo(&fi, events.LocalChangeDetected)
 }
 
 func (f *virtualFolderSyncthingService) Errors() []FileError             { return []FileError{} }

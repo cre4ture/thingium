@@ -87,7 +87,7 @@ type HashBlockStorageI interface {
 
 func GetBlockDataFromCacheOrDownload(
 	connection HashBlockStorageI,
-	file *protocol.FileInfo,
+	file protocol.FileInfo,
 	block protocol.BlockInfo,
 	downloadBlockDataCb func(block protocol.BlockInfo) ([]byte, error),
 	checkOnly bool,
