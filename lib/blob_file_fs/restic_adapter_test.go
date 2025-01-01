@@ -37,7 +37,7 @@ func TestResticAdapter_cleanFilePathSplit(t *testing.T) {
 
 }
 
-func TestResticAdapter_ErrWhenRepoDoesntExist(t *testing.T) {
+func TestResticAdapter_NoErrWhenRepoDoesntExist(t *testing.T) {
 
 	tmpDir := t.TempDir()
 	repoDir := tmpDir + "/restic_repo"
@@ -53,8 +53,9 @@ func TestResticAdapter_ErrWhenRepoDoesntExist(t *testing.T) {
 	assert.NoError(t, err)
 
 	restic, err := blobfilefs.NewResticAdapter("test-host", "test-folder", gopts)
-	assert.ErrorIs(t, err, archiver.ErrNoRepository)
-	assert.Nil(t, restic)
+	assert.NoError(t, err)
+	assert.NotNil(t, restic)
+	restic.Close()
 }
 
 func TestResticAdapter_InitializationSuccessful(t *testing.T) {
@@ -399,7 +400,7 @@ func TestResticAdapter_WriteFileReadFileDataOnlyOneSnapshot_nestedFiles(t *testi
 	func() {
 		resticRepo := CreateRepoForTest(t, tmpDir, true)
 		defer resticRepo.Close()
-		writer, err := resticRepo.StartScanOrPull(context.Background(), model.PullOptions{OnlyMissing: false, OnlyCheck: false})
+		writer, err := resticRepo.StartScanOrPull(context.Background(), model.PullOptions{OnlyMissing: false, OnlyCheck: false, CheckData: false}, func() {})
 		assert.NoError(t, err)
 		defer writer.Finish(context.Background())
 
