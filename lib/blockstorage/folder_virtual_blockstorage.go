@@ -155,7 +155,7 @@ func (vf *BlockStorageFileBlobFsPullOrScan) ScanOne(workCtx context.Context, fi 
 func (vf *BlockStorageFileBlobFsPullOrScan) PullOne(
 	workCtx context.Context,
 	fi *protocol.FileInfo,
-	blockStatusCb func(block protocol.BlockInfo, status model.GetBlockDataResult),
+	blockStatusCb model.BlobPullStatusFn,
 	downloadCb func(block protocol.BlockInfo) ([]byte, error),
 ) error {
 	if vf.scanOpts.OnlyCheck {

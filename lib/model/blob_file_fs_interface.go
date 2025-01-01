@@ -50,13 +50,15 @@ type BlobFsI interface {
 	ForceDropDataBlock(hash []byte)
 }
 
+type BlobPullStatusFn func(block protocol.BlockInfo, status GetBlockDataResult)
+
 type BlobPullI interface {
 	// synchronously pull a single file
 	// this also handles deletes and directories
 	PullOne(
 		workCtx context.Context,
 		fi *protocol.FileInfo,
-		blockStatusCb func(block protocol.BlockInfo, status GetBlockDataResult),
+		blockStatusCb BlobPullStatusFn,
 		downloadCb func(block protocol.BlockInfo) ([]byte, error),
 	) error
 	Finish(workCtx context.Context) error

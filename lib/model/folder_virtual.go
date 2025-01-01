@@ -272,7 +272,7 @@ func (f *runningVirtualFolderSyncthingService) RequestBackgroundDownloadI(
 	f.RequestBackgroundDownload(filename, size, modified, fn,
 		func(job *jobQueueEntry) error {
 			return runStatusReportingPull(f, fi,
-				func(blockStatusCb func(protocol.BlockInfo, GetBlockDataResult)) error {
+				func(blockStatusCb BlobPullStatusFn) error {
 					closer := utils.NewCloser()
 					defer closer.Close()
 
@@ -319,14 +319,16 @@ func (f *runningVirtualFolderSyncthingService) serve_backgroundDownloadTask() {
 			f.backgroundDownloadQueue.Done(jobPtr.name)
 			jobPtr.abort()
 		} else {
-			workFn := jobPtr.workFn.Swap(nil)
-			err := error(nil)
-			defer func() {
-				jobPtr.Done(err)
+			func() {
+				workFn := jobPtr.workFn.Swap(nil)
+				err := error(nil)
+				defer func() {
+					jobPtr.Done(err)
+				}()
+				if workFn != nil {
+					err = (*workFn)(jobPtr)
+				}
 			}()
-			if workFn != nil {
-				err = (*workFn)(jobPtr)
-			}
 		}
 	}
 }
@@ -663,7 +665,7 @@ func (vf *runningVirtualFolderSyncthingService) pullOrScan_x(doWorkCtx context.C
 									return protocol.ErrNoSuchFile
 								}
 								return runStatusReportingPull(vf, fi,
-									func(blockStatusCb func(protocol.BlockInfo, GetBlockDataResult)) error {
+									func(blockStatusCb BlobPullStatusFn) error {
 										return scanner.PullOne(doWorkCtx, &fi, blockStatusCb,
 											func(block protocol.BlockInfo) ([]byte, error) {
 												return vf.parent.pullBlockBaseConvenientSnap(snap, protocol.BlockOfFile{File: &fi, Block: block})

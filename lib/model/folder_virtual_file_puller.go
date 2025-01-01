@@ -21,7 +21,7 @@ type VirtualFolderFilePuller struct {
 func runStatusReportingPull(
 	f *runningVirtualFolderSyncthingService,
 	fi protocol.FileInfo,
-	pullFn func(blockStatusCb func(protocol.BlockInfo, GetBlockDataResult)) error,
+	pullFn func(blockStatusCb BlobPullStatusFn) error,
 ) error {
 	now := time.Now()
 
