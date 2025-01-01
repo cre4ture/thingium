@@ -30,6 +30,7 @@ import (
 	"github.com/syncthing/syncthing/lib/sync"
 	"github.com/syncthing/syncthing/lib/utils"
 	"github.com/syncthing/syncthing/lib/versioner"
+	"golang.org/x/sync/errgroup"
 )
 
 func init() {
@@ -489,6 +490,43 @@ func (vf *runningVirtualFolderSyncthingService) generateSortedJobList(opts PullO
 	return jobs, totalBytes, nil
 }
 
+type DataCheckerScan struct {
+	fs   BlobFsI
+	impl BlobFsScanI
+}
+
+// Finish implements BlobPullI.
+func (d *DataCheckerScan) Finish(workCtx context.Context) error {
+	return d.impl.Finish(workCtx)
+}
+
+// PullOne implements BlobPullI.
+func (d *DataCheckerScan) ScanOne(workCtx context.Context, fi *protocol.FileInfo, fn JobQueueProgressFn) error {
+
+	eg := errgroup.Group{}
+	eg.SetLimit(11)
+	eg.Go(func() error {
+		return d.impl.ScanOne(workCtx, fi, fn)
+	})
+
+	for _, block := range fi.Blocks {
+		eg.Go(func() error {
+			buf := make([]byte, block.Size)
+			n, errData := d.fs.GetHashBlockData(workCtx, block.Hash, buf)
+			if errData == nil {
+				actualHashSum := sha256.Sum256(buf[:n])
+				if !bytes.Equal(actualHashSum[:], block.Hash) {
+					errData = fmt.Errorf("block hash mismatch")
+				}
+			}
+			fn(int64(block.Size), JobResultError(errData))
+			return errData
+		})
+	}
+
+	return eg.Wait()
+}
+
 func (vf *runningVirtualFolderSyncthingService) pullOrScan_x(doWorkCtx context.Context, opts PullOptions) error {
 	defer logger.DefaultLogger.Infof("pull_x END z - opts: %+v", opts)
 	closer := utils.NewCloser()
@@ -510,9 +548,9 @@ func (vf *runningVirtualFolderSyncthingService) pullOrScan_x(doWorkCtx context.C
 
 	serviceObject := utils.NewServingObject(doWorkCtx, vf, 0)
 
-	scanner := BlobFsScanOrPullI(nil)
+	scanPuller := BlobFsScanOrPullI(nil)
 	serviceObject.ServiceRoutineRun(func(obj *runningVirtualFolderSyncthingService, done func(), ctx context.Context) {
-		scanner, err = vf.blobFs.StartScanOrPull(ctx, opts, done)
+		scanPuller, err = vf.blobFs.StartScanOrPull(ctx, opts, done)
 		if err != nil {
 			done()
 		}
@@ -526,6 +564,23 @@ func (vf *runningVirtualFolderSyncthingService) pullOrScan_x(doWorkCtx context.C
 		return err
 	}
 
+	scanner := scanPuller.(BlobFsScanI)
+	puller := scanPuller.(BlobPullI)
+	actionName := ""
+	if opts.OnlyCheck {
+		puller = nil
+		if opts.CheckData {
+			actionName = "ScanValidate"
+			scanner = &DataCheckerScan{fs: vf.blobFs, impl: scanner}
+			totalBytes = totalBytes * 2 // scanned for hash AND data
+		} else {
+			actionName = "Scan"
+		}
+	} else {
+		actionName = "Pull"
+		scanner = nil
+	}
+
 	asyncNotifier := utils.NewAsyncProgressNotifier(vf.serviceRunningCtx)
 	asyncNotifier.StartAsyncProgressNotification(
 		logger.DefaultLogger, totalBytes, uint(1), vf.parent.evLogger, vf.parent.folderID, make([]string, 0), nil)
@@ -533,14 +588,8 @@ func (vf *runningVirtualFolderSyncthingService) pullOrScan_x(doWorkCtx context.C
 	defer asyncNotifier.Stop()
 	defer logger.DefaultLogger.Infof("pull_x END b")
 
-	doScan := opts.OnlyCheck
-	actionName := "Pull"
-	if doScan {
-		actionName = "Scan"
-	}
-
 	leaseCnt := uint(60)
-	if !doScan {
+	if puller != nil {
 		// unlimited for pull
 		leaseCnt = math.MaxUint
 	}
@@ -551,9 +600,7 @@ func (vf *runningVirtualFolderSyncthingService) pullOrScan_x(doWorkCtx context.C
 	pullF := func(f protocol.FileInfo) bool /* true to continue */ {
 		myFileSize := f.FileSize()
 		workF := func(doneFn func()) {
-			if !doScan {
-				//logger.DefaultLogger.Infof("%v ONE - START, size: %v", actionName, myFileSize)
-			}
+
 			progressFn := func(deltaBytes int64, result *JobResult) {
 				asyncNotifier.Progress.Update(deltaBytes)
 				if result != nil {
@@ -576,9 +623,6 @@ func (vf *runningVirtualFolderSyncthingService) pullOrScan_x(doWorkCtx context.C
 					}
 
 					doneFn()
-					if !doScan {
-						//logger.DefaultLogger.Infof("%v ONE - DONE, size: %v", actionName, myFileSize)
-					}
 
 					if result.Err != nil {
 						if errors.Is(result.Err, ErrAborted) {
@@ -615,7 +659,7 @@ func (vf *runningVirtualFolderSyncthingService) pullOrScan_x(doWorkCtx context.C
 			}
 
 			err := error(nil)
-			if opts.OnlyCheck {
+			if scanner != nil {
 				err = scanner.ScanOne(doWorkCtx, &f, progressFn)
 			} else {
 				// pull implementation is the same for all backends
@@ -643,7 +687,7 @@ func (vf *runningVirtualFolderSyncthingService) pullOrScan_x(doWorkCtx context.C
 
 					if f.IsDirectory() {
 						// not much work to do for directories. do it synchronously
-						err := scanner.PullOne(doWorkCtx, &f, nil, nil)
+						err := puller.PullOne(doWorkCtx, &f, nil, nil)
 						if err == nil {
 							vf.parent.updateOneLocalFileInfo(&f, events.RemoteChangeDetected)
 						}
@@ -666,7 +710,11 @@ func (vf *runningVirtualFolderSyncthingService) pullOrScan_x(doWorkCtx context.C
 								}
 								return runStatusReportingPull(vf, fi,
 									func(blockStatusCb BlobPullStatusFn) error {
-										return scanner.PullOne(doWorkCtx, &fi, blockStatusCb,
+										return puller.PullOne(doWorkCtx, &fi,
+											func(block protocol.BlockInfo, status GetBlockDataResult) {
+												blockStatusCb(block, status)
+												progressFn(int64(block.Size), nil)
+											},
 											func(block protocol.BlockInfo) ([]byte, error) {
 												return vf.parent.pullBlockBaseConvenientSnap(snap, protocol.BlockOfFile{File: &fi, Block: block})
 											},
@@ -722,7 +770,11 @@ func (vf *runningVirtualFolderSyncthingService) pullOrScan_x(doWorkCtx context.C
 	logger.DefaultLogger.Infof("pull_x - leases.WaitAllFinished() - DONE")
 	serviceObject.ServiceRoutineRun(func(obj *runningVirtualFolderSyncthingService, done func(), ctx context.Context) {
 		defer done()
-		err = scanner.Finish(ctx)
+		if scanner != nil {
+			err = scanner.Finish(ctx)
+		} else {
+			err = puller.Finish(ctx)
+		}
 		logger.DefaultLogger.Infof("pull_x - scanner.Finish() - DONE, result: %v", err)
 		if err != nil {
 			logger.DefaultLogger.Warnf("pull_x - scanner.Finish() - ERR: %v", err)
@@ -733,7 +785,7 @@ func (vf *runningVirtualFolderSyncthingService) pullOrScan_x(doWorkCtx context.C
 		return nil
 	}
 
-	if doScan {
+	if scanner != nil {
 		vf.parent.ScanCompleted()
 	}
 

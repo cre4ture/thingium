@@ -64,7 +64,12 @@ type BlobPullI interface {
 	Finish(workCtx context.Context) error
 }
 
-type BlobFsScanOrPullI interface {
-	BlobPullI
+type BlobFsScanI interface {
 	ScanOne(workCtx context.Context, fi *protocol.FileInfo, fn JobQueueProgressFn) error
+	Finish(workCtx context.Context) error
+}
+
+type BlobFsScanOrPullI interface {
+	BlobFsScanI
+	BlobPullI
 }

@@ -158,7 +158,7 @@ func (vf *BlockStorageFileBlobFsPullOrScan) PullOne(
 	blockStatusCb model.BlobPullStatusFn,
 	downloadCb func(block protocol.BlockInfo) ([]byte, error),
 ) error {
-	if vf.scanOpts.OnlyCheck {
+	if vf.scanOpts.OnlyCheck && !vf.scanOpts.CheckData {
 		panic("BlockStorageFileBlobFsPullOrScan::PullOne(): should not be called for scan!")
 	} else {
 		return vf.parent.UpdateFile(vf.scanCtx, fi, blockStatusCb, downloadCb)

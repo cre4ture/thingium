@@ -199,7 +199,7 @@ func (r *ResticScannerOrPuller) PullOne(
 	blockStatusCb model.BlobPullStatusFn,
 	downloadCb func(block protocol.BlockInfo) ([]byte, error),
 ) error {
-	if r.scanOpts.OnlyCheck {
+	if r.scanOpts.OnlyCheck && !r.scanOpts.CheckData {
 		panic("ResticScannerOrPuller::PullOne(): should not be called for scan!")
 	}
 	return UpdateFile(workCtx, r.snw, fi, r.parent.folderID, blockStatusCb, downloadCb)
@@ -326,8 +326,9 @@ func UpdateFile(
 		ctx,
 		node,
 		uint64(fi.BlockSize()),
-		func(offset, blockSize uint64, status archiver.BlockUpdateStatus) {
+		func(offset, blockSize uint64, hash []byte, status archiver.BlockUpdateStatus) {
 			blockStatusCb(protocol.BlockInfo{
+				Hash:   hash,
 				Offset: int64(offset),
 				Size:   int(blockSize),
 			}, convertBlockStatusFromRestic(status))
@@ -417,7 +418,7 @@ func (r *ResticAdapter) SetEncryptionToken(data []byte) error {
 				ctx,
 				node,
 				uint64(len(data)),
-				func(offset, blockSize uint64, status archiver.BlockUpdateStatus) {},
+				func(offset, blockSize uint64, hash []byte, status archiver.BlockUpdateStatus) {},
 				func(blockIdx uint64, hash []byte) ([]byte, error) {
 					// will be called only once
 					return data, nil
