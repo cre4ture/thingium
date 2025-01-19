@@ -4,6 +4,7 @@ go 1.22.0
 
 require (
 	github.com/AudriusButkevicius/recli v0.0.7-0.20220911121932-d000ce8fbf0f
+	github.com/alecthomas/assert/v2 v2.11.0
 	github.com/alecthomas/kong v1.6.0
 	github.com/aws/aws-sdk-go v1.55.5
 	github.com/calmh/incontainer v1.0.0
@@ -59,12 +60,14 @@ require (
 require (
 	github.com/Backblaze/blazer v0.7.1 // indirect
 	github.com/Microsoft/go-winio v0.6.2 // indirect
+	github.com/alecthomas/repr v0.4.0 // indirect
 	github.com/anacrolix/fuse v0.3.1 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/elithrar/simple-scrypt v1.3.0 // indirect
 	github.com/felixge/fgprof v0.9.3 // indirect
 	github.com/go-ini/ini v1.67.0 // indirect
 	github.com/goccy/go-json v0.10.3 // indirect
+	github.com/hexops/gotextdiff v1.0.3 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
 	github.com/klauspost/cpuid/v2 v2.2.8 // indirect
 	github.com/kr/fs v0.1.0 // indirect
