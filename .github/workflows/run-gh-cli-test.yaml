@@ -20,6 +20,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: | 
+          gh auth switch
           gh auth setup-git
           echo "hello `date`" >> README.md
           git add README.md
