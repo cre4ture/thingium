@@ -3,6 +3,14 @@ on:
   workflow_dispatch: { }
   issue_comment:
     types: [created]
+  push:
+    branches:
+      - "feature/test_gh_cli_in_actions"
+  pull_request:
+    branches:
+      - "main"
+    paths:
+      - ".github/workflows/run-gh-cli-test.yaml"
   
 jobs:
   sync:
