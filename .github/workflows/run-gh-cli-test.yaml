@@ -1,8 +1,12 @@
 name: test-gh-cli
 on:
   workflow_dispatch: { }
+  issue_comment:
+    types: [created]
+  
 jobs:
   sync:
+    if: contains(github.event.comment.body, 'run-gh-cli')
     runs-on: ubuntu-latest
     permissions:
       contents: write
