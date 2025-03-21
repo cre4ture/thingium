@@ -18,6 +18,7 @@ jobs:
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@v4
       - run: | 
           gh auth setup-git
           echo "hello `date`" >> README.md
