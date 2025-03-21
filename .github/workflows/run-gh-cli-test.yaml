@@ -1,4 +1,4 @@
-name: sync-fork
+name: test-gh-cli
 on:
   workflow_dispatch: { }
 jobs:
