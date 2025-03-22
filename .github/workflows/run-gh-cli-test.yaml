@@ -30,7 +30,8 @@ jobs:
           REPOSITORY: ${{ github.repository }}
           BRANCH_NAME: ${{ github.ref_name }}
       - name: Setup upterm session
-        if: always()
+        # if: always()
+        if: never()
         uses: lhotari/action-upterm@v1
         with:
           ## limits ssh access and adds the ssh public key for the user which triggered the workflow
