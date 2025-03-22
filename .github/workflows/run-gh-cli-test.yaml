@@ -20,12 +20,21 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: | 
-          gh auth switch
           gh auth setup-git
           echo "hello `date`" >> README.md
           git add README.md
           git commit -m "Update README.md"
           git push
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPOSITORY: ${{ github.repository }}
+          BRANCH_NAME: ${{ github.ref_name }}
+      - name: Setup upterm session
+        if: always()
+        uses: lhotari/action-upterm@v1
+        with:
+          ## limits ssh access and adds the ssh public key for the user which triggered the workflow
+          limit-access-to-actor: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPOSITORY: ${{ github.repository }}
