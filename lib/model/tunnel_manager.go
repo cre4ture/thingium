@@ -354,3 +354,50 @@ func loadTunnelConfig(path string) (*bep.TunnelConfig, error) {
 	l.Debugln("Loaded tunnel config:", &config)
 	return &config, nil
 }
+
+func saveTunnelConfig(path string, config *bep.TunnelConfig) error {
+	l.Debugln("Saving tunnel config to file:", path)
+
+	// Create directory if it doesn't exist
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return fmt.Errorf("failed to create directory: %w", err)
+	}
+
+	// Create a temporary file in the same directory
+	tmpFile, err := os.CreateTemp(dir, "tunnels.*.json.tmp")
+	if err != nil {
+		return fmt.Errorf("failed to create temporary file: %w", err)
+	}
+	tmpPath := tmpFile.Name()
+
+	// Clean up in case of failure
+	success := false
+	defer func() {
+		if !success {
+			os.Remove(tmpPath)
+		}
+	}()
+
+	// Write to the temporary file
+	encoder := json.NewEncoder(tmpFile)
+	encoder.SetIndent("", "  ") // Pretty print with 2-space indentation
+	if err := encoder.Encode(config); err != nil {
+		tmpFile.Close()
+		return fmt.Errorf("failed to encode config: %w", err)
+	}
+
+	// Close the file before renaming
+	if err := tmpFile.Close(); err != nil {
+		return fmt.Errorf("failed to close temporary file: %w", err)
+	}
+
+	// Atomic rename to ensure the config file is not corrupted if the process is interrupted
+	if err := os.Rename(tmpPath, path); err != nil {
+		return fmt.Errorf("failed to replace config file: %w", err)
+	}
+
+	success = true
+	l.Debugln("Saved tunnel config:", config)
+	return nil
+}
