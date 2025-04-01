@@ -14,6 +14,8 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"sync"
 
 	"github.com/hitoshi44/go-uid64"
@@ -23,6 +25,7 @@ import (
 
 type TunnelManager struct {
 	sync.Mutex
+	configFile           string
 	config               *bep.TunnelConfig
 	idGenerator          *uid64.Generator
 	localTunnelEndpoints map[protocol.DeviceID]map[uint64]io.ReadWriteCloser
@@ -38,15 +41,16 @@ func NewTunnelManager(configFile string) *TunnelManager {
 		l.Infoln("failed to load tunnel config:", err)
 		config = nil
 	}
-	return NewTunnelManagerFromConfig(config)
+	return NewTunnelManagerFromConfig(config, configFile)
 }
 
-func NewTunnelManagerFromConfig(config *bep.TunnelConfig) *TunnelManager {
+func NewTunnelManagerFromConfig(config *bep.TunnelConfig, configFile string) *TunnelManager {
 	gen, err := uid64.NewGenerator(0)
 	if err != nil {
 		panic(err)
 	}
 	return &TunnelManager{
+		configFile:           configFile,
 		config:               config,
 		idGenerator:          gen,
 		localTunnelEndpoints: make(map[protocol.DeviceID]map[uint64]io.ReadWriteCloser),
@@ -312,23 +316,25 @@ func (m *TunnelManager) Status() []map[string]interface{} {
 
 	status := make([]map[string]interface{}, 0, len(m.config.TunnelsIn)+len(m.config.TunnelsOut))
 
-	for _, tunnel := range m.config.TunnelsIn {
+	for inIdx, tunnel := range m.config.TunnelsIn {
 		info := map[string]interface{}{
+			"id":                     fmt.Sprintf("inbound-%d", inIdx),
 			"serviceID":              tunnel.LocalServiceName,
 			"allowedRemoteDeviceIDs": tunnel.AllowedRemoteDeviceIds,
 			"localDialAddress":       tunnel.LocalDialAddress,
-			"active":                 true,
+			"active":                 tunnel.Enabled,
 			"type":                   "inbound",
 		}
 		status = append(status, info)
 	}
-	for _, tunnel := range m.config.TunnelsOut {
+	for outIdx, tunnel := range m.config.TunnelsOut {
 		info := map[string]interface{}{
+			"id":                 fmt.Sprintf("outbound-%d", outIdx),
 			"localListenAddress": tunnel.LocalListenAddress,
 			"remoteDeviceID":     tunnel.RemoteDeviceId,
 			"serviceID":          tunnel.RemoteServiceName,
 			"remoteAddress":      tunnel.RemoteAddress,
-			"active":             true,
+			"active":             tunnel.Enabled,
 			"type":               "outbound",
 		}
 		status = append(status, info)
@@ -400,4 +406,40 @@ func saveTunnelConfig(path string, config *bep.TunnelConfig) error {
 	success = true
 	l.Debugln("Saved tunnel config:", config)
 	return nil
+}
+
+// setter for TunnelConfig.TunnelsIn/Out.Enabled (by id "inbound/outbound-idx") which also saves the config to file
+func (tm *TunnelManager) SetTunnelEnabled(id string, enabled bool) error {
+	l.Debugln("Setting tunnel enabled for ID:", id, "enabled:", enabled)
+	tm.Lock()
+	defer tm.Unlock()
+
+	var tunnelEnabled *bool
+	var err error
+	after, ok := strings.CutPrefix(id, "inbound-")
+	if ok {
+		idx, err := strconv.Atoi(after)
+		if err == nil {
+			tunnelEnabled = tm.config.TunnelsIn[idx].Enabled
+		}
+	} else {
+		after, ok = strings.CutPrefix(id, "outbound-")
+		if ok {
+			idx, err := strconv.Atoi(after)
+			if err == nil {
+				tunnelEnabled = tm.config.TunnelsOut[idx].Enabled
+			}
+		}
+	}
+
+	if err != nil {
+		return err
+	}
+
+	if tunnelEnabled == nil {
+		return fmt.Errorf("invalid tunnel ID: %s", id)
+	}
+
+	*tunnelEnabled = enabled
+	return saveTunnelConfig(tm.configFile, tm.config)
 }
