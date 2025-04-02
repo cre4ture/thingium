@@ -48,6 +48,7 @@ func TestTunnelManager_ServeLocalListener(t *testing.T) {
 				},
 			},
 		},
+		"no-file",
 	)
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -131,6 +132,7 @@ func TestTunnelManager_HandleOpenRemoteCommand(t *testing.T) {
 				},
 			},
 		},
+		"no-file",
 	)
 
 	// Mock device ID and addresses
@@ -225,6 +227,7 @@ func TestTunnelManager_HandleOpenRemoteCommand_NamedService(t *testing.T) {
 				},
 			},
 		},
+		"no-file",
 	)
 
 	// Create a channel to capture the TunnelData sent to the device
@@ -315,6 +318,7 @@ func TestTunnelManager_HandleOpenRemoteCommand_DisallowedClient(t *testing.T) {
 				},
 			},
 		},
+		"no-file",
 	)
 
 	// Create a channel to capture the TunnelData sent to the device
