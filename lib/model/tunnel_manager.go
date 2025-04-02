@@ -30,20 +30,22 @@ func hashDescriptor(descriptor string) string {
 }
 
 func getDescriptorOutbound(cfg *bep.TunnelOutbound) string {
-	plainDescriptor := fmt.Sprintf("out-%s>%s:%s:%s",
+	plainDescriptor := fmt.Sprintf("out-%s>%s:%s:%s-%v",
 		cfg.LocalListenAddress,
 		cfg.RemoteDeviceId,
 		cfg.RemoteServiceName,
 		guf.DerefOrDefault(cfg.RemoteAddress),
+		guf.DerefOr(cfg.Enabled, true),
 	)
 	return hashDescriptor(plainDescriptor)
 }
 
 func getDescriptorInbound(cfg *bep.TunnelInbound) string {
-	plainDescriptor := fmt.Sprintf("in-%s:%s<[%s]",
+	plainDescriptor := fmt.Sprintf("in-%s:%s<[%s]-%v",
 		cfg.LocalServiceName,
 		cfg.LocalDialAddress,
 		cfg.AllowedRemoteDeviceIds,
+		guf.DerefOr(cfg.Enabled, true),
 	)
 	return hashDescriptor(plainDescriptor)
 }
