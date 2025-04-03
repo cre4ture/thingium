@@ -3405,4 +3405,6 @@ func (fake *Model) TunnelStatus() []map[string]interface{} {
 	return nil
 }
 
+func (fake *Model) SetTunnelEnabled(id string, enabled bool) {}
+
 var _ model.Model = new(Model)

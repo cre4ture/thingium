@@ -121,6 +121,7 @@ type Model interface {
 	RequestGlobal(ctx context.Context, deviceID protocol.DeviceID, folder, name string, blockNo int, offset int64, size int, hash []byte, weakHash uint32, fromTemporary bool) ([]byte, error)
 
 	TunnelStatus() []map[string]interface{}
+	SetTunnelEnabled(id string, enabled bool)
 }
 
 type model struct {
@@ -177,6 +178,11 @@ type model struct {
 // TunnelStatus implements Model.
 func (m *model) TunnelStatus() []map[string]interface{} {
 	return m.tunnelManager.Status()
+}
+
+// TunnelStatus implements Model.
+func (m *model) SetTunnelEnabled(id string, enabled bool) {
+	m.tunnelManager.SetTunnelEnabled(id, enabled)
 }
 
 var _ config.Verifier = &model{}

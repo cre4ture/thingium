@@ -1100,8 +1100,11 @@
                 </div>
                 <div class="panel-footer">
                   <span class="pull-right">
-                    <button type="button" class="btn btn-sm btn-default" ng-if="tunnel.active" disabled>
-                      <span class="fas fa-info-circle"></span>&nbsp;<span translate>Details</span>
+                    <button type="button" class="btn btn-sm btn-default" ng-if="tunnel.active" ng-click="stopTunnel(tunnel)">
+                      <span class="fas fa-info-circle"></span>&nbsp;<span translate>Stop</span>
+                    </button>
+                    <button type="button" class="btn btn-sm btn-default" ng-if="!tunnel.active" ng-click="startTunnel(tunnel)">
+                      <span class="fas fa-info-circle"></span>&nbsp;<span translate>Start</span>
                     </button>
                   </span>
                   <div class="clearfix"></div>

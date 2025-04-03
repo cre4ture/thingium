@@ -474,7 +474,7 @@ func (m *TunnelManager) Status() []map[string]interface{} {
 			"serviceID":              tunnel.json.LocalServiceName,
 			"allowedRemoteDeviceIDs": tunnel.json.AllowedRemoteDeviceIds,
 			"localDialAddress":       tunnel.json.LocalDialAddress,
-			"active":                 tunnel.json.Enabled,
+			"active":                 guf.DerefOr(tunnel.json.Enabled, true),
 			"type":                   "inbound",
 		}
 		status = append(status, info)
@@ -486,7 +486,7 @@ func (m *TunnelManager) Status() []map[string]interface{} {
 			"remoteDeviceID":     tunnel.json.RemoteDeviceId,
 			"serviceID":          tunnel.json.RemoteServiceName,
 			"remoteAddress":      tunnel.json.RemoteAddress,
-			"active":             tunnel.json.Enabled,
+			"active":             guf.DerefOr(tunnel.json.Enabled, true),
 			"type":               "outbound",
 		}
 		status = append(status, info)

@@ -301,6 +301,7 @@ func (s *service) Serve(ctx context.Context) error {
 	restMux.HandlerFunc(http.MethodPost, "/rest/system/pause", s.makeDevicePauseHandler(true))   // [device]
 	restMux.HandlerFunc(http.MethodPost, "/rest/system/resume", s.makeDevicePauseHandler(false)) // [device]
 	restMux.HandlerFunc(http.MethodPost, "/rest/system/debug", s.postSystemDebug)                // [enable] [disable]
+	restMux.HandlerFunc(http.MethodPost, "/rest/system/tunnels-enabled", s.postTunnelsEnabled)
 
 	// The DELETE handlers
 	restMux.HandlerFunc(http.MethodDelete, "/rest/cluster/pending/devices", s.deletePendingDevices) // device
@@ -2098,4 +2099,20 @@ func (w bufferedResponseWriter) Header() http.Header {
 
 func (s *service) getTunnels(w http.ResponseWriter, r *http.Request) {
 	sendJSON(w, s.model.TunnelStatus())
+}
+
+func (s *service) postTunnelsEnabled(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Enabled bool   `json:"enabled"`
+		Id      string `json:"id"`
+	}
+
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	s.model.SetTunnelEnabled(req.Id, req.Enabled)
+
+	sendJSON(w, map[string]string{"status": "success"})
 }

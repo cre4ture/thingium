@@ -642,6 +642,26 @@ angular.module('syncthing.core')
             });
         }
 
+        $scope.stopTunnel = function (tunnel) {
+            $http.post(urlbase + '/system/tunnels-enabled', { id: tunnel.id, enabled: false })
+                .then(function () {
+                    tunnel.active = false;
+                })
+                .catch(function (response) {
+                    console.error('Failed to stop tunnel:', response);
+                });
+        };
+
+        $scope.startTunnel = function (tunnel) {
+            $http.post(urlbase + '/system/tunnels-enabled', { id: tunnel.id, enabled: true })
+                .then(function () {
+                    tunnel.active = true;
+                })
+                .catch(function (response) {
+                    console.error('Failed to start tunnel:', response);
+                });
+        };
+
         function recalcLocalStateTotal() {
             $scope.localStateTotal = {
                 bytes: 0,
