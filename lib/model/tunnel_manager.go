@@ -519,6 +519,46 @@ func getRandomFreePort() int {
 	panic("no free ports")
 }
 
+func (m *TunnelManager) AddOutboundTunnel(localListenAddress string, remoteDeviceID protocol.DeviceID, remoteServiceName string) error {
+
+	err := func() error {
+		m.configMutex.Lock()
+		defer m.configMutex.Unlock()
+
+		newConfig := &bep.TunnelOutbound{
+			LocalListenAddress: localListenAddress,
+			RemoteDeviceId:     remoteDeviceID.String(),
+			RemoteServiceName:  remoteServiceName,
+		}
+		descriptor := getDescriptorOutbound(newConfig)
+
+		// Check if the tunnel already exists
+		if _, exists := m.configOut[descriptor]; exists {
+			return fmt.Errorf("tunnel with descriptor %s already exists", descriptor)
+		}
+
+		config := &bep.TunnelConfig{
+			TunnelsIn:  m.getInboundTunnelsConfig(),
+			TunnelsOut: m.getOutboundTunnelsConfig(),
+		}
+
+		config.TunnelsOut = append(config.TunnelsOut, newConfig)
+
+		if err := saveTunnelConfig(m.configFile, config); err != nil {
+			return fmt.Errorf("failed to save tunnel config: %w", err)
+		}
+
+		return nil
+	}()
+
+	if err != nil {
+		return err
+	}
+
+	m.reloadConfig()
+	return nil
+}
+
 // Status returns information about active tunnels
 func (m *TunnelManager) Status() []map[string]interface{} {
 

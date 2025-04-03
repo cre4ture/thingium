@@ -302,6 +302,7 @@ func (s *service) Serve(ctx context.Context) error {
 	restMux.HandlerFunc(http.MethodPost, "/rest/system/resume", s.makeDevicePauseHandler(false)) // [device]
 	restMux.HandlerFunc(http.MethodPost, "/rest/system/debug", s.postSystemDebug)                // [enable] [disable]
 	restMux.HandlerFunc(http.MethodPost, "/rest/system/tunnels-enabled", s.postTunnelsEnabled)
+	restMux.HandlerFunc(http.MethodPost, "/rest/system/tunnels-add-outbound", s.postTunnelsAddOutbound)
 
 	// The DELETE handlers
 	restMux.HandlerFunc(http.MethodDelete, "/rest/cluster/pending/devices", s.deletePendingDevices) // device
@@ -2113,6 +2114,33 @@ func (s *service) postTunnelsEnabled(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.model.SetTunnelEnabled(req.Id, req.Enabled)
+
+	sendJSON(w, map[string]string{"status": "success"})
+}
+
+func (s *service) postTunnelsAddOutbound(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		LocalListenAddress string `json:"localListenAddress"`
+		RemoteDeviceID     string `json:"remoteDeviceID"`
+		RemoteServiceName  string `json:"remoteServiceName"`
+	}
+
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	deviceId, err := protocol.DeviceIDFromString(req.RemoteDeviceID)
+	if err != nil {
+		http.Error(w, "Invalid device ID", http.StatusBadRequest)
+		return
+	}
+
+	err = s.model.AddTunnelOutbound(req.LocalListenAddress, deviceId, req.RemoteServiceName)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
 
 	sendJSON(w, map[string]string{"status": "success"})
 }

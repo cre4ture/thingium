@@ -122,6 +122,7 @@ type Model interface {
 
 	TunnelStatus() []map[string]interface{}
 	SetTunnelEnabled(id string, enabled bool)
+	AddTunnelOutbound(localListenAddress string, remoteDeviceID protocol.DeviceID, remoteServiceName string) error
 }
 
 type model struct {
@@ -180,9 +181,14 @@ func (m *model) TunnelStatus() []map[string]interface{} {
 	return m.tunnelManager.Status()
 }
 
-// TunnelStatus implements Model.
+// SetTunnelEnabled implements Model.
 func (m *model) SetTunnelEnabled(id string, enabled bool) {
 	m.tunnelManager.SetTunnelEnabled(id, enabled)
+}
+
+// AddTunnelOutbound implements Model.
+func (m *model) AddTunnelOutbound(localListenAddress string, remoteDeviceID protocol.DeviceID, remoteServiceName string) error {
+	return m.tunnelManager.AddOutboundTunnel(localListenAddress, remoteDeviceID, remoteServiceName)
 }
 
 var _ config.Verifier = &model{}

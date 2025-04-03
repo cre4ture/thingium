@@ -662,6 +662,23 @@ angular.module('syncthing.core')
                 });
         };
 
+        $scope.acceptAndStartTunnel = function (tunnel) {
+            const payload = {
+                localListenAddress: tunnel.localListenAddress,
+                remoteDeviceID: tunnel.remoteDeviceID,
+                remoteServiceName: tunnel.serviceID,
+            };
+
+            $http.post(urlbase + '/system/tunnels-add-outbound', payload)
+                .then(function () {
+                    console.log('Tunnel added successfully');
+                    $scope.refreshTunnels();
+                })
+                .catch(function (error) {
+                    console.error('Failed to add tunnel:', error);
+                });
+        };
+
         function recalcLocalStateTotal() {
             $scope.localStateTotal = {
                 bytes: 0,

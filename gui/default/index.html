@@ -1109,7 +1109,7 @@
                     <button type="button" class="btn btn-sm btn-default" ng-if="!tunnel.active && !tunnel.offered" ng-click="startTunnel(tunnel)">
                       <span class="fas fa-info-circle"></span>&nbsp;<span translate>Start</span>
                     </button>
-                    <button type="button" class="btn btn-sm btn-default" ng-if="tunnel.offered" ng-click="acceptTunnel(tunnel)">
+                    <button type="button" class="btn btn-sm btn-default" ng-if="tunnel.offered" ng-click="acceptAndStartTunnel(tunnel)">
                       <span class="fas fa-info-circle"></span>&nbsp;<span translate>Accept & Start</span>
                     </button>
                   </span>
