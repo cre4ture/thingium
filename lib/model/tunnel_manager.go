@@ -562,6 +562,14 @@ func saveTunnelConfig(path string, config *bep.TunnelConfig) error {
 
 // setter for TunnelConfig.TunnelsIn/Out.Enabled (by id "inbound/outbound-idx") which also saves the config to file
 func (tm *TunnelManager) SetTunnelEnabled(id string, enabled bool) error {
+	if err := tm.updateAndSaveConfig(id, enabled); err != nil {
+		return err
+	}
+
+	return tm.reloadConfig()
+}
+
+func (tm *TunnelManager) updateAndSaveConfig(id string, enabled bool) error {
 	tm.configMutex.Lock()
 	defer tm.configMutex.Unlock()
 
@@ -583,8 +591,20 @@ func (tm *TunnelManager) SetTunnelEnabled(id string, enabled bool) error {
 	return fmt.Errorf("tunnel with ID %s not found", id)
 }
 
+func (tm *TunnelManager) reloadConfig() error {
+	config, err := loadTunnelConfig(tm.configFile)
+	if err != nil {
+		return fmt.Errorf("failed to reload tunnel config: %w", err)
+	}
+
+	tm.updateInConfig(config.TunnelsIn)
+	tm.updateOutConfig(config.TunnelsOut)
+
+	return nil
+}
+
 // Helper method to retrieve all inbound tunnels as a slice
-func (tm *TunnelManager) getInboundTunnels() []*bep.TunnelInbound {
+func (tm *TunnelManager) getInboundTunnelsConfig() []*bep.TunnelInbound {
 	tunnels := make([]*bep.TunnelInbound, 0, len(tm.configIn))
 	for _, tunnel := range tm.configIn {
 		tunnels = append(tunnels, tunnel.json)
@@ -593,7 +613,7 @@ func (tm *TunnelManager) getInboundTunnels() []*bep.TunnelInbound {
 }
 
 // Helper method to retrieve all outbound tunnels as a slice
-func (tm *TunnelManager) getOutboundTunnels() []*bep.TunnelOutbound {
+func (tm *TunnelManager) getOutboundTunnelsConfig() []*bep.TunnelOutbound {
 	tunnels := make([]*bep.TunnelOutbound, 0, len(tm.configOut))
 	for _, tunnel := range tm.configOut {
 		tunnels = append(tunnels, tunnel.json)
@@ -605,8 +625,8 @@ func (tm *TunnelManager) getOutboundTunnels() []*bep.TunnelOutbound {
 func (tm *TunnelManager) saveFullConfig_no_lock() error {
 
 	config := &bep.TunnelConfig{
-		TunnelsIn:  tm.getInboundTunnels(),
-		TunnelsOut: tm.getOutboundTunnels(),
+		TunnelsIn:  tm.getInboundTunnelsConfig(),
+		TunnelsOut: tm.getOutboundTunnelsConfig(),
 	}
 
 	return saveTunnelConfig(tm.configFile, config)
