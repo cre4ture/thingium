@@ -259,6 +259,7 @@ enum TunnelCommand {
   TUNNEL_COMMAND_OPEN = 0;
   TUNNEL_COMMAND_CLOSE = 1;
   TUNNEL_COMMAND_DATA = 2;
+  TUNNEL_COMMAND_OFFER = 3;
 }
 
 // ---- tunnels.json ---- TODO: move out of here  ----
@@ -281,6 +282,7 @@ message TunnelInbound {
   string local_dial_address = 2;
   repeated string allowed_remote_device_ids = 3;
   optional bool enabled = 4;
+  optional uint32 suggested_port = 5;
 }
 
 // ---- tunnels.json ---- TODO: move out of here  ----

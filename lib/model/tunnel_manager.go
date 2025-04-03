@@ -16,6 +16,8 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"slices"
+	"strconv"
 	"sync"
 
 	"github.com/ek220/guf"
@@ -66,6 +68,11 @@ type tunnelInConfig struct {
 	json *bep.TunnelInbound
 }
 
+type DeviceConnection struct {
+	tunnelOut        chan<- *protocol.TunnelData
+	serviceOfferings map[string]uint32
+}
+
 type TunnelManager struct {
 	configMutex          sync.Mutex // Mutex for configIn and configOut
 	endpointsMutex       sync.Mutex // Mutex for localTunnelEndpoints and deviceConnections
@@ -74,7 +81,7 @@ type TunnelManager struct {
 	configOut            map[string]*tunnelOutConfig
 	idGenerator          *uid64.Generator
 	localTunnelEndpoints map[protocol.DeviceID]map[uint64]io.ReadWriteCloser
-	deviceConnections    map[protocol.DeviceID]chan<- *protocol.TunnelData
+	deviceConnections    map[protocol.DeviceID]*DeviceConnection
 }
 
 func NewTunnelManager(configFile string) *TunnelManager {
@@ -135,7 +142,7 @@ func NewTunnelManagerFromConfig(config *bep.TunnelConfig, configFile string) *Tu
 		configOut:            configOut,
 		idGenerator:          gen,
 		localTunnelEndpoints: make(map[protocol.DeviceID]map[uint64]io.ReadWriteCloser),
-		deviceConnections:    make(map[protocol.DeviceID]chan<- *protocol.TunnelData),
+		deviceConnections:    make(map[protocol.DeviceID]*DeviceConnection),
 	}
 }
 
@@ -149,6 +156,7 @@ func (tm *TunnelManager) updateInConfig(newInTunnels []*bep.TunnelInbound) {
 		descriptor := getDescriptorInbound(tunnel)
 		if existing, exists := tm.configIn[descriptor]; exists {
 			// Reuse existing context and cancel function
+			existing.json = tunnel // update e.g. suggested port
 			newConfigIn[descriptor] = existing
 		} else {
 			// Create new context and cancel function
@@ -285,7 +293,7 @@ func (tm *TunnelManager) ServeListener(ctx context.Context, listenAddress string
 		tm.registerLocalTunnelEndpoint(destinationDevice, tunnelID, conn)
 
 		// send open command to the destination device
-		tm.deviceConnections[destinationDevice] <- &protocol.TunnelData{
+		tm.deviceConnections[destinationDevice].tunnelOut <- &protocol.TunnelData{
 			D: &bep.TunnelData{
 				TunnelId:                 tunnelID,
 				Command:                  bep.TunnelCommand_TUNNEL_COMMAND_OPEN,
@@ -309,7 +317,7 @@ func (tm *TunnelManager) handleLocalTunnelEndpoint(ctx context.Context, tunnelID
 	defer tm.deregisterLocalTunnelEndpoint(destinationDevice, tunnelID)
 	defer func() {
 		// send close command to the destination device
-		tm.deviceConnections[destinationDevice] <- &protocol.TunnelData{
+		tm.deviceConnections[destinationDevice].tunnelOut <- &protocol.TunnelData{
 			D: &bep.TunnelData{
 				TunnelId: tunnelID,
 				Command:  bep.TunnelCommand_TUNNEL_COMMAND_CLOSE,
@@ -337,7 +345,7 @@ func (tm *TunnelManager) handleLocalTunnelEndpoint(ctx context.Context, tunnelID
 			l.Debugf("Forwarding data to device %v, %s (%d tunnel id): len: %d\n", destinationDevice, destinationAddress, tunnelID, n)
 
 			// Send the data to the destination device
-			tm.deviceConnections[destinationDevice] <- &protocol.TunnelData{
+			tm.deviceConnections[destinationDevice].tunnelOut <- &protocol.TunnelData{
 				D: &bep.TunnelData{
 					TunnelId: tunnelID,
 					Command:  bep.TunnelCommand_TUNNEL_COMMAND_DATA,
@@ -369,15 +377,38 @@ func (tm *TunnelManager) deregisterLocalTunnelEndpoint(deviceID protocol.DeviceI
 }
 
 func (tm *TunnelManager) RegisterDeviceConnection(device protocol.DeviceID, tunnelIn <-chan *protocol.TunnelData, tunnelOut chan<- *protocol.TunnelData) {
-	l.Debugln("Registering device connection, device ID:", device)
-	tm.endpointsMutex.Lock()
-	defer tm.endpointsMutex.Unlock()
-	tm.deviceConnections[device] = tunnelOut
+	func() {
+		l.Debugln("Registering device connection, device ID:", device)
+		tm.endpointsMutex.Lock()
+		defer tm.endpointsMutex.Unlock()
+		tm.deviceConnections[device] = &DeviceConnection{
+			tunnelOut:        tunnelOut,
+			serviceOfferings: make(map[string]uint32),
+		}
+	}()
 
 	// handle all incoming tunnel data for this device
 	go func() {
 		for data := range tunnelIn {
 			tm.forwardRemoteTunnelData(device, data)
+		}
+	}()
+
+	go func() {
+		// send tunnel service offerings
+		tm.configMutex.Lock()
+		defer tm.configMutex.Unlock()
+		for _, inboundSerice := range tm.configIn {
+			if slices.Contains(inboundSerice.json.AllowedRemoteDeviceIds, device.String()) {
+				suggestedPort := strconv.FormatUint(uint64(guf.DerefOr(inboundSerice.json.SuggestedPort, 0)), 10)
+				tunnelOut <- &protocol.TunnelData{
+					D: &bep.TunnelData{
+						Command:                  bep.TunnelCommand_TUNNEL_COMMAND_OFFER,
+						RemoteServiceName:        &inboundSerice.json.LocalServiceName,
+						TunnelDestinationAddress: &suggestedPort,
+					},
+				}
+			}
 		}
 	}()
 }
@@ -387,6 +418,16 @@ func (tm *TunnelManager) DeregisterDeviceConnection(device protocol.DeviceID) {
 	tm.endpointsMutex.Lock()
 	defer tm.endpointsMutex.Unlock()
 	delete(tm.deviceConnections, device)
+}
+
+func parseUint32Or(input string, defaultValue uint32) uint32 {
+	// Parse the input string as a uint32
+	value, err := strconv.ParseUint(input, 10, 32)
+	if err != nil {
+		l.Warnf("Failed to parse %s as uint32: %v", input, err)
+		return defaultValue
+	}
+	return uint32(value)
 }
 
 func (tm *TunnelManager) forwardRemoteTunnelData(fromDevice protocol.DeviceID, data *protocol.TunnelData) {
@@ -447,6 +488,12 @@ func (tm *TunnelManager) forwardRemoteTunnelData(fromDevice protocol.DeviceID, d
 		} else {
 			l.Infof("Close: No TCP connection found for device %v, TunnelID: %s", fromDevice, data.D.TunnelId)
 		}
+	case bep.TunnelCommand_TUNNEL_COMMAND_OFFER:
+		func() {
+			tm.endpointsMutex.Lock()
+			defer tm.endpointsMutex.Unlock()
+			tm.deviceConnections[fromDevice].serviceOfferings[*data.D.RemoteServiceName] = parseUint32Or(guf.DerefOrDefault(data.D.TunnelDestinationAddress), 0)
+		}()
 	default: // unknown command
 		l.Warnf("Unknown tunnel command: %v", data.D.Command)
 	}
@@ -461,35 +508,85 @@ func (tm *TunnelManager) generateTunnelID() uint64 {
 	return uint64(id)
 }
 
+func getRandomFreePort() int {
+	if a, err := net.ResolveTCPAddr("tcp", "localhost:0"); err == nil {
+		var l *net.TCPListener
+		if l, err = net.ListenTCP("tcp", a); err == nil {
+			defer l.Close()
+			return l.Addr().(*net.TCPAddr).Port
+		}
+	}
+	panic("no free ports")
+}
+
 // Status returns information about active tunnels
 func (m *TunnelManager) Status() []map[string]interface{} {
-	m.configMutex.Lock()
-	defer m.configMutex.Unlock()
 
 	status := make([]map[string]interface{}, 0, len(m.configIn)+len(m.configOut))
+	offerings := make(map[string]map[string]map[string]interface{})
 
-	for descriptor, tunnel := range m.configIn {
-		info := map[string]interface{}{
-			"id":                     descriptor,
-			"serviceID":              tunnel.json.LocalServiceName,
-			"allowedRemoteDeviceIDs": tunnel.json.AllowedRemoteDeviceIds,
-			"localDialAddress":       tunnel.json.LocalDialAddress,
-			"active":                 guf.DerefOr(tunnel.json.Enabled, true),
-			"type":                   "inbound",
+	func() {
+		m.endpointsMutex.Lock()
+		defer m.endpointsMutex.Unlock()
+
+		for deviceID, connection := range m.deviceConnections {
+			if offerings[deviceID.String()] == nil {
+				offerings[deviceID.String()] = make(map[string]map[string]interface{})
+			}
+			for serviceName, suggestedPort := range connection.serviceOfferings {
+				if suggestedPort == 0 {
+					suggestedPort = uint32(getRandomFreePort())
+				}
+				info := map[string]interface{}{
+					"localListenAddress": "127.0.0.1:" + strconv.Itoa(int(suggestedPort)),
+					"remoteDeviceID":     deviceID.String(),
+					"serviceID":          serviceName,
+					"offered":            true,
+					"type":               "outbound",
+				}
+				offerings[deviceID.String()][serviceName] = info
+			}
 		}
-		status = append(status, info)
-	}
-	for descriptor, tunnel := range m.configOut {
-		info := map[string]interface{}{
-			"id":                 descriptor,
-			"localListenAddress": tunnel.json.LocalListenAddress,
-			"remoteDeviceID":     tunnel.json.RemoteDeviceId,
-			"serviceID":          tunnel.json.RemoteServiceName,
-			"remoteAddress":      tunnel.json.RemoteAddress,
-			"active":             guf.DerefOr(tunnel.json.Enabled, true),
-			"type":               "outbound",
+	}()
+
+	func() {
+		m.configMutex.Lock()
+		defer m.configMutex.Unlock()
+
+		for descriptor, tunnel := range m.configIn {
+			info := map[string]interface{}{
+				"id":                     descriptor,
+				"serviceID":              tunnel.json.LocalServiceName,
+				"allowedRemoteDeviceIDs": tunnel.json.AllowedRemoteDeviceIds,
+				"localDialAddress":       tunnel.json.LocalDialAddress,
+				"active":                 guf.DerefOr(tunnel.json.Enabled, true),
+				"type":                   "inbound",
+			}
+			status = append(status, info)
 		}
-		status = append(status, info)
+		for descriptor, tunnel := range m.configOut {
+
+			// remove offering when already used
+			delete(offerings[tunnel.json.RemoteDeviceId], tunnel.json.RemoteServiceName)
+
+			info := map[string]interface{}{
+				"id":                 descriptor,
+				"localListenAddress": tunnel.json.LocalListenAddress,
+				"remoteDeviceID":     tunnel.json.RemoteDeviceId,
+				"serviceID":          tunnel.json.RemoteServiceName,
+				"remoteAddress":      tunnel.json.RemoteAddress,
+				"active":             guf.DerefOr(tunnel.json.Enabled, true),
+				"type":               "outbound",
+			}
+			status = append(status, info)
+		}
+	}()
+
+	// add remaining offerings:
+	for _, services := range offerings {
+		for _, info := range services {
+			status = append(status, info)
+		}
 	}
 
 	return status

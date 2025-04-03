@@ -1022,11 +1022,14 @@
                         <span class="visible-xs fa fa-fw fa-check" aria-label="Active"></span>
                       </span>
                     </span>
-                    <span ng-if="!tunnel.active" class="text-danger">
+                    <span ng-if="!tunnel.active" class="text-muted">
                       <span translate>Inactive</span>
                       <span class="inline-icon">
                         <span class="visible-xs fa fa-fw fa-times" aria-label="Inactive"></span>
                       </span>
+                    </span>
+                    <span ng-if="tunnel.offered" class="text-warning">
+                      <span translate>Offered</span>
                     </span>
                   </div>
                   <div class="panel-title-text">
@@ -1100,11 +1103,14 @@
                 </div>
                 <div class="panel-footer">
                   <span class="pull-right">
-                    <button type="button" class="btn btn-sm btn-default" ng-if="tunnel.active" ng-click="stopTunnel(tunnel)">
+                    <button type="button" class="btn btn-sm btn-default" ng-if="tunnel.active && !tunnel.offered" ng-click="stopTunnel(tunnel)">
                       <span class="fas fa-info-circle"></span>&nbsp;<span translate>Stop</span>
                     </button>
-                    <button type="button" class="btn btn-sm btn-default" ng-if="!tunnel.active" ng-click="startTunnel(tunnel)">
+                    <button type="button" class="btn btn-sm btn-default" ng-if="!tunnel.active && !tunnel.offered" ng-click="startTunnel(tunnel)">
                       <span class="fas fa-info-circle"></span>&nbsp;<span translate>Start</span>
+                    </button>
+                    <button type="button" class="btn btn-sm btn-default" ng-if="tunnel.offered" ng-click="acceptTunnel(tunnel)">
+                      <span class="fas fa-info-circle"></span>&nbsp;<span translate>Accept & Start</span>
                     </button>
                   </span>
                   <div class="clearfix"></div>
