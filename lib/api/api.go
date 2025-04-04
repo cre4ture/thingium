@@ -301,7 +301,7 @@ func (s *service) Serve(ctx context.Context) error {
 	restMux.HandlerFunc(http.MethodPost, "/rest/system/pause", s.makeDevicePauseHandler(true))   // [device]
 	restMux.HandlerFunc(http.MethodPost, "/rest/system/resume", s.makeDevicePauseHandler(false)) // [device]
 	restMux.HandlerFunc(http.MethodPost, "/rest/system/debug", s.postSystemDebug)                // [enable] [disable]
-	restMux.HandlerFunc(http.MethodPost, "/rest/system/tunnels-enabled", s.postTunnelsEnabled)
+	restMux.HandlerFunc(http.MethodPost, "/rest/system/tunnels-modify", s.postTunnelsModify)
 	restMux.HandlerFunc(http.MethodPost, "/rest/system/tunnels-add-outbound", s.postTunnelsAddOutbound)
 
 	// The DELETE handlers
@@ -2102,10 +2102,10 @@ func (s *service) getTunnels(w http.ResponseWriter, r *http.Request) {
 	sendJSON(w, s.model.TunnelStatus())
 }
 
-func (s *service) postTunnelsEnabled(w http.ResponseWriter, r *http.Request) {
+func (s *service) postTunnelsModify(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Enabled bool   `json:"enabled"`
-		Id      string `json:"id"`
+		Action string `json:"action"`
+		Id     string `json:"id"`
 	}
 
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -2113,7 +2113,10 @@ func (s *service) postTunnelsEnabled(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	s.model.SetTunnelEnabled(req.Id, req.Enabled)
+	if err := s.model.ModifyTunnel(req.Id, req.Action); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
 
 	sendJSON(w, map[string]string{"status": "success"})
 }

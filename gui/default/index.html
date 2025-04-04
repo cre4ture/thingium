@@ -1007,7 +1007,7 @@
         <div class="col-md-6" aria-labelledby="tunnel_list" role="region">
           <h3 id="tunnel_list"><span translate>Tunnels</span><span ng-if="tunnelList().length > 0"> ({{tunnelList().length}})</span></h3>
           <div class="panel-group" id="tunnels">
-            <div class="panel panel-default" ng-repeat="tunnel in tunnelList() track by $index">
+            <div class="panel panel-default" ng-repeat="tunnel in tunnelList() track by tunnel.uiID">
               <button class="btn panel-heading" data-toggle="collapse" data-parent="#tunnels" data-target="#tunnel-{{$index}}" aria-expanded="false">
                 <h4 class="panel-title">
                   <div class="panel-icon hidden-xs">
@@ -1103,14 +1103,17 @@
                 </div>
                 <div class="panel-footer">
                   <span class="pull-right">
+                    <button type="button" class="btn btn-sm btn-default" ng-if="!tunnel.offered" ng-click="deleteTunnel(tunnel)">
+                      <span class="fas fa-minus-circle"></span>&nbsp;<span translate>Delete</span>
+                    </button>
                     <button type="button" class="btn btn-sm btn-default" ng-if="tunnel.active && !tunnel.offered" ng-click="stopTunnel(tunnel)">
-                      <span class="fas fa-info-circle"></span>&nbsp;<span translate>Stop</span>
+                      <span class="fas fa-pause"></span>&nbsp;<span translate>Stop</span>
                     </button>
                     <button type="button" class="btn btn-sm btn-default" ng-if="!tunnel.active && !tunnel.offered" ng-click="startTunnel(tunnel)">
-                      <span class="fas fa-info-circle"></span>&nbsp;<span translate>Start</span>
+                      <span class="fas fa-play"></span>&nbsp;<span translate>Start</span>
                     </button>
                     <button type="button" class="btn btn-sm btn-default" ng-if="tunnel.offered" ng-click="acceptAndStartTunnel(tunnel)">
-                      <span class="fas fa-info-circle"></span>&nbsp;<span translate>Accept & Start</span>
+                      <span class="fas fa-plus"></span>&nbsp;<span translate>Accept & Start</span>
                     </button>
                   </span>
                   <div class="clearfix"></div>

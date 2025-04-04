@@ -643,9 +643,9 @@ angular.module('syncthing.core')
         }
 
         $scope.stopTunnel = function (tunnel) {
-            $http.post(urlbase + '/system/tunnels-enabled', { id: tunnel.id, enabled: false })
+            $http.post(urlbase + '/system/tunnels-modify', { id: tunnel.id, action: "disable" })
                 .then(function () {
-                    tunnel.active = false;
+                    refreshTunnels();
                 })
                 .catch(function (response) {
                     console.error('Failed to stop tunnel:', response);
@@ -653,12 +653,22 @@ angular.module('syncthing.core')
         };
 
         $scope.startTunnel = function (tunnel) {
-            $http.post(urlbase + '/system/tunnels-enabled', { id: tunnel.id, enabled: true })
+            $http.post(urlbase + '/system/tunnels-modify', { id: tunnel.id, action: "enable" })
                 .then(function () {
-                    tunnel.active = true;
+                    refreshTunnels();
                 })
                 .catch(function (response) {
                     console.error('Failed to start tunnel:', response);
+                });
+        };
+
+        $scope.deleteTunnel = function (tunnel) {
+            $http.post(urlbase + '/system/tunnels-modify', { id: tunnel.id, action: "delete" })
+                .then(function () {
+                    refreshTunnels();
+                })
+                .catch(function (response) {
+                    console.error('Failed to delete tunnel:', response);
                 });
         };
 
@@ -672,7 +682,7 @@ angular.module('syncthing.core')
             $http.post(urlbase + '/system/tunnels-add-outbound', payload)
                 .then(function () {
                     console.log('Tunnel added successfully');
-                    $scope.refreshTunnels();
+                    refreshTunnels();
                 })
                 .catch(function (error) {
                     console.error('Failed to add tunnel:', error);

@@ -121,7 +121,7 @@ type Model interface {
 	RequestGlobal(ctx context.Context, deviceID protocol.DeviceID, folder, name string, blockNo int, offset int64, size int, hash []byte, weakHash uint32, fromTemporary bool) ([]byte, error)
 
 	TunnelStatus() []map[string]interface{}
-	SetTunnelEnabled(id string, enabled bool)
+	ModifyTunnel(id string, action string) error
 	AddTunnelOutbound(localListenAddress string, remoteDeviceID protocol.DeviceID, remoteServiceName string) error
 }
 
@@ -181,9 +181,9 @@ func (m *model) TunnelStatus() []map[string]interface{} {
 	return m.tunnelManager.Status()
 }
 
-// SetTunnelEnabled implements Model.
-func (m *model) SetTunnelEnabled(id string, enabled bool) {
-	m.tunnelManager.SetTunnelEnabled(id, enabled)
+// ModifyTunnel implements Model.
+func (m *model) ModifyTunnel(id string, action string) error {
+	return m.tunnelManager.ModifyTunnel(id, action)
 }
 
 // AddTunnelOutbound implements Model.

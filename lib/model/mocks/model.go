@@ -3405,7 +3405,7 @@ func (fake *Model) TunnelStatus() []map[string]interface{} {
 	return nil
 }
 
-func (fake *Model) SetTunnelEnabled(id string, enabled bool) {}
+func (fake *Model) ModifyTunnel(id string, action string) error { return nil}
 
 func (fake *Model) AddTunnelOutbound(localListenAddress string, remoteDeviceID protocol.DeviceID, remoteServiceName string) error { return nil }
 

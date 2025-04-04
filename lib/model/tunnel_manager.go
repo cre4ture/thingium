@@ -18,6 +18,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strconv"
+	"strings"
 	"sync"
 
 	"github.com/ek220/guf"
@@ -31,7 +32,7 @@ func hashDescriptor(descriptor string) string {
 	return hex.EncodeToString(hash[:])
 }
 
-func getDescriptorOutbound(cfg *bep.TunnelOutbound) string {
+func getConfigDescriptorOutbound(cfg *bep.TunnelOutbound) string {
 	plainDescriptor := fmt.Sprintf("out-%s>%s:%s:%s-%v",
 		cfg.LocalListenAddress,
 		cfg.RemoteDeviceId,
@@ -42,12 +43,31 @@ func getDescriptorOutbound(cfg *bep.TunnelOutbound) string {
 	return hashDescriptor(plainDescriptor)
 }
 
-func getDescriptorInbound(cfg *bep.TunnelInbound) string {
+func getConfigDescriptorInbound(cfg *bep.TunnelInbound) string {
 	plainDescriptor := fmt.Sprintf("in-%s:%s<[%s]-%v",
 		cfg.LocalServiceName,
 		cfg.LocalDialAddress,
 		cfg.AllowedRemoteDeviceIds,
 		guf.DerefOr(cfg.Enabled, true),
+	)
+	return hashDescriptor(plainDescriptor)
+}
+
+func getUiTunnelDescriptorOutbound(cfg *bep.TunnelOutbound) string {
+	plainDescriptor := fmt.Sprintf("out-%s>%s:%s:%s",
+		cfg.LocalListenAddress,
+		cfg.RemoteDeviceId,
+		cfg.RemoteServiceName,
+		guf.DerefOrDefault(cfg.RemoteAddress),
+	)
+	return hashDescriptor(plainDescriptor)
+}
+
+func getUiTunnelDescriptorInbound(cfg *bep.TunnelInbound) string {
+	plainDescriptor := fmt.Sprintf("in-%s:%s<[%s]",
+		cfg.LocalServiceName,
+		cfg.LocalDialAddress,
+		cfg.AllowedRemoteDeviceIds,
 	)
 	return hashDescriptor(plainDescriptor)
 }
@@ -110,7 +130,7 @@ func NewTunnelManagerFromConfig(config *bep.TunnelConfig, configFile string) *Tu
 	configIn := make(map[string]*tunnelInConfig)
 	for _, tunnel := range config.TunnelsIn {
 		ctx, cancel := context.WithCancel(context.Background())
-		descriptor := getDescriptorInbound(tunnel)
+		descriptor := getConfigDescriptorInbound(tunnel)
 		configIn[descriptor] = &tunnelInConfig{
 			tunnelBaseConfig: tunnelBaseConfig{
 				descriptor: descriptor,
@@ -125,7 +145,7 @@ func NewTunnelManagerFromConfig(config *bep.TunnelConfig, configFile string) *Tu
 	configOut := make(map[string]*tunnelOutConfig)
 	for _, tunnel := range config.TunnelsOut {
 		ctx, cancel := context.WithCancel(context.Background())
-		descriptor := getDescriptorOutbound(tunnel)
+		descriptor := getConfigDescriptorOutbound(tunnel)
 		configOut[descriptor] = &tunnelOutConfig{
 			tunnelBaseConfig: tunnelBaseConfig{
 				descriptor: descriptor,
@@ -153,7 +173,7 @@ func (tm *TunnelManager) updateInConfig(newInTunnels []*bep.TunnelInbound) {
 	// Generate a new map of inbound tunnels
 	newConfigIn := make(map[string]*tunnelInConfig)
 	for _, tunnel := range newInTunnels {
-		descriptor := getDescriptorInbound(tunnel)
+		descriptor := getConfigDescriptorInbound(tunnel)
 		if existing, exists := tm.configIn[descriptor]; exists {
 			// Reuse existing context and cancel function
 			existing.json = tunnel // update e.g. suggested port
@@ -190,7 +210,7 @@ func (tm *TunnelManager) updateOutConfig(newOutTunnels []*bep.TunnelOutbound) {
 	// Generate a new map of outbound tunnels
 	newConfigOut := make(map[string]*tunnelOutConfig)
 	for _, tunnel := range newOutTunnels {
-		descriptor := getDescriptorOutbound(tunnel)
+		descriptor := getConfigDescriptorOutbound(tunnel)
 		if existing, exists := tm.configOut[descriptor]; exists {
 			// Reuse existing context and cancel function
 			newConfigOut[descriptor] = existing
@@ -530,7 +550,7 @@ func (m *TunnelManager) AddOutboundTunnel(localListenAddress string, remoteDevic
 			RemoteDeviceId:     remoteDeviceID.String(),
 			RemoteServiceName:  remoteServiceName,
 		}
-		descriptor := getDescriptorOutbound(newConfig)
+		descriptor := getConfigDescriptorOutbound(newConfig)
 
 		// Check if the tunnel already exists
 		if _, exists := m.configOut[descriptor]; exists {
@@ -583,6 +603,12 @@ func (m *TunnelManager) Status() []map[string]interface{} {
 					"serviceID":          serviceName,
 					"offered":            true,
 					"type":               "outbound",
+					"uiID": getUiTunnelDescriptorOutbound(&bep.TunnelOutbound{
+						LocalListenAddress: "127.0.0.1:" + strconv.Itoa(int(suggestedPort)),
+						RemoteDeviceId:     deviceID.String(),
+						RemoteServiceName:  serviceName,
+						RemoteAddress:      nil,
+					}),
 				}
 				offerings[deviceID.String()][serviceName] = info
 			}
@@ -601,6 +627,7 @@ func (m *TunnelManager) Status() []map[string]interface{} {
 				"localDialAddress":       tunnel.json.LocalDialAddress,
 				"active":                 guf.DerefOr(tunnel.json.Enabled, true),
 				"type":                   "inbound",
+				"uiID":                   getUiTunnelDescriptorInbound(tunnel.json),
 			}
 			status = append(status, info)
 		}
@@ -617,6 +644,7 @@ func (m *TunnelManager) Status() []map[string]interface{} {
 				"remoteAddress":      tunnel.json.RemoteAddress,
 				"active":             guf.DerefOr(tunnel.json.Enabled, true),
 				"type":               "outbound",
+				"uiID":               getUiTunnelDescriptorOutbound(tunnel.json),
 			}
 			status = append(status, info)
 		}
@@ -628,6 +656,13 @@ func (m *TunnelManager) Status() []map[string]interface{} {
 			status = append(status, info)
 		}
 	}
+
+	// sort by uiID
+	slices.SortFunc(status, func(a map[string]interface{}, b map[string]interface{}) int {
+		aID := a["uiID"].(string)
+		bID := b["uiID"].(string)
+		return strings.Compare(aID, bID)
+	})
 
 	return status
 }
@@ -698,30 +733,46 @@ func saveTunnelConfig(path string, config *bep.TunnelConfig) error {
 }
 
 // setter for TunnelConfig.TunnelsIn/Out.Enabled (by id "inbound/outbound-idx") which also saves the config to file
-func (tm *TunnelManager) SetTunnelEnabled(id string, enabled bool) error {
-	if err := tm.updateAndSaveConfig(id, enabled); err != nil {
+func (tm *TunnelManager) ModifyTunnel(id string, action string) error {
+	if err := tm.modifyAndSaveConfig(id, action); err != nil {
 		return err
 	}
 
 	return tm.reloadConfig()
 }
 
-func (tm *TunnelManager) updateAndSaveConfig(id string, enabled bool) error {
+func (tm *TunnelManager) modifyAndSaveConfig(id string, action string) error {
 	tm.configMutex.Lock()
 	defer tm.configMutex.Unlock()
 
-	enabledCopy := enabled // Create a copy of the value
+	if action == "enable" || action == "disable" {
+		enabled := action == "enable"
+		// Check if the ID corresponds to an inbound tunnel
+		if tunnel, exists := tm.configIn[id]; exists {
+			tunnel.json.Enabled = &enabled
+			return tm.saveFullConfig_no_lock()
+		}
 
-	// Check if the ID corresponds to an inbound tunnel
-	if tunnel, exists := tm.configIn[id]; exists {
-		tunnel.json.Enabled = &enabledCopy
-		return tm.saveFullConfig_no_lock()
-	}
-
-	// Check if the ID corresponds to an outbound tunnel
-	if tunnel, exists := tm.configOut[id]; exists {
-		tunnel.json.Enabled = &enabledCopy
-		return tm.saveFullConfig_no_lock()
+		// Check if the ID corresponds to an outbound tunnel
+		if tunnel, exists := tm.configOut[id]; exists {
+			tunnel.json.Enabled = &enabled
+			return tm.saveFullConfig_no_lock()
+		}
+	} else if action == "delete" {
+		// Check if the ID corresponds to an inbound tunnel
+		if tunnel, exists := tm.configIn[id]; exists {
+			tunnel.cancel()
+			delete(tm.configIn, id)
+			return tm.saveFullConfig_no_lock()
+		}
+		// Check if the ID corresponds to an outbound tunnel
+		if tunnel, exists := tm.configOut[id]; exists {
+			tunnel.cancel()
+			delete(tm.configOut, id)
+			return tm.saveFullConfig_no_lock()
+		}
+	} else {
+		return fmt.Errorf("invalid action: %s", action)
 	}
 
 	// If the ID is not found, return an error
