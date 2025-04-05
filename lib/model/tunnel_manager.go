@@ -244,27 +244,27 @@ func (tm *TunnelManager) updateOutConfig(newOutTunnels []*bep.TunnelOutbound) {
 	tm.configOut = newConfigOut
 }
 
-func (tm *TunnelManager) getInboundService(name string) *bep.TunnelInbound {
+func (tm *TunnelManager) getInboundService(name string) *tunnelInConfig {
 	tm.configMutex.Lock()
 	defer tm.configMutex.Unlock()
 	for _, service := range tm.configIn {
 		if service.json.LocalServiceName == name {
-			return service.json
+			return service
 		}
 	}
 	return nil
 }
 
-func (tm *TunnelManager) getEnabledInboundServiceDeviceIdChecked(name string, byDeviceID protocol.DeviceID) *bep.TunnelInbound {
+func (tm *TunnelManager) getEnabledInboundServiceDeviceIdChecked(name string, byDeviceID protocol.DeviceID) *tunnelInConfig {
 	service := tm.getInboundService(name)
 	if service == nil {
 		return nil
 	}
-	if !guf.DerefOr(service.Enabled, true) {
+	if !guf.DerefOr(service.json.Enabled, true) {
 		l.Warnf("Device %v tries to access disabled service %s", byDeviceID, name)
 		return nil
 	}
-	for _, device := range service.AllowedRemoteDeviceIds {
+	for _, device := range service.json.AllowedRemoteDeviceIds {
 		deviceID, err := protocol.DeviceIDFromString(device)
 		if err != nil {
 			l.Warnln("failed to parse device ID:", err)
@@ -372,7 +372,7 @@ func (tm *TunnelManager) ServeListener(ctx context.Context, listenAddress string
 	}
 }
 
-func (tm *TunnelManager) handleLocalTunnelEndpoint(ctx context.Context, tunnelID uint64, conn io.ReadWriter, destinationDevice protocol.DeviceID, destinationServiceName string, destinationAddress string) {
+func (tm *TunnelManager) handleLocalTunnelEndpoint(ctx context.Context, tunnelID uint64, conn io.ReadWriteCloser, destinationDevice protocol.DeviceID, destinationServiceName string, destinationAddress string) {
 	l.Debugln("Handling local tunnel endpoint, tunnel ID:", tunnelID, "destination device:", destinationDevice, "destination service name:", destinationServiceName, "destination address:", destinationAddress)
 	defer tm.deregisterLocalTunnelEndpoint(destinationDevice, tunnelID)
 	defer func() {
@@ -384,6 +384,15 @@ func (tm *TunnelManager) handleLocalTunnelEndpoint(ctx context.Context, tunnelID
 			},
 		}
 		l.Debugln("Closed local tunnel endpoint, tunnel ID:", tunnelID)
+	}()
+
+	stop := context.AfterFunc(ctx, func() {
+		l.Debugln("Stopping local tunnel endpoint, tunnel ID:", tunnelID)
+		conn.Close()
+	})
+
+	defer func() {
+		stop()
 	}()
 
 	// Example: Forward data to the destination address
@@ -503,14 +512,14 @@ func (tm *TunnelManager) forwardRemoteTunnelData(fromDevice protocol.DeviceID, d
 			return
 		}
 		var TunnelDestinationAddress string
-		if service.LocalDialAddress == "any" {
+		if service.json.LocalDialAddress == "any" {
 			if data.D.TunnelDestinationAddress == nil {
 				l.Warnf("No tunnel destination specified")
 				return
 			}
 			TunnelDestinationAddress = *data.D.TunnelDestinationAddress
 		} else {
-			TunnelDestinationAddress = service.LocalDialAddress
+			TunnelDestinationAddress = service.json.LocalDialAddress
 		}
 
 		addr, err := net.ResolveTCPAddr("tcp", TunnelDestinationAddress)
@@ -524,7 +533,7 @@ func (tm *TunnelManager) forwardRemoteTunnelData(fromDevice protocol.DeviceID, d
 			return
 		}
 		tm.registerLocalTunnelEndpoint(fromDevice, data.D.TunnelId, conn)
-		go tm.handleLocalTunnelEndpoint(context.Background(), data.D.TunnelId, conn, fromDevice, *data.D.RemoteServiceName, TunnelDestinationAddress)
+		go tm.handleLocalTunnelEndpoint(service.ctx, data.D.TunnelId, conn, fromDevice, *data.D.RemoteServiceName, TunnelDestinationAddress)
 
 	case bep.TunnelCommand_TUNNEL_COMMAND_DATA:
 		tm.endpointsMutex.Lock()
@@ -536,7 +545,7 @@ func (tm *TunnelManager) forwardRemoteTunnelData(fromDevice protocol.DeviceID, d
 				l.Warnf("Failed to forward tunnel data: %v", err)
 			}
 		} else {
-			l.Warnf("Data: No TCP connection found for device %v, TunnelID: %s", fromDevice, data.D.TunnelId)
+			l.Infof("Data: No TCP connection found for device %v, TunnelID: %s", fromDevice, data.D.TunnelId)
 		}
 	case bep.TunnelCommand_TUNNEL_COMMAND_CLOSE:
 		tm.endpointsMutex.Lock()
