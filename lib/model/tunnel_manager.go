@@ -50,7 +50,7 @@ func getConfigDescriptorInbound(cfg *bep.TunnelInbound) string {
 		cfg.AllowedRemoteDeviceIds,
 		guf.DerefOr(cfg.Enabled, true),
 	)
-	return hashDescriptor(plainDescriptor)
+	return fmt.Sprintf("i-%s-%s", cfg.LocalServiceName, hashDescriptor(plainDescriptor))
 }
 
 func getUiTunnelDescriptorOutbound(cfg *bep.TunnelOutbound) string {
@@ -60,7 +60,7 @@ func getUiTunnelDescriptorOutbound(cfg *bep.TunnelOutbound) string {
 		cfg.RemoteServiceName,
 		guf.DerefOrDefault(cfg.RemoteAddress),
 	)
-	return hashDescriptor(plainDescriptor)
+	return fmt.Sprintf("o-%s-%s", cfg.RemoteServiceName, hashDescriptor(plainDescriptor))
 }
 
 func getUiTunnelDescriptorInbound(cfg *bep.TunnelInbound) string {
@@ -99,6 +99,7 @@ type TunnelManager struct {
 	configFile           string
 	configIn             map[string]*tunnelInConfig
 	configOut            map[string]*tunnelOutConfig
+	serviceRunning       bool
 	idGenerator          *uid64.Generator
 	localTunnelEndpoints map[protocol.DeviceID]map[uint64]io.ReadWriteCloser
 	deviceConnections    map[protocol.DeviceID]*DeviceConnection
@@ -160,6 +161,7 @@ func NewTunnelManagerFromConfig(config *bep.TunnelConfig, configFile string) *Tu
 		configFile:           configFile,
 		configIn:             configIn,
 		configOut:            configOut,
+		serviceRunning:       false,
 		idGenerator:          gen,
 		localTunnelEndpoints: make(map[protocol.DeviceID]map[uint64]io.ReadWriteCloser),
 		deviceConnections:    make(map[protocol.DeviceID]*DeviceConnection),
@@ -225,6 +227,9 @@ func (tm *TunnelManager) updateOutConfig(newOutTunnels []*bep.TunnelOutbound) {
 				},
 				json: tunnel,
 			}
+			if tm.serviceRunning {
+				tm.serveOutboundTunnel(newConfigOut[descriptor])
+			}
 		}
 	}
 
@@ -250,9 +255,13 @@ func (tm *TunnelManager) getInboundService(name string) *bep.TunnelInbound {
 	return nil
 }
 
-func (tm *TunnelManager) getInboundServiceDeviceIdChecked(name string, byDeviceID protocol.DeviceID) *bep.TunnelInbound {
+func (tm *TunnelManager) getEnabledInboundServiceDeviceIdChecked(name string, byDeviceID protocol.DeviceID) *bep.TunnelInbound {
 	service := tm.getInboundService(name)
 	if service == nil {
+		return nil
+	}
+	if !guf.DerefOr(service.Enabled, true) {
+		l.Warnf("Device %v tries to access disabled service %s", byDeviceID, name)
 		return nil
 	}
 	for _, device := range service.AllowedRemoteDeviceIds {
@@ -265,23 +274,54 @@ func (tm *TunnelManager) getInboundServiceDeviceIdChecked(name string, byDeviceI
 			return service
 		}
 	}
+
+	l.Warnf("Device %v is not allowed to access service %s", byDeviceID, name)
 	return nil
+}
+
+func (tm *TunnelManager) serveOutboundTunnel(tunnel *tunnelOutConfig) {
+	if !guf.DerefOr(tunnel.json.Enabled, true) {
+		l.Debugln("Tunnel is disabled, skipping:", tunnel)
+		return
+	}
+
+	l.Debugln("Starting listener for tunnel, device:", tunnel)
+	device, err := protocol.DeviceIDFromString(tunnel.json.RemoteDeviceId)
+	if err != nil {
+		l.Warnln("failed to parse device ID:", err)
+	}
+	go tm.ServeListener(tunnel.ctx, tunnel.json.LocalListenAddress,
+		device, tunnel.json.RemoteServiceName, tunnel.json.RemoteAddress)
 }
 
 func (tm *TunnelManager) Serve(ctx context.Context) error {
 	l.Debugln("TunnelManager Serve started")
 
-	for _, tunnel := range tm.configOut {
-		l.Debugln("Starting listener for tunnel, device:", tunnel)
-		device, err := protocol.DeviceIDFromString(tunnel.json.RemoteDeviceId)
-		if err != nil {
-			return fmt.Errorf("failed to parse device ID: %w", err)
+	func() {
+		tm.configMutex.Lock()
+		defer tm.configMutex.Unlock()
+		tm.serviceRunning = true
+		for _, tunnel := range tm.configOut {
+			tm.serveOutboundTunnel(tunnel)
 		}
-		go tm.ServeListener(ctx, tunnel.json.LocalListenAddress,
-			device, tunnel.json.RemoteServiceName, tunnel.json.RemoteAddress)
-	}
+	}()
 
 	<-ctx.Done()
+	l.Debugln("TunnelManager Serve stopping")
+
+	// Cancel all active tunnels
+	func() {
+		tm.configMutex.Lock()
+		defer tm.configMutex.Unlock()
+		tm.serviceRunning = false
+		for _, tunnel := range tm.configIn {
+			tunnel.cancel()
+		}
+		for _, tunnel := range tm.configOut {
+			tunnel.cancel()
+		}
+	}()
+
 	l.Debugln("TunnelManager Serve stopped")
 	return nil
 }
@@ -458,9 +498,8 @@ func (tm *TunnelManager) forwardRemoteTunnelData(fromDevice protocol.DeviceID, d
 			l.Warnf("No remote service name specified")
 			return
 		}
-		service := tm.getInboundServiceDeviceIdChecked(*data.D.RemoteServiceName, fromDevice)
+		service := tm.getEnabledInboundServiceDeviceIdChecked(*data.D.RemoteServiceName, fromDevice)
 		if service == nil {
-			l.Warnf("Device %v is not allowed to access service %s", fromDevice, *data.D.RemoteServiceName)
 			return
 		}
 		var TunnelDestinationAddress string
@@ -545,6 +584,11 @@ func (m *TunnelManager) AddOutboundTunnel(localListenAddress string, remoteDevic
 		m.configMutex.Lock()
 		defer m.configMutex.Unlock()
 
+		if localListenAddress == "127.0.0.1:0" {
+			suggestedPort := getRandomFreePort()
+			localListenAddress = fmt.Sprintln("127.0.0.1:", suggestedPort)
+		}
+
 		newConfig := &bep.TunnelOutbound{
 			LocalListenAddress: localListenAddress,
 			RemoteDeviceId:     remoteDeviceID.String(),
@@ -594,9 +638,6 @@ func (m *TunnelManager) Status() []map[string]interface{} {
 				offerings[deviceID.String()] = make(map[string]map[string]interface{})
 			}
 			for serviceName, suggestedPort := range connection.serviceOfferings {
-				if suggestedPort == 0 {
-					suggestedPort = uint32(getRandomFreePort())
-				}
 				info := map[string]interface{}{
 					"localListenAddress": "127.0.0.1:" + strconv.Itoa(int(suggestedPort)),
 					"remoteDeviceID":     deviceID.String(),
