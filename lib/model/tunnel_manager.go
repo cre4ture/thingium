@@ -152,13 +152,34 @@ func (tm *TunnelManager) updateInConfig(newInTunnels []*bep.TunnelInbound) {
 
 	// Generate a new map of inbound tunnels
 	newConfigIn := make(map[string]*tunnelInConfig)
-	for _, tunnel := range newInTunnels {
-		descriptor := getConfigDescriptorInbound(tunnel)
-		if existing, exists := tm.configIn[descriptor]; exists {
+	for _, newTun := range newInTunnels {
+		descriptor := getConfigDescriptorInbound(newTun, false)
+		if existingTun, exists := tm.configIn[descriptor]; exists {
 			// Reuse existing context and cancel function
-			existing.json = tunnel // update e.g. suggested port
-			newConfigIn[descriptor] = existing
-			// update allowed devices
+			existingTun.json = newTun // update e.g. suggested port
+			// Update allowed devices
+			allowedClients := make(map[string]tunnelBaseConfig)
+			for _, deviceID := range newTun.AllowedRemoteDeviceIds {
+				if _, exists := existingTun.allowedClients[deviceID]; !exists {
+					ctx, cancel := context.WithCancel(existingTun.ctx)
+					allowedClients[deviceID] = tunnelBaseConfig{
+						descriptor: descriptor,
+						ctx:        ctx,
+						cancel:     cancel,
+					}
+				} else {
+					allowedClients[deviceID] = existingTun.allowedClients[deviceID]
+				}
+			}
+			// Cancel and remove devices no longer allowed
+			for deviceID, existingClient := range existingTun.allowedClients {
+				if _, exists := allowedClients[deviceID]; !exists {
+					existingClient.cancel()
+				}
+			}
+			existingTun.allowedClients = allowedClients
+
+			newConfigIn[descriptor] = existingTun
 
 		} else {
 			// Create new context and cancel function
@@ -169,7 +190,7 @@ func (tm *TunnelManager) updateInConfig(newInTunnels []*bep.TunnelInbound) {
 					ctx:        ctx,
 					cancel:     cancel,
 				},
-				json: tunnel,
+				json: newTun,
 			}
 		}
 	}
