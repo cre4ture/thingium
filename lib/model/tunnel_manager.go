@@ -43,14 +43,16 @@ func getConfigDescriptorOutbound(cfg *bep.TunnelOutbound) string {
 	return hashDescriptor(plainDescriptor)
 }
 
-func getConfigDescriptorInbound(cfg *bep.TunnelInbound) string {
-	plainDescriptor := fmt.Sprintf("in-%s:%s<[%s]-%v",
+func getConfigDescriptorInbound(cfg *bep.TunnelInbound, withAllowedDevices bool) string {
+	plainDescriptor := fmt.Sprintf("in-%s:%s-%v",
 		cfg.LocalServiceName,
 		cfg.LocalDialAddress,
-		cfg.AllowedRemoteDeviceIds,
 		guf.DerefOr(cfg.Enabled, true),
 	)
-	return fmt.Sprintf("i-%s-%s", cfg.LocalServiceName, hashDescriptor(plainDescriptor))
+	if withAllowedDevices {
+		plainDescriptor += fmt.Sprintf("<%s", cfg.AllowedRemoteDeviceIds)
+	}
+	return hashDescriptor(plainDescriptor)
 }
 
 func getUiTunnelDescriptorOutbound(cfg *bep.TunnelOutbound) string {
@@ -69,7 +71,7 @@ func getUiTunnelDescriptorInbound(cfg *bep.TunnelInbound) string {
 		cfg.LocalDialAddress,
 		cfg.AllowedRemoteDeviceIds,
 	)
-	return hashDescriptor(plainDescriptor)
+	return fmt.Sprintf("i-%s-%s", cfg.LocalServiceName, hashDescriptor(plainDescriptor))
 }
 
 type tunnelBaseConfig struct {
@@ -85,7 +87,8 @@ type tunnelOutConfig struct {
 
 type tunnelInConfig struct {
 	tunnelBaseConfig
-	json *bep.TunnelInbound
+	allowedClients map[string]tunnelBaseConfig
+	json           *bep.TunnelInbound
 }
 
 type DeviceConnection struct {
@@ -127,45 +130,20 @@ func NewTunnelManagerFromConfig(config *bep.TunnelConfig, configFile string) *Tu
 		panic("TunnelManager config is nil")
 	}
 
-	// convert inbound tunnel config:
-	configIn := make(map[string]*tunnelInConfig)
-	for _, tunnel := range config.TunnelsIn {
-		ctx, cancel := context.WithCancel(context.Background())
-		descriptor := getConfigDescriptorInbound(tunnel)
-		configIn[descriptor] = &tunnelInConfig{
-			tunnelBaseConfig: tunnelBaseConfig{
-				descriptor: descriptor,
-				ctx:        ctx,
-				cancel:     cancel,
-			},
-			json: tunnel,
-		}
-	}
-
-	// convert outbound tunnel config:
-	configOut := make(map[string]*tunnelOutConfig)
-	for _, tunnel := range config.TunnelsOut {
-		ctx, cancel := context.WithCancel(context.Background())
-		descriptor := getConfigDescriptorOutbound(tunnel)
-		configOut[descriptor] = &tunnelOutConfig{
-			tunnelBaseConfig: tunnelBaseConfig{
-				descriptor: descriptor,
-				ctx:        ctx,
-				cancel:     cancel,
-			},
-			json: tunnel,
-		}
-	}
-
-	return &TunnelManager{
+	tm := &TunnelManager{
 		configFile:           configFile,
-		configIn:             configIn,
-		configOut:            configOut,
+		configIn:             make(map[string]*tunnelInConfig),
+		configOut:            make(map[string]*tunnelOutConfig),
 		serviceRunning:       false,
 		idGenerator:          gen,
 		localTunnelEndpoints: make(map[protocol.DeviceID]map[uint64]io.ReadWriteCloser),
 		deviceConnections:    make(map[protocol.DeviceID]*DeviceConnection),
 	}
+	// use update logic to set the initial config as well.
+	// this avoids code duplication
+	tm.updateOutConfig(config.TunnelsOut)
+	tm.updateInConfig(config.TunnelsIn)
+	return tm
 }
 
 func (tm *TunnelManager) updateInConfig(newInTunnels []*bep.TunnelInbound) {
@@ -180,6 +158,8 @@ func (tm *TunnelManager) updateInConfig(newInTunnels []*bep.TunnelInbound) {
 			// Reuse existing context and cancel function
 			existing.json = tunnel // update e.g. suggested port
 			newConfigIn[descriptor] = existing
+			// update allowed devices
+
 		} else {
 			// Create new context and cancel function
 			ctx, cancel := context.WithCancel(context.Background())
