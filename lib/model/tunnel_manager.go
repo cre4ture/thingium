@@ -190,7 +190,8 @@ func (tm *TunnelManager) updateInConfig(newInTunnels []*bep.TunnelInbound) {
 					ctx:        ctx,
 					cancel:     cancel,
 				},
-				json: newTun,
+				json:           newTun,
+				allowedClients: make(map[string]tunnelBaseConfig),
 			}
 		}
 	}
@@ -784,15 +785,15 @@ func saveTunnelConfig(path string, config *bep.TunnelConfig) error {
 }
 
 // setter for TunnelConfig.TunnelsIn/Out.Enabled (by id "inbound/outbound-idx") which also saves the config to file
-func (tm *TunnelManager) ModifyTunnel(id string, action string) error {
-	if err := tm.modifyAndSaveConfig(id, action); err != nil {
+func (tm *TunnelManager) ModifyTunnel(id string, action string, params map[string]string) error {
+	if err := tm.modifyAndSaveConfig(id, action, params); err != nil {
 		return err
 	}
 
 	return tm.reloadConfig()
 }
 
-func (tm *TunnelManager) modifyAndSaveConfig(id string, action string) error {
+func (tm *TunnelManager) modifyAndSaveConfig(id string, action string, params map[string]string) error {
 	tm.configMutex.Lock()
 	defer tm.configMutex.Unlock()
 
@@ -822,6 +823,32 @@ func (tm *TunnelManager) modifyAndSaveConfig(id string, action string) error {
 			delete(tm.configOut, id)
 			return tm.saveFullConfig_no_lock()
 		}
+	} else if action == "add-allowed-device" {
+		// Check if the ID corresponds to an inbound tunnel
+		if tunnel, exists := tm.configIn[id]; exists {
+			// Add the allowed device ID to the tunnel
+			newAllowedDeviceID := params["deviceID"]
+			if index := slices.IndexFunc(tunnel.json.AllowedRemoteDeviceIds,
+				func(device string) bool { return device == newAllowedDeviceID }); index < 0 {
+				tunnel.json.AllowedRemoteDeviceIds = append(tunnel.json.AllowedRemoteDeviceIds, newAllowedDeviceID)
+				return tm.saveFullConfig_no_lock()
+			}
+			return fmt.Errorf("allowed device ID %s already exists in tunnel %s", newAllowedDeviceID, id)
+		}
+		return fmt.Errorf("inbound tunnel not found: %s", id)
+	} else if action == "remove-allowed-device" {
+		// Check if the ID corresponds to an inbound tunnel
+		if tunnel, exists := tm.configIn[id]; exists {
+			// Remove the allowed device ID from the tunnel
+			disallowedDeviceID := params["deviceID"]
+			if index := slices.IndexFunc(tunnel.json.AllowedRemoteDeviceIds,
+				func(device string) bool { return device == disallowedDeviceID }); index >= 0 {
+				tunnel.json.AllowedRemoteDeviceIds = slices.Delete(tunnel.json.AllowedRemoteDeviceIds, index, index+1)
+				return tm.saveFullConfig_no_lock()
+			}
+			return fmt.Errorf("disallowed device ID %s not found in tunnel %s", disallowedDeviceID, id)
+		}
+		return fmt.Errorf("inbound tunnel not found: %s", id)
 	} else {
 		return fmt.Errorf("invalid action: %s", action)
 	}
