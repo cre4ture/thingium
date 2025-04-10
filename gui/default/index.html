@@ -755,7 +755,12 @@
                           </br>
                           </span>
                           <div class="form-inline">
-                            <input type="text" ng-model="newAllowedDeviceID" placeholder="Device ID" class="form-control input-sm small-input" />
+                            <input type="text" ng-model="newAllowedDeviceID" placeholder="Device ID" class="form-control input-sm small-input" list="deviceProposals" />
+                            <datalist id="deviceProposals">
+                              <option ng-repeat="(deviceID, device) in devices" value="{{deviceID}}">
+                                {{deviceName(device)}}
+                              </option>
+                            </datalist>
                             <button type="button" class="btn btn-sm btn-success" ng-click="addAllowedDevice(tunnel, newAllowedDeviceID)">
                               <span class="fas fa-plus"></span>&nbsp;<span translate>Add</span>
                             </button>
