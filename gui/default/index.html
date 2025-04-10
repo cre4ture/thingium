@@ -757,7 +757,9 @@
                           <div class="form-inline">
                             <input type="text" ng-model="newAllowedDeviceID" placeholder="Device ID" class="form-control input-sm small-input" list="deviceProposals" />
                             <datalist id="deviceProposals">
-                              <option ng-repeat="(deviceID, device) in devices" value="{{deviceID}}">
+                              <option ng-repeat="(deviceID, device) in devices" 
+                                      ng-if="deviceID !== thisDevice().deviceID && !tunnel.allowedRemoteDeviceIDs.includes(deviceID)" 
+                                      value="{{deviceID}}">
                                 {{deviceName(device)}}
                               </option>
                             </datalist>
