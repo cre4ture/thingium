@@ -752,10 +752,10 @@
                             <button type="button" class="btn btn-sm btn-danger" ng-click="removeAllowedDevice(tunnel, deviceID)">
                               <span class="fas fa-minus"></span>
                             </button>
-                            <span ng-if="!$last">, </span>
+                          </br>
                           </span>
-                          <div>
-                            <input type="text" ng-model="newAllowedDeviceID" placeholder="Device ID" class="form-control input-sm" />
+                          <div class="form-inline">
+                            <input type="text" ng-model="newAllowedDeviceID" placeholder="Device ID" class="form-control input-sm small-input" />
                             <button type="button" class="btn btn-sm btn-success" ng-click="addAllowedDevice(tunnel, newAllowedDeviceID)">
                               <span class="fas fa-plus"></span>&nbsp;<span translate>Add</span>
                             </button>
