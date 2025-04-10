@@ -66,10 +66,9 @@ func getUiTunnelDescriptorOutbound(cfg *bep.TunnelOutbound) string {
 }
 
 func getUiTunnelDescriptorInbound(cfg *bep.TunnelInbound) string {
-	plainDescriptor := fmt.Sprintf("in-%s:%s<[%s]",
+	plainDescriptor := fmt.Sprintf("in-%s:%s",
 		cfg.LocalServiceName,
 		cfg.LocalDialAddress,
-		cfg.AllowedRemoteDeviceIds,
 	)
 	return fmt.Sprintf("i-%s-%s", cfg.LocalServiceName, hashDescriptor(plainDescriptor))
 }
