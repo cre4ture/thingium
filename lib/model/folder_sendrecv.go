@@ -444,10 +444,10 @@ nextFile:
 		}
 
 		job, ok := f.queue.Pop()
-		fileName := job.name
 		if !ok {
 			break
 		}
+		fileName := job.name
 
 		fi, ok := snap.GetGlobal(fileName)
 		if !ok {
