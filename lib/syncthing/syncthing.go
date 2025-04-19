@@ -24,7 +24,6 @@ import (
 	"github.com/thejerf/suture/v4"
 
 	"github.com/syncthing/syncthing/lib/api"
-	blobfilefs "github.com/syncthing/syncthing/lib/blob_file_fs"
 	"github.com/syncthing/syncthing/lib/blockstorage"
 	"github.com/syncthing/syncthing/lib/build"
 	"github.com/syncthing/syncthing/lib/config"
@@ -257,7 +256,6 @@ func (a *App) startup() error {
 		model.NewVirtualFolder,
 		blockstorage.NewBlockStorageFileBlobFs,
 		blockstorage.NewGoCloudUrlStorageFromConfigStr,
-		blobfilefs.FactoryResticAdapter,
 	)
 	a.Internals = newInternals(m)
 

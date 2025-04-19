@@ -16,6 +16,7 @@ import (
 
 	ffs "github.com/hanwen/go-fuse/v2/fs"
 	"github.com/hanwen/go-fuse/v2/fuse"
+	"github.com/syncthing/syncthing/internal/gen/bep"
 	"github.com/syncthing/syncthing/lib/config"
 	"github.com/syncthing/syncthing/lib/db"
 	"github.com/syncthing/syncthing/lib/logger"
@@ -475,7 +476,7 @@ func (stf *syncthingVirtualFolderFuseAdapter) createSymlink(
 	fi := createNewVirtualFileInfo(stf.modelID, nil, path)
 	fi.Type = protocol.FileInfoTypeSymlink
 	fi.Blocks = nil
-	fi.SymlinkTarget = target
+	fi.SymlinkTarget = []byte(target)
 
 	stf.fsetRW.UpdateOneLocalFileInfoLocalChangeDetected(fi)
 	return 0
@@ -500,7 +501,15 @@ func (s *VirtualFolderDirStream) Next() (fuse.DirEntry, syscall.Errno) {
 	s.i += 1
 
 	mode := syscall.S_IFREG
-	switch child.Type {
+
+	ft_int, ok := bep.FileInfoType_value[child.Type]
+	if !ok {
+		logger.DefaultLogger.Infof("Unknown file type %s", child.Type)
+		return fuse.DirEntry{}, syscall.EINVAL
+	}
+	fileType := protocol.FileInfoType(ft_int)
+
+	switch fileType {
 	case protocol.FileInfoTypeDirectory:
 		mode = syscall.S_IFDIR
 	case protocol.FileInfoTypeSymlink:
@@ -550,7 +559,7 @@ func (f *syncthingVirtualFolderFuseAdapter) readDir(path string) (stream ffs.Dir
 				logger.DefaultLogger.Infof("ENC VIRT ADD CHILD-FILE - %s", parts[0])
 				fileMap[parts[0]] = &TreeEntry{
 					Name:    parts[0],
-					Type:    child.FileType(),
+					Type:    child.Type.String(),
 					ModTime: child.ModTime(),
 					Size:    child.FileSize(),
 				}
@@ -560,7 +569,7 @@ func (f *syncthingVirtualFolderFuseAdapter) readDir(path string) (stream ffs.Dir
 					logger.DefaultLogger.Infof("ENC VIRT ADD CHILD-DIR - %s", parts[0])
 					entry := &TreeEntry{
 						Name: parts[0],
-						Type: protocol.FileInfoTypeDirectory,
+						Type: protocol.FileInfoTypeDirectory.String(),
 					}
 					f.directories_mu.Lock()
 					f.directories[path+parts[0]] = entry

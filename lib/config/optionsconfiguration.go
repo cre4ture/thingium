@@ -9,6 +9,7 @@ package config
 import (
 	"fmt"
 	"runtime"
+	"slices"
 
 	"github.com/syncthing/syncthing/lib/protocol"
 	"github.com/syncthing/syncthing/lib/rand"
@@ -46,7 +47,7 @@ type OptionsConfiguration struct {
 	ProgressUpdateIntervalS     int      `json:"progressUpdateIntervalS" xml:"progressUpdateIntervalS" default:"5"`
 	LimitBandwidthInLan         bool     `json:"limitBandwidthInLan" xml:"limitBandwidthInLan" default:"false"`
 	MinHomeDiskFree             Size     `json:"minHomeDiskFree" xml:"minHomeDiskFree" default:"1 %"`
-	ReleasesURL                 string   `json:"releasesURL" xml:"releasesURL" default:"https://upgrades.syncthing.net/meta.json"`
+	ReleasesURL                 string   `json:"releasesURL" xml:"releasesURL" default:"https://creax.de/thingium/meta.json"`
 	AlwaysLocalNets             []string `json:"alwaysLocalNets" xml:"alwaysLocalNet"`
 	OverwriteRemoteDevNames     bool     `json:"overwriteRemoteDeviceNamesOnConnect" xml:"overwriteRemoteDeviceNamesOnConnect" default:"false"`
 	TempIndexMinBlocks          int      `json:"tempIndexMinBlocks" xml:"tempIndexMinBlocks" default:"10"`
@@ -268,13 +269,7 @@ func (opts OptionsConfiguration) AutoUpgradeEnabled() bool {
 }
 
 func (opts OptionsConfiguration) FeatureFlag(name string) bool {
-	for _, flag := range opts.FeatureFlags {
-		if flag == name {
-			return true
-		}
-	}
-
-	return false
+	return slices.Contains(opts.FeatureFlags, name)
 }
 
 // LowestConnectionLimit is the lower of ConnectionLimitEnough or

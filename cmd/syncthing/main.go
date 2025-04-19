@@ -30,20 +30,21 @@ import (
 	"time"
 
 	"github.com/alecthomas/kong"
+	"github.com/gofrs/flock"
 	"github.com/thejerf/suture/v4"
 	"github.com/willabides/kongplete"
 
 	"github.com/syncthing/syncthing/cmd/syncthing/cli"
 	"github.com/syncthing/syncthing/cmd/syncthing/cmdutil"
 	"github.com/syncthing/syncthing/cmd/syncthing/decrypt"
-	"github.com/syncthing/syncthing/cmd/syncthing/generate"
+	"github.com/syncthing/syncthing/cmd/syncthing/generate" 
+	"github.com/syncthing/syncthing/cmd/syncthing/purge"
 	"github.com/syncthing/syncthing/cmd/syncthing/virtual/virtualcheck"
 	"github.com/syncthing/syncthing/cmd/syncthing/virtual/virtualmount"
 	_ "github.com/syncthing/syncthing/lib/automaxprocs"
 	"github.com/syncthing/syncthing/lib/build"
 	"github.com/syncthing/syncthing/lib/config"
 	"github.com/syncthing/syncthing/lib/db"
-	"github.com/syncthing/syncthing/lib/db/backend"
 	"github.com/syncthing/syncthing/lib/dialer"
 	"github.com/syncthing/syncthing/lib/events"
 	"github.com/syncthing/syncthing/lib/fs"
@@ -134,6 +135,7 @@ var entrypoint struct {
 	Serve              serveOptions                 `cmd:"" help:"Run Syncthing"`
 	Generate           generate.CLI                 `cmd:"" help:"Generate key and config, then exit"`
 	Decrypt            decrypt.CLI                  `cmd:"" help:"Decrypt or verify an encrypted folder"`
+	Purge              purge.CLI                    `cmd:"" help:"Purge ignored local files of folder"`
 	VirtualMount       virtualmount.CLI             `cmd:"" help:"Mount an offline virtual folder"`
 	VirtualCheck       virtualcheck.CLI             `cmd:"" help:"Check an offline virtual folder for data corruption (e.g. bit-rot)"`
 	Cli                cli.CLI                      `cmd:"" help:"Command line interface for Syncthing"`
@@ -380,15 +382,18 @@ func (options serveOptions) Run() error {
 	if options.Upgrade {
 		release, err := checkUpgrade()
 		if err == nil {
-			// Use leveldb database locks to protect against concurrent upgrades
-			var ldb backend.Backend
-			ldb, err = syncthing.OpenDBBackend(locations.Get(locations.Database), config.TuningAuto)
+			lf := flock.New(locations.Get(locations.LockFile))
+			locked, err := lf.TryLock()
 			if err != nil {
+				l.Warnln("Upgrade:", err)
+				os.Exit(1)
+			} else if locked {
 				err = upgradeViaRest()
 			} else {
-				_ = ldb.Close()
 				err = upgrade.To(release)
 			}
+			_ = lf.Unlock()
+			_ = os.Remove(locations.Get(locations.LockFile))
 		}
 		if err != nil {
 			l.Warnln("Upgrade:", err)
@@ -548,6 +553,17 @@ func syncthingMain(options serveOptions) {
 		os.Exit(1)
 	}
 
+	// Ensure we are the only running instance
+	lf := flock.New(locations.Get(locations.LockFile))
+	locked, err := lf.TryLock()
+	if err != nil {
+		l.Warnln("Failed to acquire lock:", err)
+		os.Exit(1)
+	} else if !locked {
+		l.Warnln("Failed to acquire lock: is another Syncthing instance already running?")
+		os.Exit(1)
+	}
+
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -683,6 +699,10 @@ func syncthingMain(options serveOptions) {
 	if options.DebugProfileCPU {
 		pprof.StopCPUProfile()
 	}
+
+	// Best effort remove lockfile, doesn't matter if it succeeds
+	_ = lf.Unlock()
+	_ = os.Remove(locations.Get(locations.LockFile))
 
 	os.Exit(int(status))
 }
@@ -834,6 +854,10 @@ func initialAutoUpgradeCheck(misc *db.NamespacedKV) (upgrade.Release, error) {
 	if err != nil {
 		return upgrade.Release{}, err
 	}
+	if upgrade.CompareVersions(release.Tag, build.Version) == upgrade.MajorNewer {
+		return upgrade.Release{}, errors.New("higher major version")
+	}
+
 	if lastVersion, ok, err := misc.String(upgradeVersionKey); err == nil && ok && lastVersion == release.Tag {
 		// Only check time if we try to upgrade to the same release.
 		if lastTime, ok, err := misc.Time(upgradeTimeKey); err == nil && ok && time.Since(lastTime) < upgradeRetryInterval {

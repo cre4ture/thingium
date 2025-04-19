@@ -92,6 +92,7 @@ type service struct {
 	listenerAddr         net.Addr
 	exitChan             chan *svcutil.FatalErr
 	miscDB               *db.NamespacedKV
+	shutdownTimeout      time.Duration
 
 	guiErrors logger.Recorder
 	systemLog logger.Recorder
@@ -129,6 +130,7 @@ func New(id protocol.DeviceID, cfg config.Wrapper, assetDir, tlsDefaultCommonNam
 		startedOnce:          make(chan struct{}),
 		exitChan:             make(chan *svcutil.FatalErr, 1),
 		miscDB:               miscDB,
+		shutdownTimeout:      100 * time.Millisecond,
 	}
 }
 
@@ -280,6 +282,7 @@ func (s *service) Serve(ctx context.Context) error {
 	restMux.HandlerFunc(http.MethodGet, "/rest/system/debug", s.getSystemDebug)               // -
 	restMux.HandlerFunc(http.MethodGet, "/rest/system/log", s.getSystemLog)                   // [since]
 	restMux.HandlerFunc(http.MethodGet, "/rest/system/log.txt", s.getSystemLogTxt)            // [since]
+	restMux.HandlerFunc(http.MethodGet, "/rest/system/tunnels", s.getTunnels)
 
 	// The POST handlers
 	restMux.HandlerFunc(http.MethodPost, "/rest/db/prio", s.postDBPrio)                          // folder file
@@ -299,6 +302,9 @@ func (s *service) Serve(ctx context.Context) error {
 	restMux.HandlerFunc(http.MethodPost, "/rest/system/pause", s.makeDevicePauseHandler(true))   // [device]
 	restMux.HandlerFunc(http.MethodPost, "/rest/system/resume", s.makeDevicePauseHandler(false)) // [device]
 	restMux.HandlerFunc(http.MethodPost, "/rest/system/debug", s.postSystemDebug)                // [enable] [disable]
+	restMux.HandlerFunc(http.MethodPost, "/rest/system/tunnels-modify", s.postTunnelsModify)
+	restMux.HandlerFunc(http.MethodPost, "/rest/system/tunnels-add-outbound", s.postTunnelsAddOutbound)
+	restMux.HandlerFunc(http.MethodPost, "/rest/system/tunnels-reload-config", s.postTunnelsReload)
 
 	// The DELETE handlers
 	restMux.HandlerFunc(http.MethodDelete, "/rest/cluster/pending/devices", s.deletePendingDevices) // device
@@ -403,6 +409,9 @@ func (s *service) Serve(ctx context.Context) error {
 		// care about we log ourselves from the handlers.
 		ErrorLog: log.New(io.Discard, "", 0),
 	}
+	if shouldDebugHTTP() {
+		srv.ErrorLog = log.Default()
+	}
 
 	l.Infoln("GUI and API listening on", listener.Addr())
 	l.Infoln("Access the GUI via the following URL:", guiCfg.URL())
@@ -449,7 +458,7 @@ func (s *service) Serve(ctx context.Context) error {
 	}
 	// Give it a moment to shut down gracefully, e.g. if we are restarting
 	// due to a config change through the API, let that finish successfully.
-	timeout, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	timeout, cancel := context.WithTimeout(context.Background(), s.shutdownTimeout)
 	defer cancel()
 	if err := srv.Shutdown(timeout); err == timeout.Err() {
 		srv.Close()
@@ -1773,7 +1782,7 @@ func browse(fsType fs.FilesystemType, current string) []string {
 		return browseRoots(fsType)
 	}
 
-	parent, base := parentAndBase(current)
+	parent, base := filepath.Split(current)
 	ffs := fs.NewFilesystem(fsType, parent)
 	files := browseFiles(ffs, base)
 	for i := range files {
@@ -1807,27 +1816,6 @@ func browseRoots(fsType fs.FilesystemType) []string {
 	}
 
 	return nil
-}
-
-// parentAndBase returns the parent directory and the remaining base of the
-// path. The base may be empty if the path ends with a path separator.
-func parentAndBase(current string) (string, string) {
-	search, _ := fs.ExpandTilde(current)
-	pathSeparator := string(fs.PathSeparator)
-
-	if strings.HasSuffix(current, pathSeparator) && !strings.HasSuffix(search, pathSeparator) {
-		search = search + pathSeparator
-	}
-	searchDir := filepath.Dir(search)
-
-	// The searchFile should be the last component of search, or empty if it
-	// ends with a path separator
-	var searchFile string
-	if !strings.HasSuffix(search, pathSeparator) {
-		searchFile = filepath.Base(search)
-	}
-
-	return searchDir, searchFile
 }
 
 func browseFiles(ffs fs.Filesystem, search string) []string {
@@ -2123,4 +2111,72 @@ type bufferedResponseWriter struct {
 func (w bufferedResponseWriter) WriteHeader(int) {}
 func (w bufferedResponseWriter) Header() http.Header {
 	return http.Header{}
+}
+
+func (s *service) getTunnels(w http.ResponseWriter, r *http.Request) {
+	sendJSON(w, s.model.GetTunnelManager().TunnelStatus())
+}
+
+func (s *service) postTunnelsModify(w http.ResponseWriter, r *http.Request) {
+	var req map[string]string
+
+	// Decode the request body into a map
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	// Extract required fields
+	id, idOk := req["id"]
+	action, actionOk := req["action"]
+
+	if !idOk || !actionOk {
+		http.Error(w, "Missing 'id' or 'action' in request body", http.StatusBadRequest)
+		return
+	}
+
+	// Forward to ModifyTunnel
+	if err := s.model.GetTunnelManager().ModifyTunnel(id, action, req); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	sendJSON(w, map[string]string{"status": "success"})
+}
+
+func (s *service) postTunnelsAddOutbound(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		LocalListenAddress string `json:"localListenAddress"`
+		RemoteDeviceID     string `json:"remoteDeviceID"`
+		RemoteServiceName  string `json:"remoteServiceName"`
+	}
+
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	deviceId, err := protocol.DeviceIDFromString(req.RemoteDeviceID)
+	if err != nil {
+		http.Error(w, "Invalid device ID", http.StatusBadRequest)
+		return
+	}
+
+	err = s.model.GetTunnelManager().AddTunnelOutbound(req.LocalListenAddress, deviceId, req.RemoteServiceName)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	sendJSON(w, map[string]string{"status": "success"})
+}
+
+func (s *service) postTunnelsReload(w http.ResponseWriter, r *http.Request) {
+	err := s.model.GetTunnelManager().ReloadConfig()
+	if err != nil {
+		http.Error(w, fmt.Errorf("failed to reload tunnel configuration: %w", err).Error(), http.StatusInternalServerError)
+		return
+	}
+
+	sendJSON(w, map[string]string{"status": "success"})
 }

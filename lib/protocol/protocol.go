@@ -137,6 +137,8 @@ type Connection interface {
 	DownloadProgress(ctx context.Context, dp *DownloadProgress)
 
 	Start()
+	TunnelIn() <-chan *TunnelData
+	TunnelOut() chan<- *TunnelData
 	SetFolderPasswords(passwords map[string]string)
 	Close(err error)
 	DeviceID() DeviceID
@@ -179,6 +181,8 @@ type rawConnection struct {
 
 	inbox                 chan proto.Message
 	outbox                chan asyncMessage
+	tunnelOut             chan *TunnelData
+	tunnelIn              chan *TunnelData
 	closeBox              chan asyncMessage
 	clusterConfigBox      chan *ClusterConfig
 	dispatcherLoopStopped chan struct{}
@@ -255,6 +259,8 @@ func newRawConnection(deviceID DeviceID, reader io.Reader, writer io.Writer, clo
 		awaiting:              make(map[int]chan asyncResult),
 		inbox:                 make(chan proto.Message),
 		outbox:                make(chan asyncMessage),
+		tunnelIn:              make(chan *TunnelData),
+		tunnelOut:             make(chan *TunnelData),
 		closeBox:              make(chan asyncMessage),
 		clusterConfigBox:      make(chan *ClusterConfig),
 		dispatcherLoopStopped: make(chan struct{}),
@@ -480,6 +486,9 @@ func (c *rawConnection) dispatcherLoop() (err error) {
 
 		case *bep.DownloadProgress:
 			err = c.model.DownloadProgress(downloadProgressFromWire(msg))
+
+		case *bep.TunnelData:
+			c.handleTunnelData(tunnelDataFromWire(msg))
 		}
 		if err != nil {
 			return newHandleError(err, msgContext)
@@ -749,6 +758,13 @@ func (c *rawConnection) writerLoop() {
 			close(hm.done)
 			return
 
+		case tunnelData := <-c.tunnelOut:
+			err := c.writeMessage(tunnelData.toWire())
+			if err != nil {
+				c.internalClose(err)
+				return
+			}
+
 		case <-c.closed:
 			return
 		}
@@ -871,6 +887,8 @@ func typeOf(msg proto.Message) bep.MessageType {
 		return bep.MessageType_MESSAGE_TYPE_RESPONSE
 	case *bep.DownloadProgress:
 		return bep.MessageType_MESSAGE_TYPE_DOWNLOAD_PROGRESS
+	case *bep.TunnelData:
+		return bep.MessageType_MESSAGE_TYPE_TUNNEL_DATA
 	case *bep.Ping:
 		return bep.MessageType_MESSAGE_TYPE_PING
 	case *bep.Close:
@@ -894,6 +912,8 @@ func newMessage(t bep.MessageType) (proto.Message, error) {
 		return new(bep.Response), nil
 	case bep.MessageType_MESSAGE_TYPE_DOWNLOAD_PROGRESS:
 		return new(bep.DownloadProgress), nil
+	case bep.MessageType_MESSAGE_TYPE_TUNNEL_DATA:
+		return new(bep.TunnelData), nil
 	case bep.MessageType_MESSAGE_TYPE_PING:
 		return new(bep.Ping), nil
 	case bep.MessageType_MESSAGE_TYPE_CLOSE:
@@ -1098,6 +1118,8 @@ func messageContext(msg proto.Message) (string, error) {
 		return "ping", nil
 	case *bep.Close:
 		return "close", nil
+	case *bep.TunnelData:
+		return fmt.Sprintf("tunnel-data for %v", msg.TunnelId), nil
 	default:
 		return "", errors.New("unknown or empty message")
 	}
@@ -1133,4 +1155,36 @@ func (c *connectionWrappingModel) Closed(err error) {
 
 func (c *connectionWrappingModel) DownloadProgress(p *DownloadProgress) error {
 	return c.model.DownloadProgress(c.conn, p)
+}
+
+// TunnelData represents the structure for tunnel data messages.
+type TunnelData struct {
+	D *bep.TunnelData
+}
+
+// MarshalBinary encodes the TunnelData into a binary form.
+func (t *TunnelData) toWire() *bep.TunnelData {
+	return t.D
+}
+
+func tunnelDataFromWire(data *bep.TunnelData) *TunnelData {
+	return &TunnelData{data}
+}
+
+// HandleTunnelData handles incoming TunnelData messages.
+func (c *rawConnection) handleTunnelData(msg *TunnelData) {
+	if c.tunnelIn != nil {
+		select {
+		case c.tunnelIn <- msg:
+		case <-c.closed:
+		}
+	}
+}
+
+func (c *rawConnection) TunnelIn() <-chan *TunnelData {
+	return c.tunnelIn
+}
+
+func (c *rawConnection) TunnelOut() chan<- *TunnelData {
+	return c.tunnelOut
 }

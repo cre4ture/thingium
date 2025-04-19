@@ -81,6 +81,13 @@ type Availability struct {
 	FromTemporary bool              `json:"fromTemporary"`
 }
 
+type TunnelManagerInterface interface {
+	TunnelStatus() []map[string]interface{}
+	ModifyTunnel(id string, action string, params map[string]string) error
+	AddTunnelOutbound(localListenAddress string, remoteDeviceID protocol.DeviceID, remoteServiceName string) error
+	ReloadConfig() error
+}
+
 type Model interface {
 	suture.Service
 
@@ -131,6 +138,8 @@ type Model interface {
 	GlobalDirectoryTree(folder, prefix string, levels int, dirsOnly bool) ([]*TreeEntry, error)
 
 	RequestGlobal(ctx context.Context, deviceID protocol.DeviceID, folder, name string, blockNo int, offset int64, size int, hash []byte, weakHash uint32, fromTemporary bool) ([]byte, error)
+
+	GetTunnelManager() TunnelManagerInterface
 }
 
 type VirtualFolderFactoryFn func(
@@ -213,9 +222,14 @@ type model struct {
 	deviceDownloads                map[protocol.DeviceID]*deviceDownloadState
 	remoteFolderStates             map[protocol.DeviceID]map[string]remoteFolderState // deviceID -> folders
 	indexHandlers                  *serviceMap[protocol.DeviceID, *indexHandlerRegistry]
+	tunnelManager                  *TunnelManager
 
 	// for testing only
 	foldersRunning atomic.Int32
+}
+
+func (m *model) GetTunnelManager() TunnelManagerInterface {
+	return m.tunnelManager
 }
 
 var _ config.Verifier = &model{}
@@ -250,7 +264,7 @@ var (
 // where it sends index information to connected peers and responds to requests
 // for file data without altering the local folder in any way.
 func NewModel(cfg config.Wrapper, id protocol.DeviceID, ldb *db.Lowlevel, protectedFiles []string, evLogger events.Logger, keyGen *protocol.KeyGenerator) Model {
-	return NewFullModel(cfg, id, ldb, protectedFiles, evLogger, keyGen, nil, nil, nil, nil)
+	return NewFullModel(cfg, id, ldb, protectedFiles, evLogger, keyGen, nil, nil, nil)
 }
 
 // NewModel creates and starts a new model. The model starts in read-only mode,
@@ -260,14 +274,12 @@ func NewFullModel(cfg config.Wrapper, id protocol.DeviceID, ldb *db.Lowlevel, pr
 	virtualFolderFactory VirtualFolderFactoryFn,
 	blobFsFactory BlockStorageBlobFsFactoryFn,
 	blockStorageFactory BlockStorageFactoryFn,
-	blobFsRestic BlobFsFactoryFn,
 ) Model {
 	spec := svcutil.SpecWithDebugLogger(l)
 	m := &model{
 		virtualFolderFactory: virtualFolderFactory,
 		blobFsFactory:        blobFsFactory,
 		blockStorageFactory:  blockStorageFactory,
-		blobFsRestic:         blobFsRestic,
 		Supervisor:           suture.New("model", spec),
 
 		// constructor parameters
@@ -307,6 +319,7 @@ func NewFullModel(cfg config.Wrapper, id protocol.DeviceID, ldb *db.Lowlevel, pr
 		deviceDownloads:                make(map[protocol.DeviceID]*deviceDownloadState),
 		remoteFolderStates:             make(map[protocol.DeviceID]map[string]remoteFolderState),
 		indexHandlers:                  newServiceMap[protocol.DeviceID, *indexHandlerRegistry](evLogger),
+		tunnelManager:                  NewTunnelManager(cfg.ConfigPath()),
 	}
 	for devID, cfg := range cfg.Devices() {
 		m.deviceStatRefs[devID] = stats.NewDeviceStatisticsReference(m.db, devID)
@@ -316,6 +329,7 @@ func NewFullModel(cfg config.Wrapper, id protocol.DeviceID, ldb *db.Lowlevel, pr
 	m.Add(m.progressEmitter)
 	m.Add(m.indexHandlers)
 	m.Add(svcutil.AsService(m.serve, m.String()))
+	m.Add(m.tunnelManager)
 
 	return m
 }
@@ -392,7 +406,7 @@ func (m *model) fatal(err error) {
 // Need to hold lock on m.mut when calling this.
 func (m *model) addAndStartFolderLocked(cfg config.FolderConfiguration, fset *db.FileSet, cacheIgnoredFiles bool) {
 	ignores := ignore.New(cfg.Filesystem(nil), ignore.WithCache(cacheIgnoredFiles))
-	if !cfg.Type.IsReceiveEncrypted() {
+	if cfg.Type.SupportsIgnores() {
 		if err := ignores.Load(".stignore"); err != nil && !fs.IsNotExist(err) {
 			l.Warnln("Loading ignores:", err)
 		}
@@ -1474,7 +1488,7 @@ func (m *model) ccHandleFolders(folders []protocol.Folder, deviceCfg config.Devi
 		if !ok {
 			indexHandlers.Remove(folder.ID)
 			if deviceCfg.IgnoredFolder(folder.ID) {
-				l.Infof("Ignoring folder %s from device %s since we are configured to", folder.Description(), deviceID)
+				l.Infof("Ignoring folder %s from device %s since it is in the list of ignored folders", folder.Description(), deviceID)
 				continue
 			}
 			delete(expiredPending, folder.ID)
@@ -1885,7 +1899,9 @@ func (m *model) handleAutoAccepts(deviceID protocol.DeviceID, folder protocol.Fo
 				}
 				fcfg.Versioning.Reset()
 				// Other necessary settings are ensured by FolderConfiguration itself
-			} else {
+			}
+
+			if fcfg.Type.SupportsIgnores() {
 				ignores := m.cfg.DefaultIgnores()
 				if err := m.setIgnores(fcfg, ignores.Lines); err != nil {
 					l.Warnf("Failed to apply default ignores to auto-accepted folder %s at path %s: %v", folder.Description(), fcfg.Path, err)
@@ -2302,7 +2318,7 @@ func (m *model) LoadIgnores(folder string) ([]string, []string, error) {
 		}
 	}
 
-	if cfg.Type.IsReceiveEncrypted() {
+	if !cfg.Type.SupportsIgnores() {
 		return nil, nil, nil
 	}
 
@@ -2464,6 +2480,8 @@ func (m *model) AddConnection(conn protocol.Connection, hello protocol.Hello) {
 
 	m.deviceWasSeen(deviceID)
 	m.scheduleConnectionPromotion()
+
+	m.tunnelManager.RegisterDeviceConnection(deviceID, conn.TunnelIn(), conn.TunnelOut())
 }
 
 func (m *model) scheduleConnectionPromotion() {
@@ -2838,11 +2856,11 @@ func (m *model) Revert(folder string) {
 }
 
 type TreeEntry struct {
-	Name     string                `json:"name"`
-	ModTime  time.Time             `json:"modTime"`
-	Size     int64                 `json:"size"`
-	Type     protocol.FileInfoType `json:"type"`
-	Children []*TreeEntry          `json:"children,omitempty"`
+	Name     string       `json:"name"`
+	ModTime  time.Time    `json:"modTime"`
+	Size     int64        `json:"size"`
+	Type     string       `json:"type"`
+	Children []*TreeEntry `json:"children,omitempty"`
 }
 
 func findByName(slice []*TreeEntry, name string) *TreeEntry {
@@ -2925,7 +2943,7 @@ func SnapshotGlobalDirectoryTree(snap db.DbSnapshotI, prefix string, levels int,
 
 		parent.Children = append(parent.Children, &TreeEntry{
 			Name:    base,
-			Type:    f.FileType(),
+			Type:    f.Type.String(),
 			ModTime: f.ModTime(),
 			Size:    f.FileSize(),
 		})

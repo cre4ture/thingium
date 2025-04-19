@@ -175,6 +175,7 @@ angular.module('syncthing.core')
                 refreshConfig(),
                 refreshCluster(),
                 refreshConnectionStats(),
+                refreshTunnels(),
             ]).then(function() {
                 $http.get(urlbase + '/system/version').success(function (data) {
                     console.log("version", data);
@@ -635,6 +636,102 @@ angular.module('syncthing.core')
             }).error($scope.emitHTTPError);
         }
 
+        function refreshTunnels() {
+            $http.get(urlbase + '/system/tunnels').success(function(data) {
+                $scope.tunnels = data;
+            });
+        }
+
+        $scope.stopTunnel = function (tunnel) {
+            $http.post(urlbase + '/system/tunnels-modify', { id: tunnel.id, action: "disable" })
+                .then(function () {
+                    refreshTunnels();
+                })
+                .catch(function (response) {
+                    console.error('Failed to stop tunnel:', response);
+                });
+        };
+
+        $scope.startTunnel = function (tunnel) {
+            $http.post(urlbase + '/system/tunnels-modify', { id: tunnel.id, action: "enable" })
+                .then(function () {
+                    refreshTunnels();
+                })
+                .catch(function (response) {
+                    console.error('Failed to start tunnel:', response);
+                });
+        };
+
+        $scope.deleteTunnel = function (tunnel) {
+            $http.post(urlbase + '/system/tunnels-modify', { id: tunnel.id, action: "delete" })
+                .then(function () {
+                    refreshTunnels();
+                })
+                .catch(function (response) {
+                    console.error('Failed to delete tunnel:', response);
+                });
+        };
+
+        $scope.acceptAndStartTunnel = function (tunnel) {
+            const payload = {
+                localListenAddress: tunnel.localListenAddress,
+                remoteDeviceID: tunnel.remoteDeviceID,
+                remoteServiceName: tunnel.serviceID,
+            };
+
+            $http.post(urlbase + '/system/tunnels-add-outbound', payload)
+                .then(function () {
+                    console.log('Tunnel added successfully');
+                    refreshTunnels();
+                })
+                .catch(function (error) {
+                    console.error('Failed to add tunnel:', error);
+                });
+        };
+
+        $scope.addAllowedDevice = function (tunnel, deviceID) {
+            const payload = {
+                id: tunnel.id,
+                action: "add-allowed-device",
+                deviceID: deviceID,
+            };
+            $http.post(urlbase + '/system/tunnels-modify', payload)
+                .then(function () {
+                    console.log("Device added to allowed list for tunnel:", tunnel.id);
+                    refreshTunnels();
+                })
+                .catch(function (error) {
+                    console.error("Failed to add allowed device:", error);
+                });
+        };
+
+        $scope.removeAllowedDevice = function (tunnel, deviceID) {
+            const payload = {
+                id: tunnel.id,
+                action: "remove-allowed-device",
+                deviceID: deviceID,
+            };
+            $http.post(urlbase + '/system/tunnels-modify', payload)
+                .then(function () {
+                    console.log("Device removed from allowed list for tunnel:", tunnel.id);
+                    refreshTunnels();
+                })
+                .catch(function (error) {
+                    console.error("Failed to remove allowed device:", error);
+                });
+        };
+
+        $scope.reloadTunnelConfig = function () {
+            $http.post(urlbase + '/system/tunnels-reload-config')
+                .then(function () {
+                    console.log('Tunnel configuration reloaded successfully');
+                    refreshTunnels();
+                })
+                .catch(function (error) {
+                    console.error('Failed to reload tunnel configuration:', error);
+                });
+        };
+
         function recalcLocalStateTotal() {
             $scope.localStateTotal = {
                 bytes: 0,
@@ -968,6 +1065,7 @@ angular.module('syncthing.core')
             refreshDiscoveryCache();
             refreshConnectionStats();
             refreshErrors();
+            refreshTunnels();
         };
 
         $scope.folderStatus = function (folderCfg) {
@@ -2188,6 +2286,10 @@ angular.module('syncthing.core')
 
         $scope.deviceList = function () {
             return deviceList($scope.devices);
+        };
+
+        $scope.tunnelList = function () {
+            return tunnelList($scope.tunnels);
         };
 
         $scope.directoryList = [];
