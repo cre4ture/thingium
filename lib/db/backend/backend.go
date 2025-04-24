@@ -22,8 +22,8 @@ type CommitHook func(WriteTransaction) error
 // transactions and performance may suffer.
 type Reader interface {
 	Get(key []byte) ([]byte, error)
-	NewPrefixIterator(prefix []byte) (BackendIterator, error)
-	NewRangeIterator(first, last []byte) (BackendIterator, error)
+	NewPrefixIterator(prefix []byte) (Iterator, error)
+	NewRangeIterator(first, last []byte) (Iterator, error)
 }
 
 // The Writer interface specifies the mutating operations available on the
@@ -88,7 +88,7 @@ type WriteTransaction interface {
 // can be called either before or after Release with the same results. If an
 // iterator was created in a transaction (whether read-only or write) it
 // must be released before the transaction is released (or committed).
-type BackendIterator interface {
+type Iterator interface { // TODO: check if renamed?
 	Next() bool
 	Key() []byte
 	Value() []byte

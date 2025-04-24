@@ -670,22 +670,15 @@ func (t readWriteTransaction) updateGlobal(gk, keyBuf, folder, device []byte, fi
 	// Must happen before updating global meta: If this is the first
 	// item from this device, it will be initialized with the global state.
 
-	//logger.DefaultLogger.Infof("Need before: %v", file.Name)
-
 	needBefore := haveOldGlobal && Need(oldGlobalFV, haveRemoved, protocol.VectorFromWire(removedFV.GetVersion()))
 	needNow := Need(globalFV, true, file.Version)
-
-	//logger.DefaultLogger.Infof("Need after: %v, %v, %v", file.Name, needBefore, needNow)
-
 	if needBefore {
 		if keyBuf, oldGlobal, err = t.getGlobalFromFileVersion(keyBuf, folder, name, true, oldGlobalFV); err != nil {
 			return nil, err
 		}
 		gotOldGlobal = true
 		meta.removeNeeded(deviceID, oldGlobal)
-		//logger.DefaultLogger.Infof("removeNeeded: %v, %v", file.Name, oldGlobal)
 		if !needNow && bytes.Equal(device, protocol.LocalDeviceID[:]) {
-			//logger.DefaultLogger.Infof("updateLocalNeed: %v, %v", file.Name, oldGlobal)
 			if keyBuf, err = t.updateLocalNeed(keyBuf, folder, name, false); err != nil {
 				return nil, err
 			}
@@ -697,10 +690,8 @@ func (t readWriteTransaction) updateGlobal(gk, keyBuf, folder, device []byte, fi
 			return nil, err
 		}
 		gotGlobal = true
-		//logger.DefaultLogger.Infof("addNeeded: %v, %v", file.Name, global)
 		meta.addNeeded(deviceID, global)
 		if !needBefore && bytes.Equal(device, protocol.LocalDeviceID[:]) {
-			//logger.DefaultLogger.Infof("updateLocalNeed: %v, %v", file.Name, global)
 			if keyBuf, err = t.updateLocalNeed(keyBuf, folder, name, true); err != nil {
 				return nil, err
 			}
