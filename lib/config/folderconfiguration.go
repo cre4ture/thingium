@@ -50,7 +50,8 @@ type FolderConfiguration struct {
 	FilesystemType          FilesystemType              `json:"filesystemType" xml:"filesystemType"`
 	Path                    string                      `json:"path" xml:"path,attr" default:"~"`
 	Type                    FolderType                  `json:"type" xml:"type,attr"`
-	VirtualDescriptor       string                      `json:"virtualDescriptor" xml:"virtualDescriptor,attr"`
+	StorageType             string                      `json:"storageType" xml:"storageType,attr"`
+	FuseCacheSizeGiB        int                         `json:"fuseCacheSizeGiB" xml:"fuseCacheSizeGiB,attr" default:"5"`
 	Devices                 []FolderDeviceConfiguration `json:"devices" xml:"device"`
 	RescanIntervalS         int                         `json:"rescanIntervalS" xml:"rescanIntervalS,attr" default:"3600"`
 	FSWatcherEnabled        bool                        `json:"fsWatcherEnabled" xml:"fsWatcherEnabled,attr" default:"true"`

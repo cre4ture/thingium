@@ -31,7 +31,6 @@
           <div class="form-group" ng-class="{'has-error': folderEditor.folderPath.$invalid && folderEditor.folderPath.$dirty && !editingFolderDefaults()}">
             <label translate for="folderPath">Folder Path</label>
             <input name="folderPath" ng-readonly="editingFolderExisting()" id="folderPath" class="form-control" type="text" ng-model="currentFolder.path" list="directory-list" ng-required="!editingFolderDefaults()" ng-aria-required="!editingFolderDefaults()" path-is-sub-dir />
-            <label translate>Folder Storage Type</label>
             <datalist id="directory-list">
               <option ng-repeat="directory in directoryList" value="{{ directory }}" />
             </datalist>
@@ -45,13 +44,19 @@
                 <span class="text-danger" translate translate-value-other-folder="{{folderPathErrors.otherID}}" translate-value-other-folder-label="{{folderPathErrors.otherLabel}}" ng-if="folderPathErrors.otherLabel.length != 0">Warning, this path is a parent directory of an existing folder "{%otherFolderLabel%}" ({%otherFolder%}).</span>
               </span>
             </p>
-            <select class="form-control" ng-model="currentFolder.storageType" ng-disabled="editingFolderExisting() || currentFolder.type == 'receiveencrypted'">
-              <option value="full-local" translate>Full Folder in Local Storage</option>
-              <option value="fuse-cached" translate>FUSE-Mount - cached on local storage</option>
-              <option value="fuse-full" translate>FUSE-Mount - full folder in local storage</option>
-              <option value="fuse-ram-cached" translate>FUSE-Mount - RAM cache only</option>
-            </select>
-            <input name="folderCacheSizeGB" id="folderCacheSizeGB" class="form-control" type="number" ng-model="currentFolder.cacheSize" list="directory-list" ng-required="!editingFolderDefaults()" ng-aria-required="!editingFolderDefaults()" />
+            <label translate>Folder Storage Type</label>
+            <div class="form-inline">
+              <select class="form-control" ng-model="currentFolder.storageType" ng-init="currentFolder.storageType = currentFolder.storageType || 'local-full'" ng-disabled="currentFolder.type == 'receiveencrypted'">
+                <option value="local-full" translate>Full Folder in Local Storage</option>
+                <option value="fuse-cached" translate>FUSE-Mount - cached on local storage</option>
+                <option value="fuse-full" translate>FUSE-Mount - full folder in local storage</option>
+              </select>
+              <span class="pull-right">
+                <span class="ml-2">FUSE cache size (GiB):</span>
+                <input name="fuseCacheSizeGiB" id="fuseCacheSizeGiB" class="form-control ml-2" type="number" ng-model="currentFolder.fuseCacheSizeGiB" list="directory-list" ng-required="!editingFolderDefaults()" ng-aria-required="!editingFolderDefaults()" />
+                <span class="ml-1">GiB</span>
+              </span>
+            </div>
           </div>
         </div>
 
