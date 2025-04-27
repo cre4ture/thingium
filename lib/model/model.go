@@ -2905,7 +2905,7 @@ func SnapshotGlobalDirectoryTree(snap db.DbSnapshotI, prefix string, levels int,
 	var err error = nil
 	snap.WithPrefixedGlobalTruncated(prefix, func(f protocol.FileInfo) bool {
 
-		logger.DefaultLogger.Infof("SnapshotGlobalDirectoryTree(%v,%v) - full: %v", prefix, levels, f.FileName())
+		//logger.DefaultLogger.Infof("SnapshotGlobalDirectoryTree(%v,%v) - full: %v", prefix, levels, f.FileName())
 
 		// Don't include the prefix itself.
 		if f.IsInvalid() || f.IsDeleted() || strings.HasPrefix(prefix, f.FileName()) {
@@ -2914,7 +2914,7 @@ func SnapshotGlobalDirectoryTree(snap db.DbSnapshotI, prefix string, levels int,
 
 		fName := strings.Replace(f.FileName(), prefix, "", 1)
 
-		logger.DefaultLogger.Infof("SnapshotGlobalDirectoryTree(%v,%v) - replaced: %v", prefix, levels, fName)
+		//logger.DefaultLogger.Infof("SnapshotGlobalDirectoryTree(%v,%v) - replaced: %v", prefix, levels, fName)
 
 		dir := filepath.Dir(fName)
 		base := filepath.Base(fName)
@@ -2923,7 +2923,7 @@ func SnapshotGlobalDirectoryTree(snap db.DbSnapshotI, prefix string, levels int,
 			return true
 		}
 
-		logger.DefaultLogger.Infof("SnapshotGlobalDirectoryTree(%v,%v) - after level-check: %v", prefix, levels, fName)
+		//logger.DefaultLogger.Infof("SnapshotGlobalDirectoryTree(%v,%v) - after level-check: %v", prefix, levels, fName)
 
 		parent := root
 		if dir != "." {

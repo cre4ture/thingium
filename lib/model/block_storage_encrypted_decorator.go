@@ -23,8 +23,8 @@ func (e *EncryptedHashBlockStorage) CalculateInternalPathRepresentationFromHash(
 }
 
 // UncheckedGet implements HashBlockStorageI.
-func (e *EncryptedHashBlockStorage) UncheckedGet(hash []byte, downloadData bool) (data []byte, err error) {
-	return e.store.UncheckedGet(hash, downloadData)
+func (e *EncryptedHashBlockStorage) UncheckedGet(hash []byte, access AccessType) (data []byte, err error) {
+	return e.store.UncheckedGet(hash, access)
 }
 
 // AnnounceDelete implements HashBlockStorageI.
@@ -71,8 +71,8 @@ func (e *EncryptedHashBlockStorage) DeleteMeta(name string) error {
 }
 
 // Get implements HashBlockStorageI.
-func (e *EncryptedHashBlockStorage) ReserveAndGet(hash []byte, downloadData bool) (data []byte, err error) {
-	return e.store.ReserveAndGet(hash, downloadData)
+func (e *EncryptedHashBlockStorage) ReserveAndGet(hash []byte, access AccessType) (data []byte, err error) {
+	return e.store.ReserveAndGet(hash, access)
 }
 
 // GetBlockHashesCache implements HashBlockStorageI.

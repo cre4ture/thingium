@@ -118,7 +118,7 @@ func (o *OfflineBlockDataAccess) GetBlockDataFromCacheOrDownloadI(
 		return dataBuffer.data, dataBuffer.err, dataBuffer.result
 	}
 
-	data, err := o.blockStorage.ReserveAndGet(block.Hash, true)
+	data, err := o.blockStorage.ReserveAndGet(block.Hash, model.DOWNLOAD_DATA)
 	dataBuffer.data = data
 	dataBuffer.err = err
 	if err != nil {

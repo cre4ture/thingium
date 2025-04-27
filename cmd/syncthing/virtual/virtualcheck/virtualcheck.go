@@ -16,6 +16,7 @@ import (
 	"github.com/syncthing/syncthing/cmd/syncthing/virtual"
 	"github.com/syncthing/syncthing/lib/hashutil"
 	"github.com/syncthing/syncthing/lib/logger"
+	"github.com/syncthing/syncthing/lib/model"
 	"github.com/syncthing/syncthing/lib/protocol"
 	"github.com/syncthing/syncthing/lib/utils"
 )
@@ -179,7 +180,11 @@ func (c *CLI) Run() error {
 							//logger.DefaultLogger.Infof("validating parallel %v:%v - expected size: %v",
 							//	filePath, i, bi.Size)
 
-							data, err := osa.BlockStorage.UncheckedGet(bi.Hash, c.ValidateData)
+							access := model.CHECK_ONLY
+							if c.ValidateData {
+								access = model.DOWNLOAD_DATA
+							}
+							data, err := osa.BlockStorage.UncheckedGet(bi.Hash, access)
 
 							//logger.DefaultLogger.Infof("validating parallel 2 %v:%v - expected size: %v",
 							//	filePath, i, bi.Size)

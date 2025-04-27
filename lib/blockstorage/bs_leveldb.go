@@ -33,13 +33,7 @@ func (b *BsLevelDB) Close() error {
 }
 func (b *BsLevelDB) Get(key []byte) ([]byte, error) {
 	val, err := b.ldb.Get(key, nil)
-	if err != nil {
-		if err == leveldb.ErrNotFound {
-			return nil, nil
-		}
-		return nil, err
-	}
-	return val, nil
+	return val, err
 }
 func (b *BsLevelDB) Put(key, val []byte) error {
 	err := b.ldb.Put(key, val, nil)
@@ -57,10 +51,7 @@ func (b *BsLevelDB) Delete(key []byte) error {
 }
 func (b *BsLevelDB) Has(key []byte) (bool, error) {
 	val, err := b.ldb.Has(key, nil)
-	if err != nil {
-		return false, err
-	}
-	return val, nil
+	return val, err
 }
 
 func getDataKey(hash []byte) []byte {
@@ -77,27 +68,43 @@ func (b *BsLevelDB) CalculateInternalPathRepresentationFromHash(hash []byte) str
 	return fmt.Sprintf("%x", hash)
 }
 
-func (b *BsLevelDB) ReserveAndGet(hash []byte, downloadData bool) ([]byte, error) {
-	// Example implementation: fetch data and simulate reservation
-	var data []byte
-	var err error
-	if downloadData {
-		data, err = b.Get(getDataKey(hash))
+func (b *BsLevelDB) ReserveAndGet(hash []byte, access model.AccessType) ([]byte, error) {
+	if access == model.DOWNLOAD_DATA {
+		data, err := b.Get(getDataKey(hash))
+		if err == nil {
+			return data, nil
+		}
+		if err == leveldb.ErrNotFound {
+			return nil, model.ErrNotAvailable
+		}
+		return nil, err
 	} else {
-		_, err = b.Has(getDataKey(hash))
-	}
-	if err != nil {
+		has, err := b.Has(getDataKey(hash))
+		if err == nil {
+			if !has {
+				return nil, model.ErrNotAvailable
+			} else {
+				return nil, nil
+			}
+		}
 		return nil, err
 	}
-	if downloadData && (data == nil) {
-		return nil, model.ErrNotAvailable
-	}
-	return data, nil
 }
 
-func (b *BsLevelDB) UncheckedGet(hash []byte, downloadData bool) ([]byte, error) {
-	// Example implementation: fetch data without reservation logic
-	return b.Get(getDataKey(hash))
+func (b *BsLevelDB) UncheckedGet(hash []byte, access model.AccessType) ([]byte, error) {
+	if access == model.DOWNLOAD_DATA {
+		return b.Get(getDataKey(hash))
+	} else {
+		has, err := b.Has(getDataKey(hash))
+		if err == nil {
+			if !has {
+				return nil, model.ErrNotAvailable
+			} else {
+				return nil, nil
+			}
+		}
+		return nil, err
+	}
 }
 
 func (b *BsLevelDB) ReserveAndSet(hash []byte, data []byte) error {

@@ -58,6 +58,14 @@ type HashSequence struct {
 
 type HashBlockStateMap map[string]HashBlockState
 
+// ENUM for download data or check only
+type AccessType int
+
+const (
+	CHECK_ONLY AccessType = iota
+	DOWNLOAD_DATA
+)
+
 type HashBlockStorageI interface {
 	io.Closer
 
@@ -66,8 +74,8 @@ type HashBlockStorageI interface {
 
 	CalculateInternalPathRepresentationFromHash(hash []byte) string
 
-	ReserveAndGet(hash []byte, downloadData bool) (data []byte, err error)
-	UncheckedGet(hash []byte, downloadData bool) (data []byte, err error)
+	ReserveAndGet(hash []byte, access AccessType) (data []byte, err error)
+	UncheckedGet(hash []byte, access AccessType) (data []byte, err error)
 
 	ReserveAndSet(hash []byte, data []byte) error
 	DeleteReservation(hash []byte) error
@@ -90,25 +98,38 @@ func GetBlockDataFromCacheOrDownload(
 	file protocol.FileInfo,
 	block protocol.BlockInfo,
 	downloadBlockDataCb func(block protocol.BlockInfo) ([]byte, error),
-	checkOnly bool,
+	access AccessType,
 ) ([]byte, error, GetBlockDataResult) {
 	grp := fmt.Sprintf("ff-GetBlockDataFromCacheOrDownload(%v:%v): START", file.Name, block.Offset/int64(file.BlockSize()))
-	watch := utils.PerformanceStopWatchStart()
+	watch := utils.PerformanceStopWatchStartDisabled()
 	defer watch.LastStep(grp, "FINAL")
 
-	data, err := connection.ReserveAndGet(block.Hash, checkOnly)
+	data, err := connection.ReserveAndGet(block.Hash, access)
 	if err == nil {
+		watch.Step(fmt.Sprintln("rsvAndGet-return-1-", len(data)))
 		return data, nil, GET_BLOCK_CACHED
-	} else {
-		if !errors.Is(err, ErrNotAvailable) {
-			// connection error, or other unknown issue
-			return nil, err, GET_BLOCK_FAILED
-		}
+	}
+
+	if !errors.Is(err, ErrNotAvailable) {
+		// connection error, or other unknown issue
+		watch.Step("rsvAndGet-return-2")
+		return nil, err, GET_BLOCK_FAILED
+	}
+
+	// not available
+
+	if access == CHECK_ONLY {
+		watch.Step("rsvAndGet-return-3")
+		return nil, ErrNotAvailable, GET_BLOCK_FAILED
 	}
 
 	watch.Step("rsvAndGt")
 
-	downloadBlockDataCb(block)
+	data, err = downloadBlockDataCb(block)
+	if err != nil {
+		watch.Step("downloadBlockDataCb-return-1")
+		return nil, err, GET_BLOCK_FAILED
+	}
 
 	watch.Step("pull")
 

@@ -552,11 +552,11 @@ func (f *syncthingVirtualFolderFuseAdapter) readDir(path string) (stream ffs.Dir
 		snap.WithPrefixedGlobalTruncated(path, func(child protocol.FileInfo) bool {
 			childPath := child.FileName()
 			childPath = strings.TrimPrefix(childPath, path)
-			logger.DefaultLogger.Infof("ENC VIRT path - %s, full: %v", childPath, child.FileName())
+			logger.DefaultLogger.Debugf("ENC VIRT path - %s, full: %v", childPath, child.FileName())
 			parts := strings.Split(childPath, "/")
-			logger.DefaultLogger.Infof("ENC VIRT ls - %s, parts: %v", childPath, parts)
+			logger.DefaultLogger.Debugf("ENC VIRT ls - %s, parts: %v", childPath, parts)
 			if len(parts) == 1 {
-				logger.DefaultLogger.Infof("ENC VIRT ADD CHILD-FILE - %s", parts[0])
+				logger.DefaultLogger.Debugf("ENC VIRT ADD CHILD-FILE - %s", parts[0])
 				fileMap[parts[0]] = &TreeEntry{
 					Name:    parts[0],
 					Type:    child.Type.String(),
@@ -566,7 +566,7 @@ func (f *syncthingVirtualFolderFuseAdapter) readDir(path string) (stream ffs.Dir
 			} else {
 				_, exists := fileMap[parts[0]]
 				if !exists {
-					logger.DefaultLogger.Infof("ENC VIRT ADD CHILD-DIR - %s", parts[0])
+					logger.DefaultLogger.Debugf("ENC VIRT ADD CHILD-DIR - %s", parts[0])
 					entry := &TreeEntry{
 						Name: parts[0],
 						Type: protocol.FileInfoTypeDirectory.String(),
@@ -581,12 +581,12 @@ func (f *syncthingVirtualFolderFuseAdapter) readDir(path string) (stream ffs.Dir
 		})
 
 		newChildren := maps.Values(fileMap)
-		logger.DefaultLogger.Infof("ENC VIRT before, after - %+v [->] %+v", children, newChildren)
+		logger.DefaultLogger.Debugf("ENC VIRT before, after - %+v [->] %+v", children, newChildren)
 		children = newChildren
 	} else {
 		children, err = SnapshotGlobalDirectoryTree(snap, path, levels, false)
 		if err != nil {
-			logger.DefaultLogger.Infof("ENC VIRT err -> %v", err)
+			logger.DefaultLogger.Debugf("ENC VIRT err -> %v", err)
 			return nil, syscall.EFAULT
 		}
 	}
@@ -624,7 +624,7 @@ func (vf *VirtualFileReadResult) readOneBlock(offset uint64, remainingToRead int
 	blockSize := vf.fi.BlockSize()
 	blockIndex := int(offset / uint64(blockSize))
 
-	logger.DefaultLogger.Infof(
+	logger.DefaultLogger.Debugf(
 		"VirtualFileReadResult readOneBlock(offset, len): %v, %v. bSize, bIdx: %v, %v",
 		offset, remainingToRead, blockSize, blockIndex)
 
@@ -657,24 +657,27 @@ func (vf *VirtualFileReadResult) readOneBlock(offset uint64, remainingToRead int
 
 func (vf *VirtualFileReadResult) Bytes(outBuf []byte) ([]byte, fuse.Status) {
 
-	logger.DefaultLogger.Infof("VirtualFileReadResult Bytes(len): %v", len(outBuf))
+	logger.DefaultLogger.Debugf("VirtualFileReadResult Bytes(len): %v", len(outBuf))
 
-	outBufSize := len(outBuf)
-	initialReadData, status := vf.readOneBlock(vf.offset, outBufSize)
+	shallReadBytes := len(outBuf)
+	if shallReadBytes > vf.Size() {
+		shallReadBytes = vf.Size()
+	}
+	initialReadData, status := vf.readOneBlock(vf.offset, shallReadBytes)
 	if status != 0 {
 		return nil, status
 	}
 
 	nextOutBufWriteBegin := len(initialReadData)
-	if nextOutBufWriteBegin >= outBufSize {
+	if nextOutBufWriteBegin >= shallReadBytes {
 		// done in one step
 		return initialReadData, 0
 	}
 
 	copy(outBuf, initialReadData)
 
-	for nextOutBufWriteBegin < outBufSize {
-		remainingToBeRead := outBufSize - nextOutBufWriteBegin
+	for nextOutBufWriteBegin < shallReadBytes {
+		remainingToBeRead := shallReadBytes - nextOutBufWriteBegin
 		nextReadData, status := vf.readOneBlock(vf.offset+uint64(nextOutBufWriteBegin), remainingToBeRead)
 		if status != 0 {
 			return nil, status
@@ -686,14 +689,14 @@ func (vf *VirtualFileReadResult) Bytes(outBuf []byte) ([]byte, fuse.Status) {
 		nextOutBufWriteBegin += readLen
 	}
 
-	if nextOutBufWriteBegin != outBufSize {
-		logger.DefaultLogger.Infof("Read incomplete: %d/%d", nextOutBufWriteBegin, len(outBuf))
+	if nextOutBufWriteBegin != shallReadBytes {
+		logger.DefaultLogger.Debugf("Read incomplete: %d/%d", nextOutBufWriteBegin, len(outBuf))
 	}
 
 	if nextOutBufWriteBegin != 0 {
 
 		// request download of remaining file data:
-		vf.f.dataAccess.RequestBackgroundDownloadI(vf.fi.Name, vf.fi.Size, vf.fi.ModTime(), nil)
+		// vf.f.dataAccess.RequestBackgroundDownloadI(vf.fi.Name, vf.fi.Size, vf.fi.ModTime(), nil)
 
 		return outBuf[:nextOutBufWriteBegin], 0
 	} else {

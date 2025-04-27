@@ -470,6 +470,9 @@ func NewVirtualFolderMount(mountPath string, folderId, folderLabel string, stFol
 		isDir:    true,
 	}
 
+	// convenience: umount if still uncleanly mounted from previous run
+	_ = syscall.Unmount(mountPath, 0)
+
 	fuseServer, err := ffs.Mount(mountPath, rootNode, &ffs.Options{
 		MountOptions: fuse.MountOptions{
 			FsName: "syncthing/" + folderId,

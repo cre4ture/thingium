@@ -185,7 +185,7 @@ func (vf *BlockStorageFileBlobFsPullOrScan) scanOne(
 				ok := inMap
 				if inMap && (!blockState.IsAvailableAndReservedByMe()) {
 					// block is there but not hold, add missing hold - checking again for existence as in unhold state it could have been removed meanwhile
-					_, err := vf.parent.blockCache.ReserveAndGet(bi.Hash, false)
+					_, err := vf.parent.blockCache.ReserveAndGet(bi.Hash, model.CHECK_ONLY)
 					ok = (err == nil) // TODO: differentiate between error types
 				}
 				if !ok {
@@ -235,7 +235,7 @@ func (b *BlockStorageFileBlobFs) UpdateFile(
 				err := utils.AbortableTimeDelayedRetry(ctx, 6, time.Minute, func(tryNr uint) error {
 
 					_, err, status := model.GetBlockDataFromCacheOrDownload(
-						b.blockCache, fi, bi, downloadBlockDataCb, true)
+						b.blockCache, fi, bi, downloadBlockDataCb, model.CHECK_ONLY)
 
 					if err != nil {
 						// trigger retry
@@ -301,7 +301,7 @@ func (b *BlockStorageFileBlobFs) updateStoredFileMetadata(
 }
 
 func (vf *BlockStorageFileBlobFs) GetHashBlockData(ctx context.Context, hash []byte, response_data []byte) (int, error) {
-	data, err := vf.blockCache.ReserveAndGet(hash, true)
+	data, err := vf.blockCache.ReserveAndGet(hash, model.DOWNLOAD_DATA)
 	if err != nil {
 		return 0, err
 	}

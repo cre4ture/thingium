@@ -13,9 +13,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"math"
-	"os"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -36,7 +36,8 @@ import (
 
 func init() {
 	log.SetFlags(log.Lmicroseconds)
-	log.Default().SetOutput(os.Stdout)
+	//log.Default().SetOutput(os.Stdout)
+	log.Default().SetOutput(io.Discard)
 	log.Default().SetPrefix("TESTLOG ")
 }
 
@@ -127,7 +128,7 @@ func NewVirtualFolder(
 	downloadFunction = func(file protocol.FileInfo, block protocol.BlockInfo) ([]byte, error, GetBlockDataResult) {
 		return GetBlockDataFromCacheOrDownload(blockCache, file, block, func(block protocol.BlockInfo) ([]byte, error) {
 			return folderBase.pullBlockBaseConvenient(protocol.BlockOfFile{File: file, Block: block})
-		}, false)
+		}, DOWNLOAD_DATA)
 	}
 
 	f := &virtualFolderSyncthingService{

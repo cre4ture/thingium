@@ -67,7 +67,7 @@ func (e *jobQueueEntry) abort() {
 
 func (e *jobQueueEntry) Done(err error) {
 	fn := e.progressCb.Swap(nil)
-	if fn != nil {
+	if fn != nil && *fn != nil {
 		(*fn)(0, &JobResult{Err: err})
 	}
 }

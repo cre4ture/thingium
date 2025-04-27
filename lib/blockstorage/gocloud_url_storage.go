@@ -281,7 +281,7 @@ func (hm *GoCloudUrlStorage) reserveAndCheckExistence(hash []byte) error {
 	return nil
 }
 
-func (hm *GoCloudUrlStorage) ReserveAndGet(hash []byte, downloadData bool) (data []byte, err error) {
+func (hm *GoCloudUrlStorage) ReserveAndGet(hash []byte, access model.AccessType) (data []byte, err error) {
 	if len(hash) == 0 {
 		return nil, model.ErrNotAvailable
 	}
@@ -299,7 +299,7 @@ func (hm *GoCloudUrlStorage) ReserveAndGet(hash []byte, downloadData bool) (data
 		time.Sleep(time.Minute * 1)
 	}
 
-	if (err == nil) && downloadData {
+	if (err == nil) && (access == model.DOWNLOAD_DATA) {
 		var err error = nil
 		//logger.DefaultLogger.Infof("ReserveAndGet(): %v - download", hashutil.HashToStringMapKey(hash))
 		data, err = hm.bucket.ReadAll(hm.ctx, hm.getBlockStringKey(hash))
@@ -311,7 +311,7 @@ func (hm *GoCloudUrlStorage) ReserveAndGet(hash []byte, downloadData bool) (data
 	return data, err
 }
 
-func (hm *GoCloudUrlStorage) UncheckedGet(hash []byte, downloadData bool) (data []byte, err error) {
+func (hm *GoCloudUrlStorage) UncheckedGet(hash []byte, access model.AccessType) (data []byte, err error) {
 	if len(hash) == 0 {
 		return nil, model.ErrNotAvailable
 	}
@@ -320,7 +320,7 @@ func (hm *GoCloudUrlStorage) UncheckedGet(hash []byte, downloadData bool) (data 
 	//defer logger.DefaultLogger.Infof("ReserveAndGet(): %v", hashutil.HashToStringMapKey(hash))
 
 	key := hm.getBlockStringKey(hash)
-	if downloadData {
+	if access == model.DOWNLOAD_DATA {
 		var err error = nil
 		//logger.DefaultLogger.Infof("ReserveAndGet(): %v - download", hashutil.HashToStringMapKey(hash))
 		data, err = hm.bucket.ReadAll(hm.ctx, key)
