@@ -196,7 +196,8 @@ func (vf *virtualFolderSyncthingService) runVirtualFolderServiceCoroutine(
 				vf,
 			)
 
-			mount, err := NewVirtualFolderMount(vf.mountPath, vf.ID, vf.Label, stVF)
+			//mount, err := NewVirtualFolderMount(vf.mountPath, vf.ID, vf.Label, stVF)
+			mount, err := NewSyncthingFsMount(vf.mountPath, vf.ID, vf.Label, stVF)
 			if err != nil {
 				return err
 			}

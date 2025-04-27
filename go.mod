@@ -17,7 +17,6 @@ require (
 	github.com/gobwas/glob v0.2.3
 	github.com/gofrs/flock v0.12.1
 	github.com/greatroar/blobloom v0.8.0
-	github.com/hanwen/go-fuse/v2 v2.6.2
 	github.com/hashicorp/golang-lru/v2 v2.0.7
 	github.com/hitoshi44/go-uid64 v0.2.0
 	github.com/jackpal/gateway v1.0.16
@@ -45,6 +44,7 @@ require (
 	github.com/urfave/cli v1.22.16
 	github.com/vitrun/qart v0.0.0-20160531060029-bf64b92db6b0
 	github.com/willabides/kongplete v0.4.0
+	github.com/winfsp/cgofuse v1.6.0
 	go.uber.org/automaxprocs v1.6.0
 	gocloud.dev v0.39.0
 	golang.org/x/crypto v0.36.0
@@ -61,6 +61,7 @@ require (
 
 require (
 	github.com/alecthomas/repr v0.4.0 // indirect
+	github.com/hanwen/go-fuse/v2 v2.7.2 // indirect
 	github.com/hexops/gotextdiff v1.0.3 // indirect
 	github.com/mitchellh/colorstring v0.0.0-20190213212951-d06e56a500db // indirect
 	github.com/rivo/uniseg v0.4.7 // indirect
