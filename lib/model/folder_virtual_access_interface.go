@@ -9,17 +9,31 @@ package model
 import (
 	"context"
 	"syscall"
+	"time"
 
-	ffs "github.com/hanwen/go-fuse/v2/fs"
-	"github.com/hanwen/go-fuse/v2/fuse"
 	"github.com/syncthing/syncthing/lib/protocol"
 )
+
+type BlockDataAccessI interface {
+	GetBlockDataFromCacheOrDownloadI(
+		file protocol.FileInfo,
+		block protocol.BlockInfo,
+	) ([]byte, error, GetBlockDataResult)
+	ReserveAndSetI(hash []byte, data []byte)
+	RequestBackgroundDownloadI(filename string, size int64, modified time.Time, fn JobQueueProgressFn)
+}
+
+type ReadResult interface {
+}
+
+type DirStream interface {
+}
 
 type SyncthingVirtualFolderAccessI interface {
 	getInoOf(path string) uint64
 	lookupFile(path string) (info *protocol.FileInfo, eno syscall.Errno)
-	readDir(path string) (stream ffs.DirStream, eno syscall.Errno)
-	readFile(path string, buf []byte, off int64) (res fuse.ReadResult, errno syscall.Errno)
+	readDir(path string) (stream DirStream, eno syscall.Errno)
+	readFile(path string, buf []byte, off int64) (res ReadResult, errno syscall.Errno)
 	createFile(Permissions *uint32, path string) (info *protocol.FileInfo, eno syscall.Errno)
 	writeFile(ctx context.Context, path string, offset uint64, inputData []byte) syscall.Errno
 	deleteFile(ctx context.Context, path string) syscall.Errno

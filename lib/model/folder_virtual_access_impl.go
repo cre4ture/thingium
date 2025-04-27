@@ -4,6 +4,9 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this file,
 // You can obtain one at https://mozilla.org/MPL/2.0/.
 
+//go:build !windows
+// +build !windows
+
 package model
 
 import (
@@ -55,15 +58,6 @@ type DbFileSetReadI interface {
 type DbFileSetWriteI interface {
 	Update(fs []protocol.FileInfo)
 	UpdateOneLocalFileInfoLocalChangeDetected(fi protocol.FileInfo)
-}
-
-type BlockDataAccessI interface {
-	GetBlockDataFromCacheOrDownloadI(
-		file protocol.FileInfo,
-		block protocol.BlockInfo,
-	) ([]byte, error, GetBlockDataResult)
-	ReserveAndSetI(hash []byte, data []byte)
-	RequestBackgroundDownloadI(filename string, size int64, modified time.Time, fn JobQueueProgressFn)
 }
 
 func NewSyncthingVirtualFolderFuseAdapter(
