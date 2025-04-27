@@ -21,12 +21,12 @@ type BsLevelDB struct {
 	ldb *leveldb.DB
 }
 
-func NewBsLevelDB(location string) (*BsLevelDB, error) {
+func NewBsLevelDB(location string) *BsLevelDB {
 	ldb, err := leveldb.OpenFile(location, nil)
 	if err != nil {
-		return nil, err
+		panic(fmt.Sprintf("Failed to open leveldb at %s: %v", location, err))
 	}
-	return &BsLevelDB{ldb: ldb}, nil
+	return &BsLevelDB{ldb: ldb}
 }
 func (b *BsLevelDB) Close() error {
 	return b.ldb.Close()

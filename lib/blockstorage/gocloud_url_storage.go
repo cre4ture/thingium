@@ -135,10 +135,6 @@ func (hm *GoCloudUrlStorage) GetBlockHashesCountHint() (int, error) {
 	return hint, nil
 }
 
-func NewGoCloudUrlStorageFromConfigStr(ctx context.Context, configStr string, myDeviceId string) model.HashBlockStorageI {
-	return NewGoCloudUrlStorageFromConfigStrConcrete(ctx, configStr, myDeviceId)
-}
-
 func NewGoCloudUrlStorageFromConfigStrConcrete(ctx context.Context, configStr string, myDeviceId string) *GoCloudUrlStorage {
 
 	virtualDescriptor_dash := ""

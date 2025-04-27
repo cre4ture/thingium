@@ -542,11 +542,11 @@ func (f *syncthingVirtualFolderFuseAdapter) readDir(path string) (stream ffs.Dir
 		return nil, syscall.EFAULT
 	}
 
-	if f.folderType.IsReceiveEncrypted() {
+	if path != "" && !strings.HasSuffix(path, "/") {
+		path = path + "/"
+	}
 
-		if path != "" && !strings.HasSuffix(path, "/") {
-			path = path + "/"
-		}
+	if f.folderType.IsReceiveEncrypted() {
 
 		fileMap := make(map[string]*TreeEntry)
 		snap.WithPrefixedGlobalTruncated(path, func(child protocol.FileInfo) bool {
