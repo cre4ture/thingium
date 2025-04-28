@@ -16,6 +16,7 @@ import (
 	"io"
 	"log"
 	"math"
+	"os/exec"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -147,6 +148,20 @@ func (vf *virtualFolderSyncthingService) runVirtualFolderServiceCoroutine(
 	doWorkCtx context.Context,
 	ping_pong_chan chan error, /* simulate coroutine */
 ) {
+	defer func() {
+		if r := recover(); r != nil {
+			logger.DefaultLogger.Warnf("Panic recovered in runVirtualFolderServiceCoroutine: %v", r)
+			ping_pong_chan <- fmt.Errorf("panic: %v", r)
+		}
+	}()
+
+	vf.runVirtualFolderServiceCoroutine_intern(doWorkCtx, ping_pong_chan)
+}
+
+func (vf *virtualFolderSyncthingService) runVirtualFolderServiceCoroutine_intern(
+	doWorkCtx context.Context,
+	ping_pong_chan chan error, /* simulate coroutine */
+) {
 
 	initError := func() error { // coroutine
 
@@ -187,6 +202,9 @@ func (vf *virtualFolderSyncthingService) runVirtualFolderServiceCoroutine(
 		defer jobQ.Close()
 
 		if vf.mountPath != "" {
+
+			logger.DefaultLogger.Infof("Initializing Syncthing Virtual Folder Fuse Adapter")
+
 			stVF := NewSyncthingVirtualFolderFuseAdapter(
 				vf.model.shortID,
 				vf.ID,
@@ -196,11 +214,25 @@ func (vf *virtualFolderSyncthingService) runVirtualFolderServiceCoroutine(
 				vf,
 			)
 
+			logger.DefaultLogger.Infof("Mounting virtual folder at %s", vf.mountPath)
+
+			// dev-convenience: umount if still uncleanly mounted from previous run
+			cmd := exec.Command("umount", vf.mountPath)
+			output, err := cmd.CombinedOutput()
+			if err != nil {
+				l.Infoln("conv-umount failed: %v, output: %s", err, string(output))
+			} else {
+				l.Infoln("conv-umount: success")
+			}
+
 			//mount, err := NewVirtualFolderMount(vf.mountPath, vf.ID, vf.Label, stVF)
 			mount, err := NewSyncthingFsMount(vf.mountPath, vf.ID, vf.Label, stVF)
 			if err != nil {
+				logger.DefaultLogger.Warnf("Failed to mount virtual folder at %s: %v", vf.mountPath, err)
 				return err
 			}
+
+			logger.DefaultLogger.Infof("Virtual folder mounted successfully at %s", vf.mountPath)
 
 			defer func() {
 				mount.Close()
