@@ -18,7 +18,6 @@ import (
 	"time"
 
 	ffs "github.com/hanwen/go-fuse/v2/fs"
-	"github.com/hanwen/go-fuse/v2/fuse"
 	"github.com/syncthing/syncthing/internal/gen/bep"
 	"github.com/syncthing/syncthing/lib/config"
 	"github.com/syncthing/syncthing/lib/db"
@@ -486,9 +485,9 @@ type VirtualFolderDirStream struct {
 func (s *VirtualFolderDirStream) HasNext() bool {
 	return s.i < len(s.children)
 }
-func (s *VirtualFolderDirStream) Next() (fuse.DirEntry, syscall.Errno) {
+func (s *VirtualFolderDirStream) Next() (DirEntry, syscall.Errno) {
 	if !s.HasNext() {
-		return fuse.DirEntry{}, syscall.ENOENT
+		return DirEntry{}, syscall.ENOENT
 	}
 
 	child := s.children[s.i]
@@ -499,7 +498,7 @@ func (s *VirtualFolderDirStream) Next() (fuse.DirEntry, syscall.Errno) {
 	ft_int, ok := bep.FileInfoType_value[child.Type]
 	if !ok {
 		logger.DefaultLogger.Infof("Unknown file type %s", child.Type)
-		return fuse.DirEntry{}, syscall.EINVAL
+		return DirEntry{}, syscall.EINVAL
 	}
 	fileType := protocol.FileInfoType(ft_int)
 
@@ -514,7 +513,7 @@ func (s *VirtualFolderDirStream) Next() (fuse.DirEntry, syscall.Errno) {
 		break
 	}
 
-	return fuse.DirEntry{
+	return DirEntry{
 		Mode: uint32(mode),
 		Name: child.Name,
 		Ino:  s.root.getInoOf(path.Join(s.dirPath, child.Name)),
@@ -522,7 +521,7 @@ func (s *VirtualFolderDirStream) Next() (fuse.DirEntry, syscall.Errno) {
 }
 func (s *VirtualFolderDirStream) Close() {}
 
-func (f *syncthingVirtualFolderFuseAdapter) readDir(path string) (stream ffs.DirStream, eno syscall.Errno) {
+func (f *syncthingVirtualFolderFuseAdapter) readDir(path string) (stream DirStream, eno syscall.Errno) {
 
 	closer := utils.NewCloser()
 	defer closer.Close()
@@ -613,7 +612,7 @@ func clamp[T constraints.Ordered](a, min, max T) T {
 	return a
 }
 
-func (vf *VirtualFileReadResult) readOneBlock(offset uint64, remainingToRead int) ([]byte, fuse.Status) {
+func (vf *VirtualFileReadResult) readOneBlock(offset uint64, remainingToRead int) ([]byte, Status) {
 
 	blockSize := vf.fi.BlockSize()
 	blockIndex := int(offset / uint64(blockSize))
@@ -635,7 +634,7 @@ func (vf *VirtualFileReadResult) readOneBlock(offset uint64, remainingToRead int
 
 	inputData, err, _ := vf.f.dataAccess.GetBlockDataFromCacheOrDownloadI(vf.fi, block)
 	if err != nil {
-		return nil, fuse.Status(syscall.EAGAIN)
+		return nil, Status(syscall.EAGAIN)
 	}
 
 	remainingInBlock := clamp(len(inputData)-int(rel_pos), 0, len(inputData))
@@ -649,7 +648,7 @@ func (vf *VirtualFileReadResult) readOneBlock(offset uint64, remainingToRead int
 	}
 }
 
-func (vf *VirtualFileReadResult) Bytes(outBuf []byte) ([]byte, fuse.Status) {
+func (vf *VirtualFileReadResult) Bytes(outBuf []byte) ([]byte, Status) {
 
 	logger.DefaultLogger.Debugf("VirtualFileReadResult Bytes(len): %v", len(outBuf))
 
@@ -709,7 +708,7 @@ func (vf *VirtualFileReadResult) Done() {
 
 func (f *syncthingVirtualFolderFuseAdapter) readFile(
 	path string, buf []byte, off int64,
-) (res fuse.ReadResult, errno syscall.Errno) {
+) (res ReadResult, errno syscall.Errno) {
 
 	conditionalCloser := utils.NewCloser()
 	defer conditionalCloser.Close()

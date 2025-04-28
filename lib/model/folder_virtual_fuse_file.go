@@ -63,9 +63,27 @@ var _ = (ffs.FileFlusher)((*virtualFuseFile)(nil))
 var _ = (ffs.FileFsyncer)((*virtualFuseFile)(nil))
 var _ = (ffs.FileAllocater)((*virtualFuseFile)(nil))
 
-func (f *virtualFuseFile) Read(ctx context.Context, buf []byte, off int64) (res fuse.ReadResult, errno syscall.Errno) {
+type ReadResultMyToFuseAdapter struct {
+	realReadResult ReadResult
+}
+
+func (r *ReadResultMyToFuseAdapter) Bytes(buf []byte) ([]byte, fuse.Status) {
+	n, err := r.realReadResult.Bytes(buf)
+	return n, fuse.Status(err)
+}
+
+func (r *ReadResultMyToFuseAdapter) Size() int {
+	return r.realReadResult.Size()
+}
+
+func (r *ReadResultMyToFuseAdapter) Done() {
+	r.realReadResult.Done()
+}
+
+func (f *virtualFuseFile) Read(ctx context.Context, buf []byte, off int64) (fuse.ReadResult, syscall.Errno) {
 	logger.DefaultLogger.Infof("virtualFile Read(len, off): %v, %v", len(buf), off)
-	return f.sVF.readFile(f.rel_name, buf, off)
+	result, err := f.sVF.readFile(f.rel_name, buf, off)
+	return &ReadResultMyToFuseAdapter{realReadResult: result}, err
 }
 
 func (f *virtualFuseFile) Write(ctx context.Context, data []byte, off int64) (uint32, syscall.Errno) {

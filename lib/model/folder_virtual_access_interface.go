@@ -23,7 +23,80 @@ type BlockDataAccessI interface {
 	RequestBackgroundDownloadI(filename string, size int64, modified time.Time, fn JobQueueProgressFn)
 }
 
+// Status is the errno number that a FUSE call returns to the kernel.
+type Status int32
+
+const (
+	OK = Status(0)
+
+	// EACCESS Permission denied
+	EACCES = Status(syscall.EACCES)
+
+	// EBUSY Device or resource busy
+	EBUSY = Status(syscall.EBUSY)
+
+	// EAGAIN Resource temporarily unavailable
+	EAGAIN = Status(syscall.EAGAIN)
+
+	// EINTR Call was interrupted
+	EINTR = Status(syscall.EINTR)
+
+	// EINVAL Invalid argument
+	EINVAL = Status(syscall.EINVAL)
+
+	// EIO I/O error
+	EIO = Status(syscall.EIO)
+
+	// ENOENT No such file or directory
+	ENOENT = Status(syscall.ENOENT)
+
+	// ENOSYS Function not implemented
+	ENOSYS = Status(syscall.ENOSYS)
+
+	// ENOTDIR Not a directory
+	ENOTDIR = Status(syscall.ENOTDIR)
+
+	// ENOTSUP Not supported
+	ENOTSUP = Status(syscall.ENOTSUP)
+
+	// EISDIR Is a directory
+	EISDIR = Status(syscall.EISDIR)
+
+	// EPERM Operation not permitted
+	EPERM = Status(syscall.EPERM)
+
+	// ERANGE Math result not representable
+	ERANGE = Status(syscall.ERANGE)
+
+	// EXDEV Cross-device link
+	EXDEV = Status(syscall.EXDEV)
+
+	// EBADF Bad file number
+	EBADF = Status(syscall.EBADF)
+
+	// ENODEV No such device
+	ENODEV = Status(syscall.ENODEV)
+
+	// EROFS Read-only file system
+	EROFS = Status(syscall.EROFS)
+)
+
+// The result of Read is an array of bytes, but for performance
+// reasons, we can also return data as a file-descriptor/offset/size
+// tuple.  If the backing store for a file is another filesystem, this
+// reduces the amount of copying between the kernel and the FUSE
+// server.  The ReadResult interface captures both cases.
 type ReadResult interface {
+	// Returns the raw bytes for the read, possibly using the
+	// passed buffer. The buffer should be larger than the return
+	// value from Size.
+	Bytes(buf []byte) ([]byte, Status)
+
+	// Size returns how many bytes this return value takes at most.
+	Size() int
+
+	// Done() is called after sending the data to the kernel.
+	Done()
 }
 
 // DirEntry is a type for PathFileSystem and NodeFileSystem to return
