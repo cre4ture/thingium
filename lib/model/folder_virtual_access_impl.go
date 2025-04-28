@@ -514,9 +514,13 @@ func (s *VirtualFolderDirStream) Next() (DirEntry, syscall.Errno) {
 	}
 
 	return DirEntry{
-		Mode: uint32(mode),
-		Name: child.Name,
-		Ino:  s.root.getInoOf(path.Join(s.dirPath, child.Name)),
+		Mode:    uint32(mode),
+		Name:    child.Name,
+		Ino:     s.root.getInoOf(path.Join(s.dirPath, child.Name)),
+		Off:     uint64(s.i),
+		Type:    fileType,
+		Size:    child.Size,
+		ModTime: child.ModTime,
 	}, 0
 }
 func (s *VirtualFolderDirStream) Close() {}

@@ -115,6 +115,12 @@ type DirEntry struct {
 	// Off is the offset in the directory stream. The offset is
 	// thought to be after the entry.
 	Off uint64
+
+	Type protocol.FileInfoType
+
+	Size int64
+
+	ModTime time.Time
 }
 
 // DirStream lists directory entries.
