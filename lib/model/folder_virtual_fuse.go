@@ -335,10 +335,40 @@ func (n *VirtualNode) Opendir(ctx context.Context) syscall.Errno {
 	}
 }
 
+type DirStreamAdapter struct {
+	realStream DirStream
+}
+
+func (d *DirStreamAdapter) HasNext() bool {
+	return d.realStream.HasNext()
+}
+
+func (d *DirStreamAdapter) Next() (fuse.DirEntry, syscall.Errno) {
+	entry, err := d.realStream.Next()
+	if err != ffs.OK {
+		return fuse.DirEntry{}, err
+	}
+	return fuse.DirEntry{
+		Mode: entry.Mode,
+		Name: entry.Name,
+		Ino:  entry.Ino,
+		Off:  entry.Off,
+	}, ffs.OK
+}
+
+func (d *DirStreamAdapter) Close() {
+	if d.realStream != nil {
+		d.realStream.Close()
+	}
+}
+
 var _ = (ffs.NodeReaddirer)((*VirtualNode)(nil))
 
 func (n *VirtualNode) Readdir(ctx context.Context) (ffs.DirStream, syscall.Errno) {
-	return n.RootData.st_folder.readDir(n.Path(n.Root()))
+	stream, errNo := n.RootData.st_folder.readDir(n.Path(n.Root()))
+	return &DirStreamAdapter{
+		realStream: stream,
+	}, errNo
 }
 
 var _ = (ffs.NodeGetattrer)((*VirtualNode)(nil))

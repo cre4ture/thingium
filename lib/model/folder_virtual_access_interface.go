@@ -26,7 +26,38 @@ type BlockDataAccessI interface {
 type ReadResult interface {
 }
 
+// DirEntry is a type for PathFileSystem and NodeFileSystem to return
+// directory contents in.
+type DirEntry struct {
+	// Mode is the file's mode. Only the high bits (eg. S_IFDIR)
+	// are considered.
+	Mode uint32
+
+	// Name is the basename of the file in the directory.
+	Name string
+
+	// Ino is the inode number.
+	Ino uint64
+
+	// Off is the offset in the directory stream. The offset is
+	// thought to be after the entry.
+	Off uint64
+}
+
+// DirStream lists directory entries.
 type DirStream interface {
+	// HasNext indicates if there are further entries. HasNext
+	// might be called on already closed streams.
+	HasNext() bool
+
+	// Next retrieves the next entry. It is only called if HasNext
+	// has previously returned true.  The Errno return may be used to
+	// indicate I/O errors
+	Next() (DirEntry, syscall.Errno)
+
+	// Close releases resources related to this directory
+	// stream.
+	Close()
 }
 
 type SyncthingVirtualFolderAccessI interface {
