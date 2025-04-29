@@ -172,13 +172,13 @@ func (fs *SyncthingFs) Getattr(path string, stat *fuse.Stat_t, fh uint64) (errc 
 	stat.Birthtim = fuse.NewTimespec(entry.ModTime())
 	stat.Flags = 0
 
-	// log the attributes
-	l.Infof("SyncthingFs - Getattr: path: %s, mode: %o, size: %d, atim: %v, mtim: %v, ctim: %v",
-		path, stat.Mode, stat.Size, stat.Atim, stat.Mtim, stat.Ctim)
-	l.Infof("SyncthingFs - Getattr: uid: %d, gid: %d, nlink: %d, blksize: %d, blocks: %d",
-		stat.Uid, stat.Gid, stat.Nlink, stat.Blksize, stat.Blocks)
-	l.Infof("SyncthingFs - Getattr: birthtim: %v, flags: %d",
-		stat.Birthtim, stat.Flags)
+	//// log the attributes
+	//l.Infof("SyncthingFs - Getattr: path: %s, mode: %o, size: %d, atim: %v, mtim: %v, ctim: %v",
+	//	path, stat.Mode, stat.Size, stat.Atim, stat.Mtim, stat.Ctim)
+	//l.Infof("SyncthingFs - Getattr: uid: %d, gid: %d, nlink: %d, blksize: %d, blocks: %d",
+	//	stat.Uid, stat.Gid, stat.Nlink, stat.Blksize, stat.Blocks)
+	//l.Infof("SyncthingFs - Getattr: birthtim: %v, flags: %d",
+	//	stat.Birthtim, stat.Flags)
 
 	return 0
 }
@@ -237,7 +237,7 @@ func (fs *SyncthingFs) Readdir(path string,
 
 	// log inputs:
 	path, _ = strings.CutPrefix(path, "/")
-	l.Infof("SyncthingFs: path: %s, ofst: %d, fh: %d", path, ofst, fh)
+	l.Infof("SyncthingFs - Readdir: path: %s, ofst: %d, fh: %d", path, ofst, fh)
 
 	stream, eno := fs.stFolder.readDir(path)
 	if eno != 0 {
@@ -246,9 +246,10 @@ func (fs *SyncthingFs) Readdir(path string,
 	}
 	defer stream.Close()
 
+	count := 0
 	for stream.HasNext() {
 		entry, eno := stream.Next()
-		//l.Debugf("Processing directory entry: %s", entry.Name)
+		l.Infof("Processing directory entry: %s", entry.Name)
 		if eno != 0 {
 			return int(eno)
 		}
@@ -274,10 +275,15 @@ func (fs *SyncthingFs) Readdir(path string,
 			Birthtim: fuse.NewTimespec(entry.ModTime),
 			Flags:    0,
 		}
+		l.Infof("SyncthingFs - Readdir: adding entry: %s, mode: %o, size: %d", entry.Name, stat.Mode, stat.Size)
 		if !fill(entry.Name, stat, 0) {
+			l.Warnf("Failed to fill entry: %s", entry.Name)
 			return 0
 		}
+		count++
 	}
+
+	l.Infof("SyncthingFs - Readdir: read %d entries from directory: %s", count, path)
 
 	return 0
 }

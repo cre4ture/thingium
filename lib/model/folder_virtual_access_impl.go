@@ -4,20 +4,17 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this file,
 // You can obtain one at https://mozilla.org/MPL/2.0/.
 
-//go:build !windows
-// +build !windows
-
 package model
 
 import (
 	"bytes"
 	"context"
 	"path"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
 
-	ffs "github.com/hanwen/go-fuse/v2/fs"
 	"github.com/syncthing/syncthing/internal/gen/bep"
 	"github.com/syncthing/syncthing/lib/config"
 	"github.com/syncthing/syncthing/lib/db"
@@ -286,7 +283,7 @@ func (stf *syncthingVirtualFolderFuseAdapter) writeFile(
 		writeStartInBlock = 0
 
 		if inputPosNext >= len(inputData) {
-			return ffs.OK
+			return 0
 		}
 	}
 }
@@ -527,6 +524,8 @@ func (s *VirtualFolderDirStream) Close() {}
 
 func (f *syncthingVirtualFolderFuseAdapter) readDir(path string) (stream DirStream, eno syscall.Errno) {
 
+	sep := string(filepath.Separator)
+
 	closer := utils.NewCloser()
 	defer closer.Close()
 
@@ -539,8 +538,8 @@ func (f *syncthingVirtualFolderFuseAdapter) readDir(path string) (stream DirStre
 		return nil, syscall.EFAULT
 	}
 
-	if path != "" && !strings.HasSuffix(path, "/") {
-		path = path + "/"
+	if path != "" && !strings.HasSuffix(path, sep) {
+		path = path + sep
 	}
 
 	if f.folderType.IsReceiveEncrypted() {
@@ -550,7 +549,7 @@ func (f *syncthingVirtualFolderFuseAdapter) readDir(path string) (stream DirStre
 			childPath := child.FileName()
 			childPath = strings.TrimPrefix(childPath, path)
 			logger.DefaultLogger.Debugf("ENC VIRT path - %s, full: %v", childPath, child.FileName())
-			parts := strings.Split(childPath, "/")
+			parts := strings.Split(childPath, sep)
 			logger.DefaultLogger.Debugf("ENC VIRT ls - %s, parts: %v", childPath, parts)
 			if len(parts) == 1 {
 				logger.DefaultLogger.Debugf("ENC VIRT ADD CHILD-FILE - %s", parts[0])

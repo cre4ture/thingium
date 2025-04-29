@@ -2952,8 +2952,11 @@ func SnapshotGlobalDirectoryTree(snap db.DbSnapshotI, prefix string, levels int,
 	})
 
 	if err != nil {
+		//l.Warnf("SnapshotGlobalDirectoryTree(%v,%v) - error: %v", prefix, levels, err)
 		return nil, err
 	}
+
+	//l.Infof("SnapshotGlobalDirectoryTree(%v,%v) - tree built successfully: %d children", prefix, levels, len(root.Children))
 
 	return root.Children, nil
 }
