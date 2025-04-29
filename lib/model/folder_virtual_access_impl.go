@@ -620,9 +620,9 @@ func (vf *VirtualFileReadResult) readOneBlock(offset uint64, remainingToRead int
 	blockSize := vf.fi.BlockSize()
 	blockIndex := int(offset / uint64(blockSize))
 
-	logger.DefaultLogger.Debugf(
-		"VirtualFileReadResult readOneBlock(offset, len): %v, %v. bSize, bIdx: %v, %v",
-		offset, remainingToRead, blockSize, blockIndex)
+	//logger.DefaultLogger.Debugf(
+	//	"VirtualFileReadResult readOneBlock(offset, len): %v, %v. bSize, bIdx: %v, %v",
+	//	offset, remainingToRead, blockSize, blockIndex)
 
 	if blockIndex >= len(vf.fi.Blocks) {
 		return nil, 0
@@ -653,7 +653,7 @@ func (vf *VirtualFileReadResult) readOneBlock(offset uint64, remainingToRead int
 
 func (vf *VirtualFileReadResult) Bytes(outBuf []byte) ([]byte, Status) {
 
-	logger.DefaultLogger.Debugf("VirtualFileReadResult Bytes(len): %v", len(outBuf))
+	//logger.DefaultLogger.Debugf("VirtualFileReadResult Bytes(len): %v", len(outBuf))
 
 	shallReadBytes := len(outBuf)
 	if shallReadBytes > vf.Size() {

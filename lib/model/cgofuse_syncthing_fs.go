@@ -9,11 +9,6 @@ import (
 	"github.com/winfsp/cgofuse/fuse"
 )
 
-const (
-	filename = "hello"
-	contents = "hello, world\n"
-)
-
 type FreeFileHandleProvider struct {
 	// nextFreeByCnt
 	nextFreeByCnt uint64
@@ -64,7 +59,7 @@ func NewSyncthingFsMount(
 	}
 
 	// Enable logging for FUSE operations
-	l.Infof("Initializing SyncthingFs with folderId: %s and folderLabel: %s", folderId, folderLabel)
+	//l.Infof("Initializing SyncthingFs with folderId: %s and folderLabel: %s", folderId, folderLabel)
 
 	// Create a new FUSE host
 	host := fuse.NewFileSystemHost(syncthingFs)
@@ -91,21 +86,21 @@ func NewSyncthingFsMount(
 func (fs *SyncthingFs) Open(path string, flags int) (errc int, fh uint64) {
 	// log inputs:
 	path, _ = strings.CutPrefix(path, "/")
-	l.Infof("SyncthingFs - Open: path: %s, flags: %d", path, flags)
+	//l.Infof("SyncthingFs - Open: path: %s, flags: %d", path, flags)
 
 	// Check if the path exists in the virtual folder
 	entry, eno := fs.stFolder.lookupFile(path)
 	if eno != 0 {
-		l.Warnf("Failed to open file: %s, error: %d", path, eno)
+		//l.Warnf("Failed to open file: %s, error: %d", path, eno)
 		return int(eno), 0
 	}
 
 	// Log the entry attributes
-	l.Infof("SyncthingFs - Open: entry: name: %s, size: %d, modTime: %v, isDir: %t",
-		entry.Name, entry.Size, entry.ModTime(), entry.IsDirectory())
+	//l.Infof("SyncthingFs - Open: entry: name: %s, size: %d, modTime: %v, isDir: %t",
+	//	entry.Name, entry.Size, entry.ModTime(), entry.IsDirectory())
 
 	myHandle := fs.freeFileHandles.GetFreeFileHandle()
-	l.Infof("SyncthingFs - Open: freeHandle: %d", myHandle)
+	//l.Infof("SyncthingFs - Open: freeHandle: %d", myHandle)
 	fs.usedFileHandles[myHandle] = entry
 
 	return 0, myHandle
@@ -115,7 +110,7 @@ func (fs *SyncthingFs) Getattr(path string, stat *fuse.Stat_t, fh uint64) (errc 
 
 	// log inputs:
 	path, _ = strings.CutPrefix(path, "/")
-	l.Infof("SyncthingFs - Getattr: path: %s, fh: %d", path, fh)
+	//l.Infof("SyncthingFs - Getattr: path: %s, fh: %d", path, fh)
 
 	if path == "" {
 		// special case for root directory
@@ -126,13 +121,13 @@ func (fs *SyncthingFs) Getattr(path string, stat *fuse.Stat_t, fh uint64) (errc 
 	// Check if the path exists in the virtual folder
 	entry, eno := fs.stFolder.lookupFile(path)
 	if eno != 0 {
-		l.Warnf("Failed to get attributes for path: %s, error: %d", path, eno)
+		//l.Warnf("Failed to get attributes for path: %s, error: %d", path, eno)
 		return int(eno)
 	}
 
 	// Log the entry attributes
-	l.Infof("SyncthingFs - Getattr: entry: name: %s, size: %d, modTime: %v, isDir: %t, permissions: %o",
-		entry.Name, entry.Size, entry.ModTime(), entry.IsDirectory(), entry.Permissions)
+	//l.Infof("SyncthingFs - Getattr: entry: name: %s, size: %d, modTime: %v, isDir: %t, permissions: %o",
+	//	entry.Name, entry.Size, entry.ModTime(), entry.IsDirectory(), entry.Permissions)
 
 	// Populate the stat structure with the attributes
 	permissions := entry.Permissions
@@ -150,13 +145,13 @@ func (fs *SyncthingFs) Getattr(path string, stat *fuse.Stat_t, fh uint64) (errc 
 		stat.Mode = fuse.S_IFREG | permissions
 	}
 	blkSize := int64(entry.BlockSize())
-	l.Infof("SyncthingFs - Getattr: blkSize: %d", blkSize)
+	//l.Infof("SyncthingFs - Getattr: blkSize: %d", blkSize)
 	stat.Size = entry.Size
 	stat.Atim = fuse.NewTimespec(entry.ModTime())
 	stat.Mtim = fuse.NewTimespec(entry.ModTime())
 	stat.Ctim = fuse.NewTimespec(entry.ModTime())
 	stat.Nlink = 1
-	l.Infof("SyncthingFs - Getattr: permissions: %o, isDir: %t", permissions, entry.IsDirectory())
+	//l.Infof("SyncthingFs - Getattr: permissions: %o, isDir: %t", permissions, entry.IsDirectory())
 	unixData := entry.PlatformData().Unix
 	if unixData != nil {
 		stat.Uid = uint32(unixData.UID)
@@ -168,7 +163,7 @@ func (fs *SyncthingFs) Getattr(path string, stat *fuse.Stat_t, fh uint64) (errc 
 	stat.Rdev = 0
 	stat.Blksize = blkSize
 	stat.Blocks = (entry.Size + blkSize - 1) / blkSize
-	l.Infof("SyncthingFs - Getattr: blkSize: %d, blocks: %d", blkSize, stat.Blocks)
+	//l.Infof("SyncthingFs - Getattr: blkSize: %d, blocks: %d", blkSize, stat.Blocks)
 	stat.Birthtim = fuse.NewTimespec(entry.ModTime())
 	stat.Flags = 0
 
@@ -185,7 +180,8 @@ func (fs *SyncthingFs) Getattr(path string, stat *fuse.Stat_t, fh uint64) (errc 
 
 func (fs *SyncthingFs) Read(path string, buff []byte, ofst int64, fh uint64) (n int) {
 
-	l.Infof("SyncthingFs - Read: path: %s, ofst: %d, fh: %d", path, ofst, fh)
+	desiredReadSize := int64(len(buff))
+	//l.Infof("SyncthingFs - Read: path: %s, from+size: %d+%d, fh: %d", path, ofst, desiredReadSize, fh)
 
 	// get info from the file handle
 	entry, ok := fs.usedFileHandles[fh]
@@ -194,37 +190,36 @@ func (fs *SyncthingFs) Read(path string, buff []byte, ofst int64, fh uint64) (n 
 		return 0
 	}
 
-	l.Infof("SyncthingFs - Read: path: %s, entry: name: %s, size: %d, modTime: %v, isDir: %t",
-		path, entry.Name, entry.Size, entry.ModTime(), entry.IsDirectory())
+	//l.Infof("SyncthingFs - Read: path: %s, entry: name: %s, size: %d, modTime: %v, isDir: %t",
+	//	path, entry.Name, entry.Size, entry.ModTime(), entry.IsDirectory())
 
-	endofst := ofst + int64(len(buff))
-	if endofst > int64(len(contents)) {
-		endofst = int64(len(contents))
+	if desiredReadSize > entry.Size {
+		desiredReadSize = entry.Size
 	}
-	if endofst < ofst {
+	if desiredReadSize <= 0 {
 		return 0
 	}
 
-	rres, errno := fs.stFolder.readFile(entry.Name, buff, ofst)
+	rres, errno := fs.stFolder.readFile(entry.Name, buff[:desiredReadSize], ofst)
 	if errno != 0 || rres == nil {
-		l.Warnf("Failed to read file: %s, error: %d", path, errno)
+		//l.Warnf("Failed to read file: %s, error: %d", path, errno)
 		return 0
 	}
 	defer rres.Done()
 
 	newBuff, status := rres.Bytes(buff)
 	if status != 0 {
-		l.Warnf("Failed to read file: %s, error: %d", path, status)
+		//l.Warnf("Failed to read file: %s, error: %d", path, status)
 		return 0
 	}
 
 	// Copy the data to the buffer
 	n = copy(buff, newBuff)
-	if n > 0 {
-		l.Infof("SyncthingFs - Read: read %d bytes from file: %s", n, path)
-	} else {
-		l.Warnf("SyncthingFs - Read: no data read from file: %s", path)
-	}
+	//if n > 0 {
+	//	l.Infof("SyncthingFs - Read: read %d bytes from file: %s", n, path)
+	//} else {
+	//	l.Warnf("SyncthingFs - Read: no data read from file: %s", path)
+	//}
 
 	return n
 }
@@ -237,7 +232,7 @@ func (fs *SyncthingFs) Readdir(path string,
 
 	// log inputs:
 	path, _ = strings.CutPrefix(path, "/")
-	l.Infof("SyncthingFs - Readdir: path: %s, ofst: %d, fh: %d", path, ofst, fh)
+	//l.Infof("SyncthingFs - Readdir: path: %s, ofst: %d, fh: %d", path, ofst, fh)
 
 	stream, eno := fs.stFolder.readDir(path)
 	if eno != 0 {
@@ -249,7 +244,7 @@ func (fs *SyncthingFs) Readdir(path string,
 	count := 0
 	for stream.HasNext() {
 		entry, eno := stream.Next()
-		l.Infof("Processing directory entry: %s", entry.Name)
+		//l.Infof("Processing directory entry: %s", entry.Name)
 		if eno != 0 {
 			return int(eno)
 		}
@@ -275,7 +270,7 @@ func (fs *SyncthingFs) Readdir(path string,
 			Birthtim: fuse.NewTimespec(entry.ModTime),
 			Flags:    0,
 		}
-		l.Infof("SyncthingFs - Readdir: adding entry: %s, mode: %o, size: %d", entry.Name, stat.Mode, stat.Size)
+		//l.Infof("SyncthingFs - Readdir: adding entry: %s, mode: %o, size: %d", entry.Name, stat.Mode, stat.Size)
 		if !fill(entry.Name, stat, 0) {
 			l.Warnf("Failed to fill entry: %s", entry.Name)
 			return 0
@@ -283,7 +278,7 @@ func (fs *SyncthingFs) Readdir(path string,
 		count++
 	}
 
-	l.Infof("SyncthingFs - Readdir: read %d entries from directory: %s", count, path)
+	//l.Infof("SyncthingFs - Readdir: read %d entries from directory: %s", count, path)
 
 	return 0
 }
