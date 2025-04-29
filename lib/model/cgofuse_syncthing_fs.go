@@ -56,9 +56,9 @@ func (fs *SyncthingFs) Getattr(path string, stat *fuse.Stat_t, fh uint64) (errc 
 	permissions := entry.Permissions
 	if !entry.HasPermissionBits() {
 		if entry.IsDirectory() {
-			permissions = 0555 // read-only
+			permissions = 0777 // rwx for owner, rwx for group and others
 		} else {
-			permissions = 0444 // read-only
+			permissions = 0666 // rw for owner, rw for group and others
 		}
 	}
 	stat.Mode = 0
