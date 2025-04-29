@@ -14,19 +14,101 @@ const (
 	contents = "hello, world\n"
 )
 
+type FreeFileHandleProvider struct {
+	// nextFreeByCnt
+	nextFreeByCnt uint64
+	// returned, free handles
+	freeHandles map[uint64]struct{}
+}
+
+func NewFreeFileHandleProvider() *FreeFileHandleProvider {
+	return &FreeFileHandleProvider{
+		nextFreeByCnt: 2, // start from 2, as 1 is reserved for the root directory
+		freeHandles:   make(map[uint64]struct{}),
+	}
+}
+func (p *FreeFileHandleProvider) GetFreeFileHandle() uint64 {
+	if len(p.freeHandles) > 0 {
+		// take any handle from the map
+		for handle := range p.freeHandles {
+			delete(p.freeHandles, handle)
+			return handle
+		}
+	}
+	// no free handles, return a new one
+	result := p.nextFreeByCnt
+	p.nextFreeByCnt++
+	return result
+}
+func (p *FreeFileHandleProvider) ReturnFreeHandle(handle uint64) {
+	// add the handle to the free handles map
+	p.freeHandles[handle] = struct{}{}
+}
+
 type SyncthingFs struct {
 	fuse.FileSystemBase
+	stFolder        SyncthingVirtualFolderAccessI
+	freeFileHandles *FreeFileHandleProvider
+	usedFileHandles map[uint64]*protocol.FileInfo
+}
 
-	stFolder SyncthingVirtualFolderAccessI
+func NewSyncthingFsMount(
+	mountPath string, folderId, folderLabel string, stFolder SyncthingVirtualFolderAccessI,
+) (io.Closer, error) {
+	// Create a new SyncthingFs instance
+	syncthingFs := &SyncthingFs{
+		FileSystemBase:  fuse.FileSystemBase{},
+		stFolder:        stFolder,
+		freeFileHandles: NewFreeFileHandleProvider(),
+		usedFileHandles: make(map[uint64]*protocol.FileInfo),
+	}
+
+	// Enable logging for FUSE operations
+	l.Infof("Initializing SyncthingFs with folderId: %s and folderLabel: %s", folderId, folderLabel)
+
+	// Create a new FUSE host
+	host := fuse.NewFileSystemHost(syncthingFs)
+	if host == nil {
+		return nil, fmt.Errorf("failed to create cgo-FUSE host")
+	}
+
+	// Mount the file system
+	mountFuture := make(chan error, 1)
+	go func() {
+		if ok := host.Mount(mountPath, nil); !ok {
+			l.Warnf("failed to mount cgo-FUSE filesystem at %s", mountPath)
+			mountFuture <- fmt.Errorf("failed to mount cgo-FUSE filesystem at %s", mountPath)
+		} else {
+			mountFuture <- nil
+		}
+	}()
+
+	l.Infof("Mounted SyncthingFs at path: %s with folderId: %s and folderLabel: %s", mountPath, folderId, folderLabel)
+
+	return &HostCloser{host: host, mountFuture: mountFuture}, nil
 }
 
 func (fs *SyncthingFs) Open(path string, flags int) (errc int, fh uint64) {
-	switch path {
-	case "/" + filename:
-		return 0, 0
-	default:
-		return -fuse.ENOENT, ^uint64(0)
+	// log inputs:
+	path, _ = strings.CutPrefix(path, "/")
+	l.Infof("SyncthingFs - Open: path: %s, flags: %d", path, flags)
+
+	// Check if the path exists in the virtual folder
+	entry, eno := fs.stFolder.lookupFile(path)
+	if eno != 0 {
+		l.Warnf("Failed to open file: %s, error: %d", path, eno)
+		return int(eno), 0
 	}
+
+	// Log the entry attributes
+	l.Infof("SyncthingFs - Open: entry: name: %s, size: %d, modTime: %v, isDir: %t",
+		entry.Name, entry.Size, entry.ModTime(), entry.IsDirectory())
+
+	myHandle := fs.freeFileHandles.GetFreeFileHandle()
+	l.Infof("SyncthingFs - Open: freeHandle: %d", myHandle)
+	fs.usedFileHandles[myHandle] = entry
+
+	return 0, myHandle
 }
 
 func (fs *SyncthingFs) Getattr(path string, stat *fuse.Stat_t, fh uint64) (errc int) {
@@ -102,6 +184,19 @@ func (fs *SyncthingFs) Getattr(path string, stat *fuse.Stat_t, fh uint64) (errc 
 }
 
 func (fs *SyncthingFs) Read(path string, buff []byte, ofst int64, fh uint64) (n int) {
+
+	l.Infof("SyncthingFs - Read: path: %s, ofst: %d, fh: %d", path, ofst, fh)
+
+	// get info from the file handle
+	entry, ok := fs.usedFileHandles[fh]
+	if !ok {
+		l.Warnf("Failed to read file: %s (%s), error: file handle not found", path, entry.Name)
+		return 0
+	}
+
+	l.Infof("SyncthingFs - Read: path: %s, entry: name: %s, size: %d, modTime: %v, isDir: %t",
+		path, entry.Name, entry.Size, entry.ModTime(), entry.IsDirectory())
+
 	endofst := ofst + int64(len(buff))
 	if endofst > int64(len(contents)) {
 		endofst = int64(len(contents))
@@ -109,8 +204,29 @@ func (fs *SyncthingFs) Read(path string, buff []byte, ofst int64, fh uint64) (n 
 	if endofst < ofst {
 		return 0
 	}
-	n = copy(buff, contents[ofst:endofst])
-	return
+
+	rres, errno := fs.stFolder.readFile(entry.Name, buff, ofst)
+	if errno != 0 || rres == nil {
+		l.Warnf("Failed to read file: %s, error: %d", path, errno)
+		return 0
+	}
+	defer rres.Done()
+
+	newBuff, status := rres.Bytes(buff)
+	if status != 0 {
+		l.Warnf("Failed to read file: %s, error: %d", path, status)
+		return 0
+	}
+
+	// Copy the data to the buffer
+	n = copy(buff, newBuff)
+	if n > 0 {
+		l.Infof("SyncthingFs - Read: read %d bytes from file: %s", n, path)
+	} else {
+		l.Warnf("SyncthingFs - Read: no data read from file: %s", path)
+	}
+
+	return n
 }
 
 func (fs *SyncthingFs) Readdir(path string,
@@ -177,36 +293,4 @@ func (h *HostCloser) Close() error {
 	}
 	err := <-h.mountFuture
 	return err
-}
-
-func NewSyncthingFsMount(mountPath string, folderId, folderLabel string, stFolder SyncthingVirtualFolderAccessI) (io.Closer, error) {
-	// Create a new SyncthingFs instance
-	syncthingFs := &SyncthingFs{
-		FileSystemBase: fuse.FileSystemBase{},
-		stFolder:       stFolder,
-	}
-
-	// Enable logging for FUSE operations
-	l.Infof("Initializing SyncthingFs with folderId: %s and folderLabel: %s", folderId, folderLabel)
-
-	// Create a new FUSE host
-	host := fuse.NewFileSystemHost(syncthingFs)
-	if host == nil {
-		return nil, fmt.Errorf("failed to create cgo-FUSE host")
-	}
-
-	// Mount the file system
-	mountFuture := make(chan error, 1)
-	go func() {
-		if ok := host.Mount(mountPath, nil); !ok {
-			l.Warnf("failed to mount cgo-FUSE filesystem at %s", mountPath)
-			mountFuture <- fmt.Errorf("failed to mount cgo-FUSE filesystem at %s", mountPath)
-		} else {
-			mountFuture <- nil
-		}
-	}()
-
-	l.Infof("Mounted SyncthingFs at path: %s with folderId: %s and folderLabel: %s", mountPath, folderId, folderLabel)
-
-	return &HostCloser{host: host, mountFuture: mountFuture}, nil
 }
