@@ -66,6 +66,11 @@ const (
 	DOWNLOAD_DATA
 )
 
+type ListObject struct {
+	Key  []byte
+	Size int64
+}
+
 type HashBlockStorageI interface {
 	io.Closer
 
@@ -91,6 +96,8 @@ type HashBlockStorageI interface {
 	GetBlockHashesCountHint() (int, error)
 	GetBlockHashesCache(ctx context.Context, progressNotifier func(count int, currentHash []byte)) (HashBlockStateMap, error)
 	GetBlockHashState(hash []byte) (HashBlockState, error)
+
+	IterateSubdirs(prefix string, delimiter string, fn func(e *ListObject)) error
 }
 
 func GetBlockDataFromCacheOrDownload(

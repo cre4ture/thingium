@@ -106,6 +106,10 @@ func (e *EncryptedHashBlockStorage) SetMeta(name string, data []byte) error {
 	return e.store.SetMeta(name, data)
 }
 
+func (e *EncryptedHashBlockStorage) IterateSubdirs(prefix string, delimiter string, fn func(e *ListObject)) error {
+	return e.store.IterateSubdirs(prefix, delimiter, fn)
+}
+
 func NewEncryptedHashBlockStorage(store HashBlockStorageI) *EncryptedHashBlockStorage {
 	return &EncryptedHashBlockStorage{
 		store: store,

@@ -15,7 +15,6 @@ import (
 
 	"github.com/patrickmn/go-cache"
 	"github.com/syncthing/syncthing/cmd/syncthing/virtual"
-	"github.com/syncthing/syncthing/lib/blockstorage"
 	"github.com/syncthing/syncthing/lib/config"
 	"github.com/syncthing/syncthing/lib/hashutil"
 	"github.com/syncthing/syncthing/lib/model"
@@ -58,7 +57,7 @@ func (c *CLI) Run() error {
 		dataAccess,
 	)
 
-	mount, err := model.NewVirtualFolderMount(
+	mount, err := model.NewSyncthingFsMount(
 		c.MountPath, c.FolderID, folderLabel, stVF,
 	)
 
@@ -78,7 +77,7 @@ func (c *CLI) Run() error {
 }
 
 type OfflineBlockDataAccess struct {
-	blockStorage   *blockstorage.GoCloudUrlStorage
+	blockStorage   model.HashBlockStorageI
 	blockDataCache *utils.Protected[*cache.Cache]
 }
 

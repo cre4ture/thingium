@@ -223,3 +223,8 @@ func (b *BsLevelDB) GetBlockHashState(hash []byte) (model.HashBlockState, error)
 	}
 	return state, nil
 }
+
+func (b *BsLevelDB) IterateSubdirs(prefix string, delimiter string, fn func(e *model.ListObject)) error {
+	// TODO
+	return model.ErrNotAvailable
+}

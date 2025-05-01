@@ -551,3 +551,29 @@ func (hm *GoCloudUrlStorage) IterateBlocksInternal(
 		pageToken = nextPageToken
 	}
 }
+
+func (hm *GoCloudUrlStorage) IterateSubdirs(prefix string, delimiter string, fn func(e *model.ListObject)) error {
+	listCtx, listCtxCancel := context.WithCancel(context.Background())
+	defer listCtxCancel()
+	opts := &blob.ListOptions{Prefix: prefix, Delimiter: delimiter}
+	token := blob.FirstPageToken
+	for {
+		var page []*blob.ListObject
+		var err error
+		page, token, err = hm.bucket.ListPage(listCtx, token, 100, opts)
+		if err != nil {
+			return err
+		}
+
+		if len(page) == 0 {
+			return nil
+		}
+
+		for _, e := range page {
+			fn(&model.ListObject{
+				Key:  []byte(e.Key),
+				Size: e.Size,
+			})
+		}
+	}
+}

@@ -16,21 +16,21 @@ import (
 	"github.com/syncthing/syncthing/lib/blockstorage"
 	"github.com/syncthing/syncthing/lib/db"
 	"github.com/syncthing/syncthing/lib/logger"
+	"github.com/syncthing/syncthing/lib/model"
 	"github.com/syncthing/syncthing/lib/protocol"
 	"github.com/syncthing/syncthing/lib/utils"
-	"gocloud.dev/blob"
 	"google.golang.org/protobuf/proto"
 )
 
 type OfflineStorageAccess struct {
-	BlockStorage *blockstorage.GoCloudUrlStorage
+	BlockStorage model.HashBlockStorageI
 	DeviceID     string
 	FolderID     string
 	FSetRO       *OfflineDbFileSetRead
 }
 
 func NewOfflineDataAccess(URL string, DeviceID string, FolderID string) (*OfflineStorageAccess, error) {
-	BlockStorage := blockstorage.NewGoCloudUrlStorageFromConfigStrConcrete(context.Background(), URL, "")
+	BlockStorage := blockstorage.NewGoCloudUrlStorageFromConfigStr(context.Background(), URL, "")
 
 	devices, err := listDeviceIDs(BlockStorage)
 	if err != nil {
@@ -90,47 +90,23 @@ func NewOfflineDataAccess(URL string, DeviceID string, FolderID string) (*Offlin
 	}, nil
 }
 
-func listDeviceIDs(storage *blockstorage.GoCloudUrlStorage) ([]string, error) {
+func listDeviceIDs(storage model.HashBlockStorageI) ([]string, error) {
 	prefix := blockstorage.MetaDataSubFolder + "/" +
 		blockstorage.LOCAL_HAVE_FI_META_PREFIX + "/"
 	return listSubdirs(storage, prefix, "/")
 }
 
-func listFolderIDs(storage *blockstorage.GoCloudUrlStorage, deviceID string) ([]string, error) {
+func listFolderIDs(storage model.HashBlockStorageI, deviceID string) ([]string, error) {
 	prefix := blockstorage.MetaDataSubFolder + "/" +
 		blockstorage.LOCAL_HAVE_FI_META_PREFIX + "/" +
 		deviceID + "/"
 	return listSubdirs(storage, prefix, "/")
 }
 
-func iterateSubdirs(storage *blockstorage.GoCloudUrlStorage, prefix string, delimiter string, fn func(e *blob.ListObject)) error {
-	bucket := storage.RawAccess()
-	listCtx, listCtxCancel := context.WithCancel(context.Background())
-	defer listCtxCancel()
-	opts := &blob.ListOptions{Prefix: prefix, Delimiter: delimiter}
-	token := blob.FirstPageToken
-	for {
-		var page []*blob.ListObject
-		var err error
-		page, token, err = bucket.ListPage(listCtx, token, 100, opts)
-		if err != nil {
-			return err
-		}
-
-		if len(page) == 0 {
-			return nil
-		}
-
-		for _, e := range page {
-			fn(e)
-		}
-	}
-}
-
-func listSubdirs(storage *blockstorage.GoCloudUrlStorage, prefix string, delimiter string) ([]string, error) {
+func listSubdirs(storage model.HashBlockStorageI, prefix string, delimiter string) ([]string, error) {
 	names := make([]string, 0)
-	iterateSubdirs(storage, prefix, delimiter, func(e *blob.ListObject) {
-		name, _ := strings.CutPrefix(e.Key, prefix)
+	storage.IterateSubdirs(prefix, delimiter, func(e *model.ListObject) {
+		name, _ := strings.CutPrefix(string(e.Key), prefix)
 		if delimiter != "" {
 			name, _ = strings.CutSuffix(name, delimiter)
 		}
@@ -146,7 +122,7 @@ type Caches struct {
 
 type OfflineDbSnapshotI struct {
 	metaPrefix   string
-	blockStorage *blockstorage.GoCloudUrlStorage
+	blockStorage model.HashBlockStorageI
 	caches       *Caches
 }
 
@@ -241,11 +217,11 @@ func (o *OfflineDbSnapshotI) WithPrefixedGlobalTruncated(prefix string, fn db.It
 			wg := sync.WaitGroup{}
 
 			fullPrefix := rootPrefix + prefix
-			iterateSubdirs(o.blockStorage, fullPrefix, "/", func(e *blob.ListObject) {
+			o.blockStorage.IterateSubdirs(fullPrefix, "/", func(e *model.ListObject) {
 				wg.Add(1)
 				go func() {
 					defer wg.Done()
-					name, _ := strings.CutPrefix(e.Key, rootPrefix)
+					name, _ := strings.CutPrefix(string(e.Key), rootPrefix)
 					logger.DefaultLogger.Debugf("WithPrefixedGlobalTruncated(%v): %v", prefix, name)
 					fi, ok := o.GetGlobal(name)
 					logger.DefaultLogger.Debugf("WithPrefixedGlobalTruncated(%v): %v, ok:%v: %+v", prefix, ok, fi)
@@ -275,13 +251,13 @@ func (o *OfflineDbSnapshotI) WithPrefixedGlobalTruncated(prefix string, fn db.It
 
 type OfflineDbFileSetRead struct {
 	metaPrefix   string
-	blockStorage *blockstorage.GoCloudUrlStorage
+	blockStorage model.HashBlockStorageI
 	caches       *Caches
 }
 
 func NewOfflineDbFileSetRead(
 	metaPrefix string,
-	blockStorage *blockstorage.GoCloudUrlStorage,
+	blockStorage model.HashBlockStorageI,
 ) *OfflineDbFileSetRead {
 	return &OfflineDbFileSetRead{
 		metaPrefix:   metaPrefix,
