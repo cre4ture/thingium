@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/syncthing/syncthing/lib/protocol"
+	"github.com/syncthing/syncthing/lib/utils"
 	"github.com/winfsp/cgofuse/fuse"
 )
 
@@ -43,8 +44,8 @@ func (p *FreeFileHandleProvider) ReturnFreeHandle(handle uint64) {
 type SyncthingFs struct {
 	fuse.FileSystemBase
 	stFolder        SyncthingVirtualFolderAccessI
-	freeFileHandles *FreeFileHandleProvider
-	usedFileHandles map[uint64]*protocol.FileInfo
+	freeFileHandles *utils.Protected[*FreeFileHandleProvider]
+	usedFileHandles *utils.Protected[map[uint64]*protocol.FileInfo]
 }
 
 func NewSyncthingFsMount(
@@ -54,8 +55,8 @@ func NewSyncthingFsMount(
 	syncthingFs := &SyncthingFs{
 		FileSystemBase:  fuse.FileSystemBase{},
 		stFolder:        stFolder,
-		freeFileHandles: NewFreeFileHandleProvider(),
-		usedFileHandles: make(map[uint64]*protocol.FileInfo),
+		freeFileHandles: utils.NewProtected(NewFreeFileHandleProvider()),
+		usedFileHandles: utils.NewProtected(make(map[uint64]*protocol.FileInfo)),
 	}
 
 	// Enable logging for FUSE operations
@@ -99,9 +100,13 @@ func (fs *SyncthingFs) Open(path string, flags int) (errc int, fh uint64) {
 	//l.Infof("SyncthingFs - Open: entry: name: %s, size: %d, modTime: %v, isDir: %t",
 	//	entry.Name, entry.Size, entry.ModTime(), entry.IsDirectory())
 
-	myHandle := fs.freeFileHandles.GetFreeFileHandle()
+	myHandle := utils.DoProtected(fs.freeFileHandles, func(p *FreeFileHandleProvider) uint64 {
+		return p.GetFreeFileHandle()
+	})
 	//l.Infof("SyncthingFs - Open: freeHandle: %d", myHandle)
-	fs.usedFileHandles[myHandle] = entry
+	fs.usedFileHandles.DoProtected(func(m map[uint64]*protocol.FileInfo) {
+		m[myHandle] = entry
+	})
 
 	return 0, myHandle
 }
@@ -184,7 +189,11 @@ func (fs *SyncthingFs) Read(path string, buff []byte, ofst int64, fh uint64) (n 
 	//l.Infof("SyncthingFs - Read: path: %s, from+size: %d+%d, fh: %d", path, ofst, desiredReadSize, fh)
 
 	// get info from the file handle
-	entry, ok := fs.usedFileHandles[fh]
+	entry, ok := utils.DoProtected2(fs.usedFileHandles, func(m map[uint64]*protocol.FileInfo) (*protocol.FileInfo, bool) {
+		e, o := m[fh]
+		return e, o
+	})
+
 	if !ok {
 		l.Warnf("Failed to read file: %s (%s), error: file handle not found", path, entry.Name)
 		return 0
