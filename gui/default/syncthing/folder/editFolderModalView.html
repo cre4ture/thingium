@@ -56,8 +56,9 @@
             <p class="help-block">
               <span translate>
                 Virtual storage folders synchronize the metadata, such that you can browse all files without the need to download any content.
-                When online, you can open and edit. When offline, cached file data is still accessible. Folder Path will be the mount point.
-                You need to specify a specific directory for storing the cache.</span>
+                When online, you can open and edit. When offline, cached file data is still accessible. Folder Path will be the mount point for
+                virtual access to the folder.
+                You need to specify a seperate directory for storing the cache data.</span>
             </p>
           <label translate>Virtual Cache Storage Path</label>
             <input name="folderCacheDir" id="folderCacheDir" class="form-control" type="text" ng-model="currentFolder.cacheDir" ng-readonly="!currentFolder.isVirtual" list="directory-list" path-is-sub-dir />
