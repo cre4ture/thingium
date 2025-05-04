@@ -22,6 +22,7 @@ import (
 	"github.com/syncthing/syncthing/lib/osutil"
 	"github.com/syncthing/syncthing/lib/protocol"
 	"github.com/syncthing/syncthing/lib/sync"
+	"github.com/syncthing/syncthing/lib/utils"
 )
 
 type FileSet struct {
@@ -113,6 +114,11 @@ func (s *FileSet) Drop(device protocol.DeviceID) {
 	}
 }
 
+func (s *FileSet) UpdateOne(device protocol.DeviceID, fi *protocol.FileInfo) {
+	fs := append([]protocol.FileInfo(nil), *fi)
+	s.Update(device, fs)
+}
+
 func (s *FileSet) Update(device protocol.DeviceID, fs []protocol.FileInfo) {
 	opStr := fmt.Sprintf("%s Update(%v, [%d])", s.folder, device, len(fs))
 	l.Debugf(opStr)
@@ -165,6 +171,22 @@ type Snapshot struct {
 	t          readOnlyTransaction
 	meta       *countsMap
 	fatalError func(error, string)
+}
+
+func (s *FileSet) SnapshotI(closer utils.Closer) (DbSnapshotI, error) {
+	return s.SnapshotInCloser(closer)
+}
+
+func (s *FileSet) SnapshotInCloser(closer utils.Closer) (*Snapshot, error) {
+	snap, err := s.Snapshot()
+	if err != nil {
+		return nil, err
+	}
+	closer.RegisterCleanupFunc(func() error {
+		snap.Release()
+		return nil
+	})
+	return snap, nil
 }
 
 func (s *FileSet) Snapshot() (*Snapshot, error) {
@@ -439,6 +461,19 @@ func (s *FileSet) RepairSequence() (int, error) {
 func (s *FileSet) updateAndGCMutexLock() {
 	s.updateMutex.Lock()
 	s.db.gcMut.RLock()
+}
+
+func (s *FileSet) GetLatestGlobal(file string) (protocol.FileInfo, error) {
+	snap, err := s.Snapshot()
+	if err != nil {
+		return protocol.FileInfo{}, err
+	}
+	defer snap.Release()
+	fi, ok := snap.GetGlobal(file)
+	if !ok {
+		return protocol.FileInfo{}, errFileNotFound
+	}
+	return fi, nil
 }
 
 // DropFolder clears out all information related to the given folder from the

@@ -526,7 +526,7 @@ func setBuildEnvVars() {
 	os.Setenv("CC", cc)
 	if os.Getenv("CGO_ENABLED") == "" {
 		switch goos {
-		case "darwin", "solaris":
+		case "darwin", "solaris", "linux":
 		default:
 			os.Setenv("CGO_ENABLED", "0")
 		}

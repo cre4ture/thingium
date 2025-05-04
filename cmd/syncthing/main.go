@@ -39,6 +39,9 @@ import (
 	"github.com/syncthing/syncthing/cmd/syncthing/decrypt"
 	"github.com/syncthing/syncthing/cmd/syncthing/generate"
 	"github.com/syncthing/syncthing/cmd/syncthing/purge"
+
+	"github.com/syncthing/syncthing/cmd/syncthing/virtual/virtualcheck"
+	"github.com/syncthing/syncthing/cmd/syncthing/virtual/virtualmount"
 	_ "github.com/syncthing/syncthing/lib/automaxprocs"
 	"github.com/syncthing/syncthing/lib/build"
 	"github.com/syncthing/syncthing/lib/config"
@@ -134,6 +137,8 @@ var entrypoint struct {
 	Generate           generate.CLI                 `cmd:"" help:"Generate key and config, then exit"`
 	Decrypt            decrypt.CLI                  `cmd:"" help:"Decrypt or verify an encrypted folder"`
 	Purge              purge.CLI                    `cmd:"" help:"Purge ignored local files of folder"`
+	VirtualMount       virtualmount.CLI             `cmd:"" help:"Mount an offline virtual folder"`
+	VirtualCheck       virtualcheck.CLI             `cmd:"" help:"Check an offline virtual folder for data corruption (e.g. bit-rot)"`
 	Cli                cli.CLI                      `cmd:"" help:"Command line interface for Syncthing"`
 	InstallCompletions kongplete.InstallCompletions `cmd:"" help:"Print commands to install shell completions"`
 }

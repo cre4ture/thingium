@@ -88,7 +88,7 @@ type WriteTransaction interface {
 // can be called either before or after Release with the same results. If an
 // iterator was created in a transaction (whether read-only or write) it
 // must be released before the transaction is released (or committed).
-type Iterator interface {
+type Iterator interface { // TODO: check if renamed?
 	Next() bool
 	Key() []byte
 	Value() []byte

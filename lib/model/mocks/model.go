@@ -3401,6 +3401,10 @@ func (fake *Model) recordInvocation(key string, args []interface{}) {
 	fake.invocations[key] = append(fake.invocations[key], args)
 }
 
+func (fake *Model) ValidateFolderSubdirs(folder string, subs []string) error {
+	return nil
+}
+
 func (fake *Model) GetTunnelManager() model.TunnelManagerInterface {
 	return nil
 }

@@ -3298,6 +3298,10 @@ angular.module('syncthing.core')
             $http.post(urlbase + "/db/scan?folder=" + encodeURIComponent(folder));
         };
 
+        $scope.validateFolder = function (folder) {
+            $http.post(urlbase + "/db/validate?folder=" + encodeURIComponent(folder));
+        };
+
         $scope.setAllFoldersPause = function (pause) {
             var folderListCache = $scope.folderList();
 
