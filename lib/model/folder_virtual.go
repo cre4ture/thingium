@@ -52,6 +52,7 @@ const (
 
 type virtualFolderSyncthingService struct {
 	*folderBase
+	fullSync                          bool
 	lifetimeCtxCancel                 context.CancelFunc // TODO: when to call this function?
 	mountPath                         string
 	blobFs                            BlobFsI // blob FS needs to be early accessible as it is used to read the encryption token. TODO: when to close it?
@@ -134,6 +135,7 @@ func NewVirtualFolder(
 
 	f := &virtualFolderSyncthingService{
 		folderBase:                        folderBase,
+		fullSync:                          false,
 		lifetimeCtxCancel:                 lifetimeCtxCancel,
 		mountPath:                         mountPath,
 		blobFs:                            blobFs,
@@ -244,7 +246,9 @@ func (vf *virtualFolderSyncthingService) runVirtualFolderServiceCoroutine_intern
 			// TODO: rvf.Pull_x(ctx, PullOptions{false, true})
 			running.initialScanState = INITIAL_SCAN_COMPLETED
 			close(running.InitialScanDone)
-			running.pullOrScan_x(doWorkCtx, PullOptions{true, false, false})
+			if vf.fullSync {
+				running.pullOrScan_x_doInSync(doWorkCtx, PullOptions{true, false, false})
+			}
 		}
 
 		// unblock caller after successful init
@@ -384,6 +388,10 @@ func (f *virtualFolderSyncthingService) Serve(doWorkCtx context.Context) error {
 			continue
 
 		case <-f.pullScheduled: // TODO: replace with "doInSyncChan"
+			if !f.fullSync {
+				l.Debugf("Serve: case <-f.pullScheduled - ignore")
+				continue
+			}
 			running := f.running.Load()
 			if running == nil {
 				continue
@@ -404,16 +412,20 @@ func (f *virtualFolderSyncthingService) DelayScan(d time.Duration) {} // model.s
 
 // model.service API
 func (f *virtualFolderSyncthingService) ScheduleScan() {
-	logger.DefaultLogger.Infof("ScheduleScan - pull_x")
-	f.doInSync(func() error {
-		running := f.running.Load()
-		if running == nil {
-			return nil // ignore request
-		}
-		err := running.pullOrScan_x(f.ctx, PullOptions{false, true, false})
-		logger.DefaultLogger.Infof("ScheduleScan - pull_x - DONE. Err: %v", err)
-		return err
-	})
+	if f.fullSync {
+		logger.DefaultLogger.Infof("ScheduleScan - pull_x")
+		f.doInSync(func() error {
+			running := f.running.Load()
+			if running == nil {
+				return nil // ignore request
+			}
+			err := running.pullOrScan_x(f.ctx, PullOptions{false, true, false})
+			logger.DefaultLogger.Infof("ScheduleScan - pull_x - DONE. Err: %v", err)
+			return err
+		})
+	} else {
+		logger.DefaultLogger.Infof("ScheduleScan - ignore request")
+	}
 }
 
 // model.service API
