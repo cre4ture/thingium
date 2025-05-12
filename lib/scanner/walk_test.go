@@ -29,6 +29,7 @@ import (
 	"github.com/syncthing/syncthing/lib/ignore"
 	"github.com/syncthing/syncthing/lib/protocol"
 	"github.com/syncthing/syncthing/lib/rand"
+	"github.com/syncthing/syncthing/lib/utils"
 )
 
 type testfile struct {
@@ -159,7 +160,7 @@ func TestVerify(t *testing.T) {
 	// data should be an even multiple of blocksize long
 	data := []byte("Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut e")
 	buf := bytes.NewBuffer(data)
-	progress := newByteCounter()
+	progress := utils.NewByteCounter()
 	defer progress.Close()
 
 	blocks, err := Blocks(context.TODO(), buf, blocksize, -1, progress, false)
@@ -170,7 +171,7 @@ func TestVerify(t *testing.T) {
 		t.Fatalf("Incorrect number of blocks %d != %d", len(blocks), exp)
 	}
 
-	if int64(len(data)) != progress.Total() {
+	if uint64(len(data)) != progress.Total() {
 		t.Fatalf("Incorrect counter value %d  != %d", len(data), progress.Total())
 	}
 

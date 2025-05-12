@@ -648,6 +648,13 @@ func (tm *TunnelManager) forwardRemoteTunnelData(fromDevice protocol.DeviceID, d
 			}
 		} else {
 			tl.Infof("Data: No TCP connection found for device %v, TunnelID: %d", fromDevice, data.D.TunnelId)
+			// ensure the connection is closed on other side
+			tm.TrySendTunnelData(fromDevice, &protocol.TunnelData{
+				D: &bep.TunnelData{
+					TunnelId: data.D.TunnelId,
+					Command:  bep.TunnelCommand_TUNNEL_COMMAND_CLOSE,
+				},
+			})
 		}
 	case bep.TunnelCommand_TUNNEL_COMMAND_CLOSE:
 		tm.endpointsMutex.Lock()

@@ -12,10 +12,8 @@ package model
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net"
 	"os"
 	"path/filepath"
@@ -34,7 +32,9 @@ import (
 	"github.com/syncthing/syncthing/lib/db"
 	"github.com/syncthing/syncthing/lib/events"
 	"github.com/syncthing/syncthing/lib/fs"
+	"github.com/syncthing/syncthing/lib/hashutil"
 	"github.com/syncthing/syncthing/lib/ignore"
+	"github.com/syncthing/syncthing/lib/logger"
 	"github.com/syncthing/syncthing/lib/osutil"
 	"github.com/syncthing/syncthing/lib/protocol"
 	"github.com/syncthing/syncthing/lib/rand"
@@ -54,15 +54,26 @@ type service interface {
 	Revert()
 	DelayScan(d time.Duration)
 	ScheduleScan()
-	SchedulePull()                                    // something relevant changed, we should try a pull
-	Jobs(page, perpage int) ([]string, []string, int) // In progress, Queued, skipped
+	SchedulePull()                                      // something relevant changed, we should try a pull
+	Jobs(page, perpage uint) ([]string, []string, uint) // In progress, Queued, skipped
 	Scan(subs []string) error
+	Validate(subs []string) error
 	Errors() []FileError
 	WatchError() error
 	ScheduleForceRescan(path string)
 	GetStatistics() (stats.FolderStatistics, error)
+	ReadEncryptionToken() ([]byte, error)
+	WriteEncryptionToken([]byte) error
 
 	getState() (folderState, time.Time, error)
+}
+
+type filesystemFolderServiceI interface {
+	GetFileData(deviceID protocol.DeviceID, req *protocol.Request, response_data []byte) (int, error)
+}
+
+type virtualFolderServiceI interface {
+	GetHashBlockData(hash []byte, response_data []byte) (int, error)
 }
 
 type Availability struct {
@@ -87,6 +98,7 @@ type Model interface {
 	ScanFolder(folder string) error
 	ScanFolders() map[string]error
 	ScanFolderSubdirs(folder string, subs []string) error
+	ValidateFolderSubdirs(folder string, subs []string) error
 	State(folder string) (string, time.Time, error)
 	FolderErrors(folder string) ([]FileError, error)
 	WatchError(folder string) error
@@ -130,7 +142,42 @@ type Model interface {
 	GetTunnelManager() TunnelManagerInterface
 }
 
+type VirtualFolderFactoryFn func(
+	model *model,
+	fset *db.FileSet,
+	ignores *ignore.Matcher,
+	cfg config.FolderConfiguration,
+	ver versioner.Versioner,
+	evLogger events.Logger,
+	ioLimiter *semaphore.Semaphore,
+) service
+
+type BlockStorageBlobFsFactoryFn func(
+	ctx context.Context,
+	ownDeviceID string,
+	folderID string,
+	evLogger events.Logger,
+	fset *db.FileSet,
+	blockCache HashBlockStorageI,
+) BlobFsI
+
+type BlobFsFactoryFn func(
+	ctx context.Context,
+	ownDeviceID string,
+	folderID string,
+	path string,
+	evLogger events.Logger,
+	fset *db.FileSet,
+) BlobFsI
+
+type BlockStorageFactoryFn func(ctx context.Context, configStr string, myDeviceId string) HashBlockStorageI
+
 type model struct {
+	virtualFolderFactory VirtualFolderFactoryFn
+	blobFsFactory        BlockStorageBlobFsFactoryFn
+	blockStorageFactory  BlockStorageFactoryFn
+	blobFsRestic         BlobFsFactoryFn
+
 	*suture.Supervisor
 
 	// constructor parameters
@@ -187,7 +234,7 @@ func (m *model) GetTunnelManager() TunnelManagerInterface {
 
 var _ config.Verifier = &model{}
 
-type folderFactory func(*model, *db.FileSet, *ignore.Matcher, config.FolderConfiguration, versioner.Versioner, events.Logger, *semaphore.Semaphore) service
+type folderFactory func(*model, *db.FileSet, *ignore.Matcher, config.FolderConfiguration, versioner.Versioner, events.Logger, *semaphore.Semaphore) NativeFilesystemFolderService
 
 var folderFactories = make(map[config.FolderType]folderFactory)
 
@@ -217,9 +264,23 @@ var (
 // where it sends index information to connected peers and responds to requests
 // for file data without altering the local folder in any way.
 func NewModel(cfg config.Wrapper, id protocol.DeviceID, ldb *db.Lowlevel, protectedFiles []string, evLogger events.Logger, keyGen *protocol.KeyGenerator) Model {
+	return NewFullModel(cfg, id, ldb, protectedFiles, evLogger, keyGen, nil, nil, nil)
+}
+
+// NewModel creates and starts a new model. The model starts in read-only mode,
+// where it sends index information to connected peers and responds to requests
+// for file data without altering the local folder in any way.
+func NewFullModel(cfg config.Wrapper, id protocol.DeviceID, ldb *db.Lowlevel, protectedFiles []string, evLogger events.Logger, keyGen *protocol.KeyGenerator,
+	virtualFolderFactory VirtualFolderFactoryFn,
+	blobFsFactory BlockStorageBlobFsFactoryFn,
+	blockStorageFactory BlockStorageFactoryFn,
+) Model {
 	spec := svcutil.SpecWithDebugLogger(l)
 	m := &model{
-		Supervisor: suture.New("model", spec),
+		virtualFolderFactory: virtualFolderFactory,
+		blobFsFactory:        blobFsFactory,
+		blockStorageFactory:  blockStorageFactory,
+		Supervisor:           suture.New("model", spec),
 
 		// constructor parameters
 		cfg:            cfg,
@@ -242,7 +303,7 @@ func NewModel(cfg config.Wrapper, id protocol.DeviceID, ldb *db.Lowlevel, protec
 		// fields protected by mut
 		mut:                            sync.NewRWMutex(),
 		folderCfgs:                     make(map[string]config.FolderConfiguration),
-		folderFiles:                    make(map[string]*db.FileSet),
+		folderFiles:                    make(map[string]*db.FileSet), // gives access to database
 		deviceStatRefs:                 make(map[protocol.DeviceID]*stats.DeviceStatisticsReference),
 		folderIgnores:                  make(map[string]*ignore.Matcher),
 		folderRunners:                  newServiceMap[string, service](evLogger),
@@ -354,6 +415,31 @@ func (m *model) addAndStartFolderLocked(cfg config.FolderConfiguration, fset *db
 	m.addAndStartFolderLockedWithIgnores(cfg, fset, ignores)
 }
 
+func (m *model) startingFolder_createVersioner(cfg config.FolderConfiguration) versioner.Versioner {
+	var ver versioner.Versioner
+	if cfg.Versioning.Type != "" {
+		var err error
+		ver, err = versioner.New(cfg)
+		if err != nil {
+			panic(fmt.Errorf("creating versioner: %w", err))
+		}
+	}
+	m.folderVersioners[cfg.ID] = ver
+	return ver
+}
+
+func (m *model) startingFolder_filterNotSharedDevices(cfg config.FolderConfiguration, fset *db.FileSet) {
+	// Find any devices for which we hold the index in the db, but the folder
+	// is not shared, and drop it.
+	expected := mapDevices(cfg.DeviceIDs())
+	for _, available := range fset.ListDevices() {
+		if _, ok := expected[available]; !ok {
+			l.Debugln("dropping", cfg.ID, "state for", available)
+			fset.Drop(available)
+		}
+	}
+}
+
 // Only needed for testing, use addAndStartFolderLocked instead.
 func (m *model) addAndStartFolderLockedWithIgnores(cfg config.FolderConfiguration, fset *db.FileSet, ignores *ignore.Matcher) {
 	m.folderCfgs[cfg.ID] = cfg
@@ -366,69 +452,62 @@ func (m *model) addAndStartFolderLockedWithIgnores(cfg config.FolderConfiguratio
 		panic("cannot start already running folder")
 	}
 
-	folderFactory, ok := folderFactories[cfg.Type]
-	if !ok {
-		panic(fmt.Sprintf("unknown folder type 0x%x", cfg.Type))
-	}
+	ver := m.startingFolder_createVersioner(cfg)
 
-	folder := cfg.ID
+	m.startingFolder_filterNotSharedDevices(cfg, fset)
 
-	// Find any devices for which we hold the index in the db, but the folder
-	// is not shared, and drop it.
-	expected := mapDevices(cfg.DeviceIDs())
-	for _, available := range fset.ListDevices() {
-		if _, ok := expected[available]; !ok {
-			l.Debugln("dropping", folder, "state for", available)
-			fset.Drop(available)
+	var p service
+	isVirtual := !cfg.IsBasedOnNativeFileSystem()
+	if isVirtual {
+		// new folder type based on a hash block storage instead of native filesystem
+		p = m.virtualFolderFactory(m, fset, ignores, cfg, ver, m.evLogger, m.folderIOLimiter)
+	} else {
+		// traditional folder based on a native filesystem
+		folderFactory, ok := folderFactories[cfg.Type]
+		if !ok {
+			panic(fmt.Sprintf("unknown folder type 0x%x", cfg.Type))
 		}
-	}
 
-	v, ok := fset.Sequence(protocol.LocalDeviceID), true
-	indexHasFiles := ok && v > 0
-	if !indexHasFiles {
-		// It's a blank folder, so this may the first time we're looking at
-		// it. Attempt to create and tag with our marker as appropriate. We
-		// don't really do anything with errors at this point except warn -
-		// if these things don't work, we still want to start the folder and
-		// it'll show up as errored later.
+		v, ok := fset.Sequence(protocol.LocalDeviceID), true
+		indexHasFiles := ok && v > 0
+		if !indexHasFiles {
+			// It's a blank folder, so this may the first time we're looking at
+			// it. Attempt to create and tag with our marker as appropriate. We
+			// don't really do anything with errors at this point except warn -
+			// if these things don't work, we still want to start the folder and
+			// it'll show up as errored later.
 
-		if err := cfg.CreateRoot(); err != nil {
-			l.Warnln("Failed to create folder root directory:", err)
-		} else if err = cfg.CreateMarker(); err != nil {
-			l.Warnln("Failed to create folder marker:", err)
+			if err := cfg.CreateRoot(); err != nil {
+				l.Warnln("Failed to create folder root directory:", err)
+			} else if err = cfg.CreateMarker(); err != nil {
+				l.Warnln("Failed to create folder marker:", err)
+			}
 		}
+
+		folderService := folderFactory(m, fset, ignores, cfg, ver, m.evLogger, m.folderIOLimiter)
+		p = folderService
+
+		// These are our metadata files, and they should always be hidden.
+		ffs := folderService.getFilesystem()
+
+		_ = ffs.Hide(config.DefaultMarkerName)
+		_ = ffs.Hide(versioner.DefaultPath)
+		_ = ffs.Hide(".stignore")
+
+		m.warnAboutOverwritingProtectedFiles(cfg, ignores)
+
+		l.Infof("Ready to synchronize filesystem based folder %s (%s)", cfg.Description(), cfg.Type)
 	}
 
-	if cfg.Type == config.FolderTypeReceiveEncrypted {
-		if encryptionToken, err := readEncryptionToken(cfg); err == nil {
-			m.folderEncryptionPasswordTokens[folder] = encryptionToken
+	if cfg.Type.IsReceiveEncrypted() {
+		if encryptionToken, err := p.ReadEncryptionToken(); err == nil {
+			m.folderEncryptionPasswordTokens[cfg.ID] = encryptionToken
 		} else if !fs.IsNotExist(err) {
 			l.Warnf("Failed to read encryption token: %v", err)
 		}
 	}
 
-	// These are our metadata files, and they should always be hidden.
-	ffs := cfg.Filesystem(nil)
-	_ = ffs.Hide(config.DefaultMarkerName)
-	_ = ffs.Hide(versioner.DefaultPath)
-	_ = ffs.Hide(".stignore")
-
-	var ver versioner.Versioner
-	if cfg.Versioning.Type != "" {
-		var err error
-		ver, err = versioner.New(cfg)
-		if err != nil {
-			panic(fmt.Errorf("creating versioner: %w", err))
-		}
-	}
-	m.folderVersioners[folder] = ver
-
-	m.warnAboutOverwritingProtectedFiles(cfg, ignores)
-
-	p := folderFactory(m, fset, ignores, cfg, ver, m.evLogger, m.folderIOLimiter)
-	m.folderRunners.Add(folder, p)
-
-	l.Infof("Ready to synchronize %s (%s)", cfg.Description(), cfg.Type)
+	m.folderRunners.Add(cfg.ID, p)
 }
 
 func (m *model) warnAboutOverwritingProtectedFiles(cfg config.FolderConfiguration, ignores *ignore.Matcher) {
@@ -1011,7 +1090,7 @@ func (m *model) NeedFolderFiles(folder string, page, perpage int) ([]protocol.Fi
 	p := newPager(page, perpage)
 
 	if runnerOk {
-		progressNames, queuedNames, skipped := runner.Jobs(page, perpage)
+		progressNames, queuedNames, skipped := runner.Jobs(uint(page), uint(perpage))
 
 		progress = make([]protocol.FileInfo, len(progressNames))
 		queued = make([]protocol.FileInfo, len(queuedNames))
@@ -1035,7 +1114,7 @@ func (m *model) NeedFolderFiles(folder string, page, perpage int) ([]protocol.Fi
 		if p.get == 0 {
 			return progress, queued, nil, nil
 		}
-		p.toSkip -= skipped
+		p.toSkip -= int(skipped)
 	}
 
 	rest = make([]protocol.FileInfo, 0, perpage)
@@ -1528,7 +1607,7 @@ func (m *model) ccCheckEncryption(fcfg config.FolderConfiguration, folderDevice 
 	hasTokenRemote := len(ccDeviceInfos.remote.EncryptionPasswordToken) > 0
 	hasTokenLocal := len(ccDeviceInfos.local.EncryptionPasswordToken) > 0
 	isEncryptedRemote := folderDevice.EncryptionPassword != ""
-	isEncryptedLocal := fcfg.Type == config.FolderTypeReceiveEncrypted
+	isEncryptedLocal := fcfg.Type.IsReceiveEncrypted()
 
 	if !isEncryptedRemote && !isEncryptedLocal && deviceUntrusted {
 		return errEncryptionNotEncryptedUntrusted
@@ -1584,13 +1663,21 @@ func (m *model) ccCheckEncryption(fcfg config.FolderConfiguration, folderDevice 
 		// hasTokenRemote == true
 		ccToken = ccDeviceInfos.remote.EncryptionPasswordToken
 	}
+
+	logger.DefaultLogger.Infof("ccCheckEncryption() - check if token is already known. token: %v, folder-ID: %v", ccToken, fcfg.ID)
 	m.mut.RLock()
 	token, ok := m.folderEncryptionPasswordTokens[fcfg.ID]
 	m.mut.RUnlock()
 	if !ok {
+		logger.DefaultLogger.Infof("ccCheckEncryption() - token not yet set - try to read it from folder storage")
+		runner, ok := m.folderRunners.Get(fcfg.ID)
+		if !ok {
+			return errEncryptionPassword
+		}
 		var err error
-		token, err = readEncryptionToken(fcfg)
+		token, err = runner.ReadEncryptionToken()
 		if err != nil && !fs.IsNotExist(err) {
+			logger.DefaultLogger.Infof("ccCheckEncryption() - Failure reading token. Abort")
 			if rerr, ok := redactPathError(err); ok {
 				return rerr
 			}
@@ -1599,12 +1686,16 @@ func (m *model) ccCheckEncryption(fcfg config.FolderConfiguration, folderDevice 
 				redacted: errEncryptionTokenRead,
 			}
 		}
+
 		if err == nil {
+			logger.DefaultLogger.Infof("ccCheckEncryption() - read token successful")
 			m.mut.Lock()
 			m.folderEncryptionPasswordTokens[fcfg.ID] = token
 			m.mut.Unlock()
 		} else {
-			if err := writeEncryptionToken(ccToken, fcfg); err != nil {
+			logger.DefaultLogger.Infof("ccCheckEncryption() - couldn't read token - will write it, assuming its first time")
+			if err := runner.WriteEncryptionToken(ccToken); err != nil {
+				logger.DefaultLogger.Infof("ccCheckEncryption() - write token failed! err: %v", err)
 				if rerr, ok := redactPathError(err); ok {
 					return rerr
 				} else {
@@ -1614,6 +1705,7 @@ func (m *model) ccCheckEncryption(fcfg config.FolderConfiguration, folderDevice 
 					}
 				}
 			}
+			logger.DefaultLogger.Infof("ccCheckEncryption() - write token succeeded.")
 			m.mut.Lock()
 			m.folderEncryptionPasswordTokens[fcfg.ID] = ccToken
 			m.mut.Unlock()
@@ -1686,7 +1778,7 @@ func (m *model) handleIntroductions(introducerCfg config.DeviceConfiguration, cm
 				continue
 			}
 
-			if fcfg.Type != config.FolderTypeReceiveEncrypted && device.EncryptionPasswordToken != nil {
+			if !fcfg.Type.IsReceiveEncrypted() && device.EncryptionPasswordToken != nil {
 				l.Infof("Cannot share folder %s with %v because the introducer %v encrypts data, which requires a password", folder.Description(), device.ID, introducerCfg.DeviceID)
 				continue
 			}
@@ -1828,7 +1920,7 @@ func (m *model) handleAutoAccepts(deviceID protocol.DeviceID, folder protocol.Fo
 				return config.FolderConfiguration{}, false
 			}
 		}
-		if cfg.Type == config.FolderTypeReceiveEncrypted {
+		if cfg.Type.IsReceiveEncrypted() {
 			if len(ccDeviceInfos.remote.EncryptionPasswordToken) == 0 && len(ccDeviceInfos.local.EncryptionPasswordToken) == 0 {
 				l.Infof("Failed to auto-accept device %s on existing folder %s as the remote wants to send us unencrypted data, but the folder type is receive-encrypted", folder.Description(), deviceID)
 				return config.FolderConfiguration{}, false
@@ -1976,8 +2068,9 @@ func (m *model) Request(conn protocol.Connection, req *protocol.Request) (out pr
 	m.mut.RLock()
 	folderCfg, ok := m.folderCfgs[req.Folder]
 	folderIgnores := m.folderIgnores[req.Folder]
+	folderRunner, ok2 := m.folderRunners.Get(req.Folder)
 	m.mut.RUnlock()
-	if !ok {
+	if !(ok && ok2) {
 		// The folder might be already unpaused in the config, but not yet
 		// in the model.
 		l.Debugf("Request from %s for file %s in unstarted folder %q", deviceID.Short(), req.Name, req.Folder)
@@ -2032,58 +2125,56 @@ func (m *model) Request(conn protocol.Connection, req *protocol.Request) (out pr
 		}
 	}()
 
-	// Grab the FS after limiting, as it causes I/O and we want to minimize
-	// the race time between the symlink check and the read.
+	// Grab the FS after limiting
 
-	folderFs := folderCfg.Filesystem(nil)
+	n := 0
+	virtualFolder, ok := folderRunner.(virtualFolderServiceI)
+	if ok {
+		if true { // len(req.Hash) == 0 { // this happens for virtual encrypted folders, sometimes there is even a hash, but its invalid
+			l.Infof("%v REQ(in) get hash of req. block from virtual folder: %s - %s: %q / %q o=%d s=%d, blockNo=%v, hash=%v",
+				m, err, deviceID.Short(), req.Folder, req.Name, req.Offset, req.Size, req.BlockNo, hashutil.HashToStringMapKey(req.Hash))
+			// lookup hash:
+			folderFiles := m.folderFiles[req.Folder]
+			if folderFiles == nil {
+				l.Infof("failed m.folderFiles[req.Folder], result nil")
+			}
+			snap, err := folderFiles.Snapshot()
+			if err != nil {
+				l.Infof("failed folderFiles.Snapshot()")
+				return nil, err
+			}
+			defer snap.Release()
 
-	if err := osutil.TraversesSymlink(folderFs, filepath.Dir(req.Name)); err != nil {
-		l.Debugf("%v REQ(in) traversal check: %s - %s: %q / %q o=%d s=%d", m, err, deviceID.Short(), req.Folder, req.Name, req.Offset, req.Size)
-		return nil, protocol.ErrNoSuchFile
-	}
+			fi, ok := snap.Get(protocol.LocalDeviceID, req.Name)
+			if !ok {
+				l.Infof("failed snap.Get()")
+				return nil, protocol.ErrNoSuchFile
+			}
 
-	// Only check temp files if the flag is set, and if we are set to advertise
-	// the temp indexes.
-	if req.FromTemporary && !folderCfg.DisableTempIndexes {
-		tempFn := fs.TempName(req.Name)
-
-		if info, err := folderFs.Lstat(tempFn); err != nil || !info.IsRegular() {
-			// Reject reads for anything that doesn't exist or is something
-			// other than a regular file.
-			l.Debugf("%v REQ(in) failed stating temp file (%v): %s: %q / %q o=%d s=%d", m, err, deviceID.Short(), req.Folder, req.Name, req.Offset, req.Size)
-			return nil, protocol.ErrNoSuchFile
+			if req.BlockNo < len(fi.Blocks) {
+				req.Hash = fi.Blocks[req.BlockNo].Hash
+			}
 		}
-		_, err := readOffsetIntoBuf(folderFs, tempFn, req.Offset, res.data)
-		if err == nil && scanner.Validate(res.data, req.Hash, req.WeakHash) {
-			return res, nil
+		n, err = virtualFolder.GetHashBlockData(req.Hash, res.data)
+		l.Infof("%v REQ(in) get block from virtual folder: %s - %s: %q / %q o=%d s=%d, blockNo=%v, hash=%v",
+			m, err, deviceID.Short(), req.Folder, req.Name, req.Offset, req.Size, req.BlockNo, hashutil.HashToStringMapKey(req.Hash))
+	} else {
+		filesystemFolder, ok := folderRunner.(filesystemFolderServiceI)
+		if !ok {
+			l.Debugf("%v REQ(in) get block FAILED - unknown folder type. %s - %s: %q / %q o=%d s=%d, blockNo=%v, hash=%v",
+				m, err, deviceID.Short(), req.Folder, req.Name, req.Offset, req.Size, req.BlockNo, hashutil.HashToStringMapKey(req.Hash))
+			return nil, protocol.ErrGeneric
 		}
-		// Fall through to reading from a non-temp file, just in case the temp
-		// file has finished downloading.
+
+		n, err = filesystemFolder.GetFileData(deviceID, req, res.data)
+	}
+	if err != nil {
+		l.Warnf("%v REQ(in) get block FAILED: %s - %s: %q / %q o=%d s=%d, blockNo=%v, hash=%v",
+			m, err, deviceID.Short(), req.Folder, req.Name, req.Offset, req.Size, req.BlockNo, hashutil.HashToStringMapKey(req.Hash))
+		return nil, err
 	}
 
-	if info, err := folderFs.Lstat(req.Name); err != nil || !info.IsRegular() {
-		// Reject reads for anything that doesn't exist or is something
-		// other than a regular file.
-		l.Debugf("%v REQ(in) failed stating file (%v): %s: %q / %q o=%d s=%d", m, err, deviceID.Short(), req.Folder, req.Name, req.Offset, req.Size)
-		return nil, protocol.ErrNoSuchFile
-	}
-
-	n, err := readOffsetIntoBuf(folderFs, req.Name, req.Offset, res.data)
-	if fs.IsNotExist(err) {
-		l.Debugf("%v REQ(in) file doesn't exist: %s: %q / %q o=%d s=%d", m, deviceID.Short(), req.Folder, req.Name, req.Offset, req.Size)
-		return nil, protocol.ErrNoSuchFile
-	} else if err == io.EOF {
-		// Read beyond end of file. This might indicate a problem, or it
-		// might be a short block that gets padded when read for encrypted
-		// folders. We ignore the error and let the hash validation in the
-		// next step take care of it, by only hashing the part we actually
-		// managed to read.
-	} else if err != nil {
-		l.Debugf("%v REQ(in) failed reading file (%v): %s: %q / %q o=%d s=%d", m, err, deviceID.Short(), req.Folder, req.Name, req.Offset, req.Size)
-		return nil, protocol.ErrGeneric
-	}
-
-	if folderCfg.Type != config.FolderTypeReceiveEncrypted && len(req.Hash) > 0 && !scanner.Validate(res.data[:n], req.Hash, req.WeakHash) {
+	if !folderCfg.Type.IsReceiveEncrypted() && len(req.Hash) > 0 && !scanner.Validate(res.data[:n], req.Hash, req.WeakHash) {
 		m.recheckFile(deviceID, req.Folder, req.Name, req.Offset, req.Hash, req.WeakHash)
 		l.Debugf("%v REQ(in) failed validating data: %s: %q / %q o=%d s=%d", m, deviceID.Short(), req.Folder, req.Name, req.Offset, req.Size)
 		return nil, protocol.ErrNoSuchFile
@@ -2565,6 +2656,19 @@ func (m *model) ScanFolderSubdirs(folder string, subs []string) error {
 	return runner.Scan(subs)
 }
 
+func (m *model) ValidateFolderSubdirs(folder string, subs []string) error {
+	m.mut.RLock()
+	err := m.checkFolderRunningRLocked(folder)
+	runner, _ := m.folderRunners.Get(folder)
+	m.mut.RUnlock()
+
+	if err != nil {
+		return err
+	}
+
+	return runner.Validate(subs)
+}
+
 func (m *model) DelayScan(folder string, next time.Duration) {
 	m.mut.RLock()
 	runner, ok := m.folderRunners.Get(folder)
@@ -2622,7 +2726,7 @@ func (m *model) generateClusterConfigRLocked(device protocol.DeviceID) (*protoco
 		}
 
 		encryptionToken, hasEncryptionToken := m.folderEncryptionPasswordTokens[folderCfg.ID]
-		if folderCfg.Type == config.FolderTypeReceiveEncrypted && !hasEncryptionToken {
+		if folderCfg.Type.IsReceiveEncrypted() && !hasEncryptionToken {
 			// We haven't gotten a token for us yet and without one the other
 			// side can't validate us - pretend we don't have the folder yet.
 			continue
@@ -2776,9 +2880,6 @@ func (m *model) GlobalDirectoryTree(folder, prefix string, levels int, dirsOnly 
 		return nil, ErrFolderMissing
 	}
 
-	root := &TreeEntry{
-		Children: make([]*TreeEntry, 0),
-	}
 	sep := string(filepath.Separator)
 	prefix = osutil.NativeFilename(prefix)
 
@@ -2791,27 +2892,45 @@ func (m *model) GlobalDirectoryTree(folder, prefix string, levels int, dirsOnly 
 		return nil, err
 	}
 	defer snap.Release()
+
+	return SnapshotGlobalDirectoryTree(snap, prefix, levels, dirsOnly)
+}
+
+func SnapshotGlobalDirectoryTree(snap db.DbSnapshotI, prefix string, levels int, dirsOnly bool) ([]*TreeEntry, error) {
+	sep := string(filepath.Separator)
+	root := &TreeEntry{
+		Children: make([]*TreeEntry, 0),
+	}
+
+	var err error = nil
 	snap.WithPrefixedGlobalTruncated(prefix, func(f protocol.FileInfo) bool {
+
+		//logger.DefaultLogger.Infof("SnapshotGlobalDirectoryTree(%v,%v) - full: %v", prefix, levels, f.FileName())
+
 		// Don't include the prefix itself.
-		if f.IsInvalid() || f.IsDeleted() || strings.HasPrefix(prefix, f.Name) {
+		if f.IsInvalid() || f.IsDeleted() || strings.HasPrefix(prefix, f.FileName()) {
 			return true
 		}
 
-		f.Name = strings.Replace(f.Name, prefix, "", 1)
+		fName := strings.Replace(f.FileName(), prefix, "", 1)
 
-		dir := filepath.Dir(f.Name)
-		base := filepath.Base(f.Name)
+		//logger.DefaultLogger.Infof("SnapshotGlobalDirectoryTree(%v,%v) - replaced: %v", prefix, levels, fName)
 
-		if levels > -1 && strings.Count(f.Name, sep) > levels {
+		dir := filepath.Dir(fName)
+		base := filepath.Base(fName)
+
+		if levels > -1 && strings.Count(fName, sep) > levels {
 			return true
 		}
+
+		//logger.DefaultLogger.Infof("SnapshotGlobalDirectoryTree(%v,%v) - after level-check: %v", prefix, levels, fName)
 
 		parent := root
 		if dir != "." {
 			for _, path := range strings.Split(dir, sep) {
 				child := findByName(parent.Children, path)
 				if child == nil {
-					err = fmt.Errorf("could not find child '%s' for path '%s' in parent '%s'", path, f.Name, parent.Name)
+					err = fmt.Errorf("could not find child '%s' for path '%s' in parent '%s'", path, fName, parent.Name)
 					return false
 				}
 				parent = child
@@ -2831,9 +2950,13 @@ func (m *model) GlobalDirectoryTree(folder, prefix string, levels int, dirsOnly 
 
 		return true
 	})
+
 	if err != nil {
+		//l.Warnf("SnapshotGlobalDirectoryTree(%v,%v) - error: %v", prefix, levels, err)
 		return nil, err
 	}
+
+	//l.Infof("SnapshotGlobalDirectoryTree(%v,%v) - tree built successfully: %d children", prefix, levels, len(root.Children))
 
 	return root.Children, nil
 }
@@ -2981,8 +3104,10 @@ func (*model) VerifyConfiguration(from, to config.Configuration) error {
 	toFolders := to.FolderMap()
 	for _, from := range from.Folders {
 		to, ok := toFolders[from.ID]
-		if ok && from.Type != to.Type && (from.Type == config.FolderTypeReceiveEncrypted || to.Type == config.FolderTypeReceiveEncrypted) {
-			return errors.New("folder type must not be changed from/to receive-encrypted")
+		if ok && from.Type != to.Type {
+			if from.Type.IsReceiveEncrypted() || to.Type.IsReceiveEncrypted() {
+				return errors.New("folder type must not be changed from/to receive-encrypted")
+			}
 		}
 	}
 
@@ -3051,7 +3176,7 @@ func (m *model) CommitConfiguration(from, to config.Configuration) bool {
 				return true
 			}
 			clusterConfigDevices.add(fromCfg.DeviceIDs())
-			if toCfg.Type != config.FolderTypeReceiveEncrypted {
+			if !toCfg.Type.IsReceiveEncrypted() {
 				clusterConfigDevices.add(toCfg.DeviceIDs())
 			} else {
 				// If we don't have the encryption token yet, we need to drop
@@ -3459,32 +3584,6 @@ func encryptionTokenPath(cfg config.FolderConfiguration) string {
 type storedEncryptionToken struct {
 	FolderID string
 	Token    []byte
-}
-
-func readEncryptionToken(cfg config.FolderConfiguration) ([]byte, error) {
-	fd, err := cfg.Filesystem(nil).Open(encryptionTokenPath(cfg))
-	if err != nil {
-		return nil, err
-	}
-	defer fd.Close()
-	var stored storedEncryptionToken
-	if err := json.NewDecoder(fd).Decode(&stored); err != nil {
-		return nil, err
-	}
-	return stored.Token, nil
-}
-
-func writeEncryptionToken(token []byte, cfg config.FolderConfiguration) error {
-	tokenName := encryptionTokenPath(cfg)
-	fd, err := cfg.Filesystem(nil).OpenFile(tokenName, fs.OptReadWrite|fs.OptCreate, 0o666)
-	if err != nil {
-		return err
-	}
-	defer fd.Close()
-	return json.NewEncoder(fd).Encode(storedEncryptionToken{
-		FolderID: cfg.ID,
-		Token:    token,
-	})
 }
 
 func newFolderConfiguration(w config.Wrapper, id, label string, fsType config.FilesystemType, path string) config.FolderConfiguration {

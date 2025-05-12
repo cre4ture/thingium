@@ -638,6 +638,9 @@
                     <button type="button" class="btn btn-sm btn-default" ng-click="rescanFolder(folder.id)" ng-disabled="['idle', 'stopped', 'unshared', 'outofsync', 'faileditems', 'localadditions'].indexOf(folderStatus(folder)) < 0">
                       <span class="fas fa-refresh"></span>&nbsp;<span translate>Rescan</span>
                     </button>
+                    <button type="button" class="btn btn-sm btn-default" ng-if="false" ng-click="validateFolder(folder.id)" ng-disabled="['idle', 'stopped', 'unshared', 'outofsync', 'faileditems', 'localadditions'].indexOf(folderStatus(folder)) < 0">
+                      <span class="fas fa-refresh"></span>&nbsp;<span translate>Validate</span>
+                    </button>
                     <button type="button" class="btn btn-sm btn-default" ng-click="editFolderExisting(folder)">
                       <span class="fas fa-pencil-alt"></span>&nbsp;<span translate>Edit</span>
                     </button>

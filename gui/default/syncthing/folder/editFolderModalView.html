@@ -44,7 +44,28 @@
                 <span class="text-danger" translate translate-value-other-folder="{{folderPathErrors.otherID}}" translate-value-other-folder-label="{{folderPathErrors.otherLabel}}" ng-if="folderPathErrors.otherLabel.length != 0">Warning, this path is a parent directory of an existing folder "{%otherFolderLabel%}" ({%otherFolder%}).</span>
               </span>
             </p>
-          </div>
+            <label translate>Virtual Folder Storage</label>
+            <span class="pull-right">
+              <br/>
+              <div class="form-inline">
+                <input type="checkbox" ng-model="currentFolder.isVirtual" ng-readonly="editingFolderExisting()">&nbsp;<span translate>Use Virtual Storage</span>
+              </div>
+              <span class="ml-2">Virtual Storage max. cache size (GiB):</span>
+              <input name="fuseCacheSizeGiB" id="fuseCacheSizeGiB" class="form-control ml-2" type="number" ng-readonly="!currentFolder.isVirtual" ng-model="currentFolder.fuseCacheSizeGiB" step="0.01"/>
+            </span>
+            <p class="help-block">
+              <span translate>
+                Virtual storage folders synchronize the metadata, such that you can browse all files without the need to download any content.
+                When online, you can open and edit. When offline, cached file data is still accessible. Folder Path will be the mount point for
+                virtual access to the folder.
+                You need to specify a seperate directory for storing the cache data.</span>
+            </p>
+          <label translate>Virtual Cache Storage Path</label>
+            <input name="folderCacheDir" id="folderCacheDir" class="form-control" type="text" ng-model="currentFolder.virtualStorageCacheDir" ng-readonly="!currentFolder.isVirtual" list="directory-list" path-is-sub-dir />
+            <p class="help-block">
+              <span translate> Specify the location where to store the cache-data of the virtual folder.</span>
+            </p>
+      </div>
         </div>
 
         <div id="folder-sharing" class="tab-pane">
