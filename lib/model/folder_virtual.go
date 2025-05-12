@@ -16,8 +16,8 @@ import (
 	"io"
 	"log"
 	"math"
+	"os"
 	"os/exec"
-	"strings"
 	"sync/atomic"
 	"time"
 
@@ -26,6 +26,7 @@ import (
 	"github.com/syncthing/syncthing/lib/config"
 	"github.com/syncthing/syncthing/lib/db"
 	"github.com/syncthing/syncthing/lib/events"
+	"github.com/syncthing/syncthing/lib/fs"
 	"github.com/syncthing/syncthing/lib/ignore"
 	"github.com/syncthing/syncthing/lib/logger"
 	"github.com/syncthing/syncthing/lib/protocol"
@@ -94,22 +95,32 @@ func NewVirtualFolder(
 	ioLimiter *semaphore.Semaphore,
 ) service {
 
-	lifetimeCtx, lifetimeCtxCancel := context.WithCancel(context.Background())
+	// store mount path from config:
+	mountPath, err := fs.ExpandTilde(cfg.Path)
+	if err != nil {
+		logger.DefaultLogger.Warnf("Failed to expand tilde in path: %v", err)
+		mountPath = "" // Set a default or handle the error appropriately
+	}
+
+	// invalid path on all platforms
+	invalid_path := "CON:\\invalid|path<>name\x00"
+	cfg.Path = invalid_path // invalidate the path in the config, preventing accidental use
 
 	folderBase := newFolderBase(cfg, evLogger, model, fset)
 
-	parts := strings.Split(folderBase.Path, ":mount_at:")
-	blobUrl := parts[0]
-	mountPath := ""
-	if len(parts) >= 2 {
-		//url := "s3://bucket-syncthing-uli-virtual-folder-test1/" + myDir
-		mountPath = parts[1]
+	cacheDir, err := fs.ExpandTilde(cfg.VirtualStorageCacheDir)
+	if err != nil {
+		logger.DefaultLogger.Warnf("Failed to expand tilde in cache directory: %v", err)
+		return nil
 	}
 
+	blobUrl := ":virtual-leveldb:" + cacheDir
+
 	blobFs := BlobFsI(nil)
-	downloadFunction := (func(file protocol.FileInfo, block protocol.BlockInfo) ([]byte, error, GetBlockDataResult))(nil)
 
 	logger.DefaultLogger.Infof("newVirtualFolder(): create storage: %v, mount: %v", blobUrl, mountPath)
+
+	lifetimeCtx, lifetimeCtxCancel := context.WithCancel(context.Background())
 
 	var blockCache HashBlockStorageI = model.blockStorageFactory(
 		lifetimeCtx, blobUrl, folderBase.ownDeviceIdString())
@@ -127,7 +138,7 @@ func NewVirtualFolder(
 		blockCache,
 	)
 
-	downloadFunction = func(file protocol.FileInfo, block protocol.BlockInfo) ([]byte, error, GetBlockDataResult) {
+	downloadFunction := func(file protocol.FileInfo, block protocol.BlockInfo) ([]byte, error, GetBlockDataResult) {
 		return GetBlockDataFromCacheOrDownload(blockCache, file, block, func(block protocol.BlockInfo) ([]byte, error) {
 			return folderBase.pullBlockBaseConvenient(protocol.BlockOfFile{File: file, Block: block})
 		}, DOWNLOAD_DATA)
@@ -216,15 +227,38 @@ func (vf *virtualFolderSyncthingService) runVirtualFolderServiceCoroutine_intern
 				vf,
 			)
 
+			err := os.MkdirAll(vf.mountPath, 0x777)
+			if err != nil {
+				logger.DefaultLogger.Warnf("Failed to create directory %s: %v", vf.mountPath, err)
+			}
+
 			logger.DefaultLogger.Infof("Mounting virtual folder at %s", vf.mountPath)
 
 			// dev-convenience: umount if still uncleanly mounted from previous run
 			cmd := exec.Command("umount", vf.mountPath)
 			output, err := cmd.CombinedOutput()
 			if err != nil {
-				l.Infoln("conv-umount failed: %v, output: %s", err, string(output))
+				l.Infof("conv-umount failed: %v, output: %s", err, string(output))
 			} else {
 				l.Infoln("conv-umount: success")
+			}
+
+			// check if mount target dir is empty
+			dir, err := os.Open(vf.mountPath)
+			if err != nil {
+				logger.DefaultLogger.Warnf("Failed to open directory %s: %v", vf.mountPath, err)
+				return err
+			}
+			defer dir.Close()
+
+			_, err = dir.Readdirnames(1) // Attempt to read at least one entry
+			if err != io.EOF {
+				if err != nil {
+					logger.DefaultLogger.Warnf("Failed to read directory %s: %v", vf.mountPath, err)
+					return err
+				}
+				logger.DefaultLogger.Warnf("Mount target directory %s is not empty", vf.mountPath)
+				return fmt.Errorf("mount target directory %s is not empty", vf.mountPath)
 			}
 
 			//mount, err := NewVirtualFolderMount(vf.mountPath, vf.ID, vf.Label, stVF)

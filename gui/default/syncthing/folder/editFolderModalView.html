@@ -51,7 +51,7 @@
                 <input type="checkbox" ng-model="currentFolder.isVirtual" ng-readonly="editingFolderExisting()">&nbsp;<span translate>Use Virtual Storage</span>
               </div>
               <span class="ml-2">Virtual Storage max. cache size (GiB):</span>
-              <input name="fuseCacheSizeGiB" id="fuseCacheSizeGiB" class="form-control ml-2" type="number" ng-readonly="!currentFolder.isVirtual" ng-model="currentFolder.fuseCacheSizeGiB"/>
+              <input name="fuseCacheSizeGiB" id="fuseCacheSizeGiB" class="form-control ml-2" type="number" ng-readonly="!currentFolder.isVirtual" ng-model="currentFolder.fuseCacheSizeGiB" step="0.01"/>
             </span>
             <p class="help-block">
               <span translate>
@@ -61,7 +61,7 @@
                 You need to specify a seperate directory for storing the cache data.</span>
             </p>
           <label translate>Virtual Cache Storage Path</label>
-            <input name="folderCacheDir" id="folderCacheDir" class="form-control" type="text" ng-model="currentFolder.cacheDir" ng-readonly="!currentFolder.isVirtual" list="directory-list" path-is-sub-dir />
+            <input name="folderCacheDir" id="folderCacheDir" class="form-control" type="text" ng-model="currentFolder.virtualStorageCacheDir" ng-readonly="!currentFolder.isVirtual" list="directory-list" path-is-sub-dir />
             <p class="help-block">
               <span translate> Specify the location where to store the cache-data of the virtual folder.</span>
             </p>

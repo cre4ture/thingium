@@ -2440,6 +2440,9 @@ angular.module('syncthing.core')
                 // undefined path leads to invalid input field
                 $scope.currentFolder.path = '';
             }
+            if ($scope.currentFolder.storageType == "virtual") {
+                $scope.currentFolder.isVirtual = true
+            }
             initShareEditing('folder');
             editFolderModal(initialTab);
         }
@@ -2562,6 +2565,7 @@ angular.module('syncthing.core')
                     // Triggers the watch that sets the path
                     $scope.currentFolder._editing = "new";
                     $scope.currentFolder.label = $scope.currentFolder.label;
+                    $scope.currentFolder.fuseCacheSizeGiB = 10.0;
                     editFolderModal();
                 });
             });
@@ -2618,6 +2622,10 @@ angular.module('syncthing.core')
                 saveFolderAddIgnores($scope.currentFolder.id);
                 hideModal('#editFolder');
                 return;
+            }
+
+            if ($scope.currentFolder.isVirtual) {
+                $scope.currentFolder.storageType = "virtual"
             }
 
             $scope.validateXattrFilter();

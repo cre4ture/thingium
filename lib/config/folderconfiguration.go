@@ -51,7 +51,8 @@ type FolderConfiguration struct {
 	Path                    string                      `json:"path" xml:"path,attr" default:"~"`
 	Type                    FolderType                  `json:"type" xml:"type,attr"`
 	StorageType             string                      `json:"storageType" xml:"storageType,attr"`
-	FuseCacheSizeGiB        int                         `json:"fuseCacheSizeGiB" xml:"fuseCacheSizeGiB,attr" default:"5"`
+	FuseCacheSizeGiB        float64                     `json:"fuseCacheSizeGiB" xml:"fuseCacheSizeGiB,attr" default:"5.0"`
+	VirtualStorageCacheDir  string                      `json:"virtualStorageCacheDir" xml:"virtualStorageCacheDir,attr" default:""`
 	Devices                 []FolderDeviceConfiguration `json:"devices" xml:"device"`
 	RescanIntervalS         int                         `json:"rescanIntervalS" xml:"rescanIntervalS,attr" default:"3600"`
 	FSWatcherEnabled        bool                        `json:"fsWatcherEnabled" xml:"fsWatcherEnabled,attr" default:"true"`
@@ -156,6 +157,7 @@ func (f FolderConfiguration) ModTimeWindow() time.Duration {
 
 func (cfg *FolderConfiguration) IsBasedOnNativeFileSystem() bool {
 	isVirtual := strings.HasPrefix(cfg.Path, ":virtual")
+	isVirtual = isVirtual || (cfg.StorageType == "virtual")
 	return !isVirtual
 }
 
