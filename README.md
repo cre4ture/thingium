@@ -7,23 +7,23 @@
 [![Go Report Card](https://goreportcard.com/badge/github.com/syncthing/syncthing)](https://goreportcard.com/report/github.com/syncthing/syncthing)
 
 ## Thingium is a Syncthing Fork
-Its a personal experiment. It tries to simplify automatic updates for a few of the features I added to Syncthing, but where not (yet?) accepted for syncthing vanilla version.
+It's a personal experiment. It tries to simplify automatic updates for a few of the features I added to Syncthing, but where not (yet?) accepted for syncthing vanilla version.
 
 ### Compatibility
-Thingium is fully compatible with Synchting on protocol and configuration and database files.
+Thingium is fully compatible with Syncthing on protocol and configuration and database files.
 It is designed to be able to replace Syncthing, offering additional, compatible features.
 
-BUT it uses its own default configuration directory and seperate default listen ports.
-This way it can run in parallel to Syncthing on the same host, avoiding accidential mixups.
-If you like to replace Synchting by Thingium, just point Thingium to the configuration path that Synchthing was using before.
+BUT it uses its own default configuration directory and separate default listen ports.
+This way it can run in parallel to Syncthing on the same host, avoiding accidental mixups.
+If you like to replace Syncthing with Thingium, just point Thingium to the configuration path that Syncthing was using before.
 
 Default Thingium GUI URL: http://127.0.0.1:8386/
-Default Thingium QUICK/TCP listen port: [::]:22002
+Default Thingium QUIC/TCP listen port: [::]:22002
 
 ### Features
 
 - Sharding of files using ignore pattern based on hashed filename [PR documentation](https://github.com/cre4ture/thingium/pull/3)
-- TCP port tunneling through synchting network
+- TCP port tunneling through syncthing network
 
 ## Following is original Syncthing Readme
 
