@@ -19,6 +19,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/ek220/guf"
@@ -107,8 +108,13 @@ type tm_config struct {
 	serviceRunning bool
 }
 
+type tm_localTunnelEP struct {
+	endpoint           io.ReadWriteCloser
+	nextPackageCounter atomic.Uint32 // used to identify lost packages
+}
+
 type tm_localTunnelEPs struct {
-	localTunnelEndpoints map[protocol.DeviceID]map[uint64]io.ReadWriteCloser
+	localTunnelEndpoints map[protocol.DeviceID]map[uint64]*tm_localTunnelEP
 }
 
 type tm_deviceConnections struct {
@@ -185,7 +191,7 @@ func NewTunnelManagerFromConfig(config *bep.TunnelConfig, configFile string) *Tu
 		}),
 		idGenerator: gen,
 		endpoints: utils.NewProtected(&tm_localTunnelEPs{
-			localTunnelEndpoints: make(map[protocol.DeviceID]map[uint64]io.ReadWriteCloser),
+			localTunnelEndpoints: make(map[protocol.DeviceID]map[uint64]*tm_localTunnelEP),
 		}),
 		deviceConnections: utils.NewProtected(&tm_deviceConnections{
 			deviceConnections: make(map[protocol.DeviceID]*DeviceConnection),
@@ -517,6 +523,7 @@ func (tm *TunnelManager) handleLocalTunnelEndpoint(ctx context.Context, tunnelID
 
 	// Example: Forward data to the destination address
 	// This is a placeholder implementation
+	var dataPackageCounter uint32 = 0
 	for {
 		select {
 		case <-ctx.Done():
@@ -530,16 +537,22 @@ func (tm *TunnelManager) handleLocalTunnelEndpoint(ctx context.Context, tunnelID
 				tl.Debugf("Error reading from connection: %v", err)
 				return
 			}
+			// manage package counter
+			thisPackageCounter := dataPackageCounter
+			dataPackageCounter++
+
 			// Forward data to the destination
 			// This is a placeholder implementation
-			tl.Debugf("Forwarding data to device %v, %s (%d tunnel id): len: %d\n", destinationDevice, destinationAddress, tunnelID, n)
+			tl.Debugf("Forwarding data to device %v, %s (%d tunnel id): len: %d, counter: %d\n",
+				destinationDevice, destinationAddress, tunnelID, n, thisPackageCounter)
 
 			// Send the data to the destination device
 			destinationDeviceTunnel <- &protocol.TunnelData{
 				D: &bep.TunnelData{
-					TunnelId: tunnelID,
-					Command:  bep.TunnelCommand_TUNNEL_COMMAND_DATA,
-					Data:     buffer[:n],
+					TunnelId:           tunnelID,
+					Command:            bep.TunnelCommand_TUNNEL_COMMAND_DATA,
+					Data:               buffer[:n],
+					DataPackageCounter: &thisPackageCounter,
 				},
 			}
 		}
@@ -550,9 +563,12 @@ func (tm *TunnelManager) registerLocalTunnelEndpoint(deviceID protocol.DeviceID,
 	tl.Debugln("Registering local tunnel endpoint, device ID:", deviceID, "tunnel ID:", tunnelID)
 	tm.endpoints.DoProtected(func(eps *tm_localTunnelEPs) {
 		if eps.localTunnelEndpoints[deviceID] == nil {
-			eps.localTunnelEndpoints[deviceID] = make(map[uint64]io.ReadWriteCloser)
+			eps.localTunnelEndpoints[deviceID] = make(map[uint64]*tm_localTunnelEP)
 		}
-		eps.localTunnelEndpoints[deviceID][tunnelID] = conn
+		eps.localTunnelEndpoints[deviceID][tunnelID] = &tm_localTunnelEP{
+			endpoint:           conn,
+			nextPackageCounter: atomic.Uint32{},
+		}
 	})
 }
 
@@ -679,25 +695,40 @@ func (tm *TunnelManager) forwardRemoteTunnelData(fromDevice protocol.DeviceID, d
 		go tm.handleLocalTunnelEndpoint(service.ctx, data.D.TunnelId, conn, fromDevice, *data.D.RemoteServiceName, TunnelDestinationAddress)
 
 	case bep.TunnelCommand_TUNNEL_COMMAND_DATA:
-		tcpConn, ok := utils.DoProtected2(tm.endpoints, func(eps *tm_localTunnelEPs) (io.WriteCloser, bool) {
+		tcpConn, ok := utils.DoProtected2(tm.endpoints, func(eps *tm_localTunnelEPs) (*tm_localTunnelEP, bool) {
 			tcpConn, ok := eps.localTunnelEndpoints[fromDevice][data.D.TunnelId]
-			return tcpConn, ok // tcpConn is thread-safe
+			return tcpConn, ok // tm_localTunnelEP is thread-safe
 		})
 		if ok {
-			_, err := tcpConn.Write(data.D.Data)
-			if err != nil {
-				tl.Warnf("Failed to forward tunnel data: %v", err)
-			}
+			func() {
+				if data.D.DataPackageCounter != nil {
+					expectedDataCounter := tcpConn.nextPackageCounter.Load()
+					if expectedDataCounter != *data.D.DataPackageCounter {
+						tl.Warnf("close connection due to data counter missmatch (expected %d, got %d)",
+							expectedDataCounter, *data.D.DataPackageCounter)
+
+						// close connection as we have no way to recover from this
+						tcpConn.endpoint.Close()
+						return
+					}
+				}
+
+				tcpConn.nextPackageCounter.Add(1)
+				_, err := tcpConn.endpoint.Write(data.D.Data)
+				if err != nil {
+					tl.Warnf("Failed to forward tunnel data: %v", err)
+				}
+			}()
 		} else {
 			tl.Infof("Data: No TCP connection found for device %v, TunnelID: %d", fromDevice, data.D.TunnelId)
 		}
 	case bep.TunnelCommand_TUNNEL_COMMAND_CLOSE:
-		tcpConn, ok := utils.DoProtected2(tm.endpoints, func(eps *tm_localTunnelEPs) (io.WriteCloser, bool) {
+		tcpConn, ok := utils.DoProtected2(tm.endpoints, func(eps *tm_localTunnelEPs) (*tm_localTunnelEP, bool) {
 			tcpConn, ok := eps.localTunnelEndpoints[fromDevice][data.D.TunnelId]
-			return tcpConn, ok // tcpConn is thread-safe
+			return tcpConn, ok // tm_localTunnelEP is thread-safe
 		})
 		if ok {
-			tcpConn.Close()
+			tcpConn.endpoint.Close()
 		} else {
 			tl.Infof("Close: No TCP connection found for device %v, TunnelID: %d", fromDevice, data.D.TunnelId)
 		}
