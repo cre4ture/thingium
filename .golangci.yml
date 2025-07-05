@@ -39,6 +39,8 @@ linters:
     - whitespace
     - wrapcheck
     - wsl
+    - wsl_v5
+    - godot
   exclusions:
     generated: lax
     presets:

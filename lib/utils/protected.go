@@ -38,11 +38,13 @@ func (p *Protected[T]) DoProtected(fn func(T)) {
 func DoProtected[T any, R any](p *Protected[T], fn func(T) R) R {
 	p.mut.Lock()
 	defer p.mut.Unlock()
+
 	return fn(*p.t)
 }
 
 func DoProtected2[T any, R1 any, R2 any](p *Protected[T], fn func(T) (R1, R2)) (R1, R2) {
 	p.mut.Lock()
 	defer p.mut.Unlock()
+
 	return fn(*p.t)
 }

@@ -8,12 +8,14 @@ package model
 
 import (
 	"context"
+	"fmt"
 	"net"
 	"os"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"github.com/syncthing/syncthing/internal/gen/bep"
 
 	"github.com/syncthing/syncthing/lib/protocol"
@@ -32,8 +34,8 @@ func TestTunnelManager_ServeLocalListener(t *testing.T) {
 
 	// Mock device ID and addresses
 	serverDeviceID := repeatedDeviceID(0x11)
-	listenAddress := "127.0.0.1:64777"
-	destinationAddress := "127.0.0.1:8080"
+	listenAddress := fmt.Sprintf("127.0.0.1:%d", GetRandomFreePort())
+	destinationAddress := fmt.Sprintf("127.0.0.1:%d", GetRandomFreePort())
 
 	// Create a new TunnelManager
 	proxyServiceName := "proxy"
@@ -55,11 +57,16 @@ func TestTunnelManager_ServeLocalListener(t *testing.T) {
 	defer cancel()
 
 	// Start the listener
-	go tm.Serve(ctx)
+	go func() {
+		err := tm.Serve(ctx)
+		if err != nil {
+			t.Errorf("Serve failed: %v", err)
+		}
+	}()
 
 	// Create a channel to capture the TunnelData sent to the device
 	tunnelDataChan := make(chan *protocol.TunnelData, 1)
-	tm.RegisterDeviceConnection(serverDeviceID, nil, tunnelDataChan)
+	tm.deviceConnections.RegisterDeviceConnection(serverDeviceID, nil, tunnelDataChan)
 
 	var conn net.Conn
 	var err error
@@ -73,7 +80,7 @@ func TestTunnelManager_ServeLocalListener(t *testing.T) {
 			break
 		}
 	}
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
 	// Wait for the TunnelData to be sent
 	var tunnelID uint64
@@ -89,7 +96,9 @@ func TestTunnelManager_ServeLocalListener(t *testing.T) {
 	}
 
 	msg := []byte("hello")
-	conn.Write(msg)
+	n, err := conn.Write(msg)
+	require.NoError(t, err)
+	assert.Len(t, msg, n)
 
 	// Wait for the TunnelData to be sent
 	select {
@@ -136,16 +145,16 @@ func TestTunnelManager_HandleOpenRemoteCommand(t *testing.T) {
 	)
 
 	// Mock device ID and addresses
-	destinationAddress := "127.0.0.1:64780"
+	destinationAddress := fmt.Sprintf("127.0.0.1:%d", GetRandomFreePort())
 
 	// Create a channel to capture the TunnelData sent to the device
 	tunnelDataChanIn := make(chan *protocol.TunnelData, 1)
 	tunnelDataChanOut := make(chan *protocol.TunnelData, 1)
-	tm.RegisterDeviceConnection(clientDeviceID, tunnelDataChanIn, tunnelDataChanOut)
+	tm.deviceConnections.RegisterDeviceConnection(clientDeviceID, tunnelDataChanIn, tunnelDataChanOut)
 
 	// Start a listener on the destination address
 	listener, err := net.Listen("tcp", destinationAddress)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	defer listener.Close()
 
 	// Send an open command to the TunnelManager
@@ -162,12 +171,12 @@ func TestTunnelManager_HandleOpenRemoteCommand(t *testing.T) {
 
 	// Wait for the TunnelManager to connect to the listener
 	conn, err := listener.Accept()
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
 	// Verify the connection
 	msg_from_server := []byte("hello from server")
 	_, err = conn.Write(msg_from_server)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
 	// Wait for the TunnelData to be sent
 
@@ -199,7 +208,7 @@ loop1:
 
 	buf := make([]byte, 1024)
 	n, err := conn.Read(buf)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	assert.Equal(t, msg_from_client, buf[:n])
 
 	conn.Close()
@@ -220,7 +229,7 @@ func TestTunnelManager_HandleOpenRemoteCommand_NamedService(t *testing.T) {
 
 	clientDeviceID := repeatedDeviceID(0x33)
 	// Mock device ID and addresses
-	localDestinationAddress := "127.0.0.1:64780"
+	localDestinationAddress := fmt.Sprintf("127.0.0.1:%d", GetRandomFreePort())
 	localServiceName := "http"
 
 	// Create a new TunnelManager
@@ -242,11 +251,11 @@ func TestTunnelManager_HandleOpenRemoteCommand_NamedService(t *testing.T) {
 	// Create a channel to capture the TunnelData sent to the device
 	tunnelDataChanIn := make(chan *protocol.TunnelData, 1)
 	tunnelDataChanOut := make(chan *protocol.TunnelData, 1)
-	tm.RegisterDeviceConnection(clientDeviceID, tunnelDataChanIn, tunnelDataChanOut)
+	tm.deviceConnections.RegisterDeviceConnection(clientDeviceID, tunnelDataChanIn, tunnelDataChanOut)
 
 	// Start a listener on the destination address
 	listener, err := net.Listen("tcp", localDestinationAddress)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	defer listener.Close()
 
 	// Send an open command to the TunnelManager
@@ -261,12 +270,12 @@ func TestTunnelManager_HandleOpenRemoteCommand_NamedService(t *testing.T) {
 
 	// Wait for the TunnelManager to connect to the listener
 	conn, err := listener.Accept()
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
 	// Verify the connection
 	msg_from_server := []byte("hello from server")
 	_, err = conn.Write(msg_from_server)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
 	// Wait for the TunnelData to be sent
 loop1:
@@ -297,7 +306,7 @@ loop1:
 
 	buf := make([]byte, 1024)
 	n, err := conn.Read(buf)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	assert.Equal(t, msg_from_client, buf[:n])
 
 	conn.Close()
@@ -319,7 +328,7 @@ func TestTunnelManager_HandleOpenRemoteCommand_DisallowedClient(t *testing.T) {
 	clientDeviceID := repeatedDeviceID(0x33)
 	disallowedClientDeviceID := repeatedDeviceID(0x44)
 	// Mock device ID and addresses
-	localDestinationAddress := "127.0.0.1:64780"
+	localDestinationAddress := fmt.Sprintf("127.0.0.1:%d", GetRandomFreePort())
 	localServiceName := "http"
 
 	// Create a new TunnelManager
@@ -341,11 +350,11 @@ func TestTunnelManager_HandleOpenRemoteCommand_DisallowedClient(t *testing.T) {
 	// Create a channel to capture the TunnelData sent to the device
 	tunnelDataChanIn := make(chan *protocol.TunnelData, 1)
 	tunnelDataChanOut := make(chan *protocol.TunnelData, 1)
-	tm.RegisterDeviceConnection(disallowedClientDeviceID, tunnelDataChanIn, tunnelDataChanOut)
+	tm.deviceConnections.RegisterDeviceConnection(disallowedClientDeviceID, tunnelDataChanIn, tunnelDataChanOut)
 
 	// Start a listener on the destination address
 	listener, err := net.Listen("tcp", localDestinationAddress)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	defer listener.Close()
 
 	// Send an open command to the TunnelManager
@@ -359,7 +368,11 @@ func TestTunnelManager_HandleOpenRemoteCommand_DisallowedClient(t *testing.T) {
 	}
 
 	// Wait for the TunnelManager to connect to the listener
-	listener.(*net.TCPListener).SetDeadline(time.Now().Add(300 * time.Millisecond))
+	tcpListener, ok := listener.(*net.TCPListener)
+	if !ok {
+		t.Fatal("listener is not a *net.TCPListener")
+	}
+	require.NoError(t, tcpListener.SetDeadline(time.Now().Add(300*time.Millisecond)))
 	_, err = listener.Accept()
 	assert.ErrorIs(t, err, os.ErrDeadlineExceeded)
 }
@@ -368,7 +381,7 @@ func TestTunnelManagerConfigUpdate_addAllowedDevice_removeAllowedDevice(t *testi
 	clientDeviceID1 := repeatedDeviceID(0x33)
 	clientDeviceID2 := repeatedDeviceID(0x44)
 	// Mock device ID and addresses
-	localDestinationAddress := "127.0.0.1:64780"
+	localDestinationAddress := fmt.Sprintf("127.0.0.1:%d", GetRandomFreePort())
 	localServiceName := "http"
 
 	// reserve a temporary file:
@@ -394,25 +407,25 @@ func TestTunnelManagerConfigUpdate_addAllowedDevice_removeAllowedDevice(t *testi
 	)
 
 	status := tm.Status()
-	assert.Equal(t, 1, len(status))
+	assert.Len(t, status, 1)
 	assert.Equal(t, localServiceName, status[0]["serviceID"])
 	allowedDevices := status[0]["allowedRemoteDeviceIDs"].([]string)
-	assert.Equal(t, 0, len(allowedDevices))
+	assert.Empty(t, allowedDevices)
 
 	err = tm.ModifyTunnel(status[0]["id"].(string), "add-allowed-device",
 		map[string]string{
 			"deviceID": clientDeviceID1.String(),
 		},
 	)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
 	status = tm.Status()
 
-	assert.Equal(t, 1, len(status))
+	assert.Len(t, status, 1)
 	assert.Equal(t, localServiceName, status[0]["serviceID"])
 	assert.Equal(t, localDestinationAddress, status[0]["localDialAddress"])
 	allowedDevices = status[0]["allowedRemoteDeviceIDs"].([]string)
-	assert.Equal(t, 1, len(allowedDevices))
+	assert.Len(t, allowedDevices, 1)
 	assert.Equal(t, clientDeviceID1.String(), allowedDevices[0])
 
 	err = tm.ModifyTunnel(status[0]["id"].(string), "add-allowed-device",
@@ -420,7 +433,7 @@ func TestTunnelManagerConfigUpdate_addAllowedDevice_removeAllowedDevice(t *testi
 			"deviceID": clientDeviceID2.String(),
 		},
 	)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
 	status = tm.Status()
 
@@ -437,7 +450,7 @@ func TestTunnelManagerConfigUpdate_addAllowedDevice_removeAllowedDevice(t *testi
 			"deviceID": clientDeviceID2.String(),
 		},
 	)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
 	status = tm.Status()
 
@@ -453,7 +466,7 @@ func TestTunnelManagerConfigUpdate_addAllowedDevice_removeAllowedDevice(t *testi
 			"deviceID": clientDeviceID1.String(),
 		},
 	)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
 	status = tm.Status()
 
@@ -462,5 +475,5 @@ func TestTunnelManagerConfigUpdate_addAllowedDevice_removeAllowedDevice(t *testi
 	assert.Equal(t, localServiceName, status[0]["serviceID"])
 	assert.Equal(t, localDestinationAddress, status[0]["localDialAddress"])
 	allowedDevices = status[0]["allowedRemoteDeviceIDs"].([]string)
-	assert.Equal(t, 0, len(allowedDevices))
+	assert.Empty(t, allowedDevices)
 }

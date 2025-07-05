@@ -913,7 +913,7 @@ func TestHtmlFormLogin(t *testing.T) {
 				t.Errorf("Unexpected non-200 return code %d at %s", resp.StatusCode, noAuthPath)
 			}
 			if hasSessionCookie(resp.Cookies()) {
-				t.Errorf("Unexpected session cookie at " + noAuthPath)
+				t.Error("Unexpected session cookie at " + noAuthPath)
 			}
 		})
 	}

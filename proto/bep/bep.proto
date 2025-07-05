@@ -253,6 +253,7 @@ message TunnelData {
   optional string remote_service_name = 5;
   optional string tunnel_destination_address = 4;
   optional bytes data = 3;
+  optional uint32 data_package_counter = 6;
 }
 
 enum TunnelCommand {
