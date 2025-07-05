@@ -34,8 +34,8 @@ func TestTunnelManager_ServeLocalListener(t *testing.T) {
 
 	// Mock device ID and addresses
 	serverDeviceID := repeatedDeviceID(0x11)
-	listenAddress := "127.0.0.1:64777"
-	destinationAddress := "127.0.0.1:8080"
+	listenAddress := fmt.Sprintf("127.0.0.1:%d", GetRandomFreePort())
+	destinationAddress := fmt.Sprintf("127.0.0.1:%d", GetRandomFreePort())
 
 	// Create a new TunnelManager
 	proxyServiceName := "proxy"
