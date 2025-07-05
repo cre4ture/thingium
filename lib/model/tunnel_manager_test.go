@@ -59,7 +59,7 @@ func TestTunnelManager_ServeLocalListener(t *testing.T) {
 
 	// Create a channel to capture the TunnelData sent to the device
 	tunnelDataChan := make(chan *protocol.TunnelData, 1)
-	tm.RegisterDeviceConnection(serverDeviceID, nil, tunnelDataChan)
+	tm.deviceConnections.RegisterDeviceConnection(serverDeviceID, nil, tunnelDataChan)
 
 	var conn net.Conn
 	var err error
@@ -141,7 +141,7 @@ func TestTunnelManager_HandleOpenRemoteCommand(t *testing.T) {
 	// Create a channel to capture the TunnelData sent to the device
 	tunnelDataChanIn := make(chan *protocol.TunnelData, 1)
 	tunnelDataChanOut := make(chan *protocol.TunnelData, 1)
-	tm.RegisterDeviceConnection(clientDeviceID, tunnelDataChanIn, tunnelDataChanOut)
+	tm.deviceConnections.RegisterDeviceConnection(clientDeviceID, tunnelDataChanIn, tunnelDataChanOut)
 
 	// Start a listener on the destination address
 	listener, err := net.Listen("tcp", destinationAddress)
@@ -242,7 +242,7 @@ func TestTunnelManager_HandleOpenRemoteCommand_NamedService(t *testing.T) {
 	// Create a channel to capture the TunnelData sent to the device
 	tunnelDataChanIn := make(chan *protocol.TunnelData, 1)
 	tunnelDataChanOut := make(chan *protocol.TunnelData, 1)
-	tm.RegisterDeviceConnection(clientDeviceID, tunnelDataChanIn, tunnelDataChanOut)
+	tm.deviceConnections.RegisterDeviceConnection(clientDeviceID, tunnelDataChanIn, tunnelDataChanOut)
 
 	// Start a listener on the destination address
 	listener, err := net.Listen("tcp", localDestinationAddress)
@@ -341,7 +341,7 @@ func TestTunnelManager_HandleOpenRemoteCommand_DisallowedClient(t *testing.T) {
 	// Create a channel to capture the TunnelData sent to the device
 	tunnelDataChanIn := make(chan *protocol.TunnelData, 1)
 	tunnelDataChanOut := make(chan *protocol.TunnelData, 1)
-	tm.RegisterDeviceConnection(disallowedClientDeviceID, tunnelDataChanIn, tunnelDataChanOut)
+	tm.deviceConnections.RegisterDeviceConnection(disallowedClientDeviceID, tunnelDataChanIn, tunnelDataChanOut)
 
 	// Start a listener on the destination address
 	listener, err := net.Listen("tcp", localDestinationAddress)

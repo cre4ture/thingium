@@ -2389,7 +2389,7 @@ func (m *model) AddConnection(conn protocol.Connection, hello protocol.Hello) {
 	m.deviceWasSeen(deviceID)
 	m.scheduleConnectionPromotion()
 
-	m.tunnelManager.RegisterDeviceConnection(deviceID, conn.TunnelIn(), conn.TunnelOut())
+	m.tunnelManager.deviceConnections.RegisterDeviceConnection(deviceID, conn.TunnelIn(), conn.TunnelOut())
 }
 
 func (m *model) scheduleConnectionPromotion() {

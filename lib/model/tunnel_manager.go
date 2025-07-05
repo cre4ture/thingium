@@ -20,10 +20,9 @@ import (
 	"strconv"
 	"strings"
 	"sync/atomic"
-	"time"
+	"weak"
 
 	"github.com/ek220/guf"
-	"github.com/hitoshi44/go-uid64"
 	"github.com/syncthing/syncthing/internal/gen/bep"
 	"github.com/syncthing/syncthing/lib/logger"
 	"github.com/syncthing/syncthing/lib/protocol"
@@ -95,13 +94,6 @@ type tunnelInConfig struct {
 	json           *bep.TunnelInbound
 }
 
-type DeviceConnection struct {
-	ctx              context.Context
-	cancel           context.CancelFunc
-	tunnelOut        chan<- *protocol.TunnelData
-	serviceOfferings map[string]uint32
-}
-
 type tm_config struct {
 	configIn       map[string]*tunnelInConfig
 	configOut      map[string]*tunnelOutConfig
@@ -110,23 +102,16 @@ type tm_config struct {
 
 type tm_localTunnelEP struct {
 	endpoint           io.ReadWriteCloser
-	nextPackageCounter atomic.Uint32 // used to identify lost packages
-}
-
-type tm_localTunnelEPs struct {
-	localTunnelEndpoints map[protocol.DeviceID]map[uint64]*tm_localTunnelEP
-}
-
-type tm_deviceConnections struct {
-	deviceConnections map[protocol.DeviceID]*DeviceConnection
+	inUse              atomic.Pointer[map[uint64]*tm_localTunnelEP]
+	nextPackageCounter uint32 // used to identify lost packages
 }
 
 type TunnelManager struct {
 	config            *utils.Protected[*tm_config]
 	configFile        string
-	idGenerator       *uid64.Generator // is thread-safe!
-	endpoints         *utils.Protected[*tm_localTunnelEPs]
-	deviceConnections *utils.Protected[*tm_deviceConnections]
+	localEndpointMgr  *TunnelManagerEndpointManager
+	deviceConnections *TunnelManagerDeviceConnectionsManager
+	localListeners    *LocalListenerManager
 }
 
 func (m *TunnelManager) TunnelStatus() []map[string]interface{} {
@@ -135,29 +120,6 @@ func (m *TunnelManager) TunnelStatus() []map[string]interface{} {
 
 func (m *TunnelManager) AddTunnelOutbound(localListenAddress string, remoteDeviceID protocol.DeviceID, remoteServiceName string) error {
 	return m.AddOutboundTunnel(localListenAddress, remoteDeviceID, remoteServiceName)
-}
-
-func (m *TunnelManager) TrySendTunnelData(deviceID protocol.DeviceID, data *protocol.TunnelData) error {
-	tunnelOut, ok := utils.DoProtected2(m.deviceConnections,
-		func(dc *tm_deviceConnections) (chan<- *protocol.TunnelData, bool) {
-			conn, ok := dc.deviceConnections[deviceID]
-			if !ok {
-				return nil, false
-			}
-			return conn.tunnelOut, true // channels are thread-safe
-		})
-
-	if ok {
-		select {
-		case tunnelOut <- data:
-			return nil
-		default:
-			return fmt.Errorf("failed to send tunnel data to device %v", deviceID)
-		}
-	} else {
-		return fmt.Errorf("device %v not found in TunnelManager", deviceID)
-	}
-
 }
 
 func NewTunnelManager(configFile string) *TunnelManager {
@@ -173,33 +135,34 @@ func NewTunnelManager(configFile string) *TunnelManager {
 }
 
 func NewTunnelManagerFromConfig(config *bep.TunnelConfig, configFile string) *TunnelManager {
-	gen, err := uid64.NewGenerator(0)
-	if err != nil {
-		panic(err)
-	}
-
 	if config == nil {
 		panic("TunnelManager config is nil")
 	}
 
-	tm := &TunnelManager{
-		configFile: configFile,
-		config: utils.NewProtected(&tm_config{
+	sharedConfig :=
+		utils.NewProtected(&tm_config{
 			configIn:       make(map[string]*tunnelInConfig),
 			configOut:      make(map[string]*tunnelOutConfig),
 			serviceRunning: false,
-		}),
-		idGenerator: gen,
-		endpoints: utils.NewProtected(&tm_localTunnelEPs{
-			localTunnelEndpoints: make(map[protocol.DeviceID]map[uint64]*tm_localTunnelEP),
-		}),
-		deviceConnections: utils.NewProtected(&tm_deviceConnections{
-			deviceConnections: make(map[protocol.DeviceID]*DeviceConnection),
-		}),
+		})
+
+	localEndpointMgr := NewTunnelManagerEndpointManager()
+	sharedDeviceConnections := NewTunnelManagerDeviceConnectionsManager(
+		sharedConfig, localEndpointMgr)
+
+	// use weak pointer to avoid circular references
+	localEndpointMgr.SetSharedDeviceConnections(weak.Make(sharedDeviceConnections))
+
+	tm := &TunnelManager{
+		configFile:        configFile,
+		config:            sharedConfig,
+		localEndpointMgr:  localEndpointMgr,
+		deviceConnections: sharedDeviceConnections,
+		localListeners:    NewLocalListenerManager(sharedConfig, localEndpointMgr, sharedDeviceConnections),
 	}
 	// use update logic to set the initial config as well.
 	// this avoids code duplication
-	tm.updateOutConfig(config.TunnelsOut)
+	tm.localListeners.updateOutConfig(config.TunnelsOut)
 	tm.updateInConfig(config.TunnelsIn)
 	return tm
 }
@@ -228,7 +191,7 @@ func (tm *TunnelManager) updateInConfig(newInTunnels []*bep.TunnelInbound) {
 							ctx:        ctx,
 							cancel:     cancel,
 						}
-						go tm.TrySendTunnelData(deviceID, generateOfferCommand(newTun))
+						go tm.deviceConnections.TrySendTunnelData(deviceID, generateOfferCommand(newTun))
 					} else {
 						allowedClients[deviceIDStr] = existingTun.allowedClients[deviceIDStr]
 					}
@@ -270,108 +233,10 @@ func (tm *TunnelManager) updateInConfig(newInTunnels []*bep.TunnelInbound) {
 	})
 }
 
-func (tm *TunnelManager) updateOutConfig(newOutTunnels []*bep.TunnelOutbound) {
-	tm.config.DoProtected(func(config *tm_config) {
-
-		// Generate a new map of outbound tunnels
-		newConfigOut := make(map[string]*tunnelOutConfig)
-		for _, tunnel := range newOutTunnels {
-			descriptor := getConfigDescriptorOutbound(tunnel)
-			if existing, exists := config.configOut[descriptor]; exists {
-				// Reuse existing context and cancel function
-				newConfigOut[descriptor] = existing
-			} else {
-				// Create new context and cancel function
-				ctx, cancel := context.WithCancel(context.Background())
-				newConfigOut[descriptor] = &tunnelOutConfig{
-					tunnelBaseConfig: tunnelBaseConfig{
-						descriptor: descriptor,
-						ctx:        ctx,
-						cancel:     cancel,
-					},
-					json: tunnel,
-				}
-				if config.serviceRunning {
-					tunnelCopy := *newConfigOut[descriptor]
-					go tm.serveOutboundTunnel(&tunnelCopy)
-				}
-			}
-		}
-
-		// Cancel and remove tunnels that are no longer in the new configuration
-		for descriptor, existing := range config.configOut {
-			if _, exists := newConfigOut[descriptor]; !exists {
-				existing.cancel()
-			}
-		}
-
-		// Replace the old configuration with the new one
-		config.configOut = newConfigOut
-	})
-}
-
-func (tm *TunnelManager) getInboundService(name string) *tunnelInConfig {
-	return utils.DoProtected(tm.config, func(config *tm_config) *tunnelInConfig {
-		for _, service := range config.configIn {
-			if service.json.LocalServiceName == name {
-				// Explicitly copy the struct (as we leave the mutex protected scope)
-				copied := *service
-				return &copied
-			}
-		}
-		return nil
-	})
-}
-
-func (tm *TunnelManager) getEnabledInboundServiceDeviceIdChecked(name string, byDeviceID protocol.DeviceID) *tunnelInConfig {
-	service := tm.getInboundService(name)
-	if service == nil {
-		return nil
-	}
-	if !guf.DerefOr(service.json.Enabled, true) {
-		tl.Warnf("Device %v tries to access disabled service %s", byDeviceID, name)
-		return nil
-	}
-	for _, device := range service.json.AllowedRemoteDeviceIds {
-		deviceID, err := protocol.DeviceIDFromString(device)
-		if err != nil {
-			tl.Warnln("failed to parse device ID:", err)
-			continue
-		}
-		if byDeviceID == deviceID {
-			return service
-		}
-	}
-
-	tl.Warnf("Device %v is not allowed to access service %s", byDeviceID, name)
-	return nil
-}
-
-func (tm *TunnelManager) serveOutboundTunnel(tunnel *tunnelOutConfig) {
-	if !guf.DerefOr(tunnel.json.Enabled, true) {
-		tl.Debugln("Tunnel is disabled, skipping:", tunnel)
-		return
-	}
-
-	tl.Debugln("Starting listener for tunnel, device:", tunnel)
-	device, err := protocol.DeviceIDFromString(tunnel.json.RemoteDeviceId)
-	if err != nil {
-		tl.Warnln("failed to parse device ID:", err)
-	}
-	go tm.ServeListener(tunnel.ctx, tunnel.json.LocalListenAddress,
-		device, tunnel.json.RemoteServiceName, tunnel.json.RemoteAddress)
-}
-
 func (tm *TunnelManager) Serve(ctx context.Context) error {
 	tl.Debugln("TunnelManager Serve started")
 
-	tm.config.DoProtected(func(config *tm_config) {
-		config.serviceRunning = true
-		for _, tunnel := range config.configOut {
-			tunnelCopy := *tunnel
-			go tm.serveOutboundTunnel(&tunnelCopy)
-		}
-	})
+	tm.localListeners.startListeners()
 
 	<-ctx.Done()
 	tl.Debugln("TunnelManager Serve stopping")
@@ -391,245 +256,6 @@ func (tm *TunnelManager) Serve(ctx context.Context) error {
 	return nil
 }
 
-func (tm *TunnelManager) ServeListener(
-	ctx context.Context,
-	listenAddress string,
-	destinationDevice protocol.DeviceID,
-	destinationServiceName string,
-	destinationAddress *string,
-) error {
-	tl.Infoln("ServeListener started for address:", listenAddress, "destination device:", destinationDevice, "destination address:", destinationAddress)
-	listener, err := net.Listen("tcp", listenAddress)
-	if err != nil {
-		return fmt.Errorf("failed to listen on %s: %w", listenAddress, err)
-	}
-	defer listener.Close()
-
-	go func() {
-		<-ctx.Done()
-		listener.Close()
-	}()
-
-	for {
-		conn, err := listener.Accept()
-		if err != nil {
-			if ctx.Err() != nil {
-				return nil
-			}
-			return fmt.Errorf("failed to accept connection: %w", err)
-		}
-		tl.Debugln("TunnelManager: Accepted connection from:", conn.RemoteAddr())
-
-		go tm.handleAcceptedListenConnection(ctx, conn, destinationDevice, destinationServiceName, destinationAddress)
-	}
-}
-
-func (tm *TunnelManager) handleAcceptedListenConnection(
-	ctx context.Context,
-	conn net.Conn,
-	destinationDevice protocol.DeviceID,
-	destinationServiceName string,
-	destinationAddress *string,
-) {
-	defer conn.Close()
-
-	tunnelID := tm.generateTunnelID()
-	tl.Debugln("Accepted connection, tunnel ID:", tunnelID)
-	tm.registerLocalTunnelEndpoint(destinationDevice, tunnelID, conn)
-
-	// send open command to the destination device
-	maxRetries := 5
-	for try := 0; (try < maxRetries) && ctx.Err() == nil; try++ {
-		err := tm.TrySendTunnelData(destinationDevice, &protocol.TunnelData{
-			D: &bep.TunnelData{
-				TunnelId:                 tunnelID,
-				Command:                  bep.TunnelCommand_TUNNEL_COMMAND_OPEN,
-				RemoteServiceName:        &destinationServiceName,
-				TunnelDestinationAddress: destinationAddress,
-			},
-		})
-
-		if err == nil {
-			break
-		} else {
-			// sleep and retry - device might not yet be connected
-			retry := func() bool {
-				timer := time.NewTimer(time.Second)
-				defer timer.Stop()
-
-				tl.Warnf("Failed to send tunnel data to device %v: %v", destinationDevice, err)
-				select {
-				case <-ctx.Done():
-					tl.Debugln("Context done, stopping listener")
-					return false
-				case <-timer.C:
-					tl.Debugln("Retrying to send tunnel data to device", destinationDevice)
-					return true
-				}
-			}()
-
-			if !retry {
-				tl.Debugln("Stopping listener due to context done")
-				conn.Close()
-				return
-			}
-		}
-	}
-
-	var optionalDestinationAddress string
-	if destinationAddress == nil {
-		optionalDestinationAddress = "by-remote"
-	} else {
-		optionalDestinationAddress = *destinationAddress
-	}
-	tm.handleLocalTunnelEndpoint(ctx, tunnelID, conn, destinationDevice, destinationServiceName, optionalDestinationAddress)
-}
-
-func (tm *TunnelManager) handleLocalTunnelEndpoint(ctx context.Context, tunnelID uint64, conn io.ReadWriteCloser, destinationDevice protocol.DeviceID, destinationServiceName string, destinationAddress string) {
-	tl.Infoln("TunnelManager: Handling local tunnel endpoint, tunnel ID:", tunnelID,
-		"destination device:", destinationDevice,
-		"destination service name:", destinationServiceName,
-		"destination address:", destinationAddress)
-
-	defer tm.deregisterLocalTunnelEndpoint(destinationDevice, tunnelID)
-	defer func() {
-		// send close command to the destination device
-		_ = tm.TrySendTunnelData(destinationDevice, &protocol.TunnelData{
-			D: &bep.TunnelData{
-				TunnelId: tunnelID,
-				Command:  bep.TunnelCommand_TUNNEL_COMMAND_CLOSE,
-			},
-		})
-		tl.Infoln("Closed local tunnel endpoint, tunnel ID:", tunnelID)
-	}()
-
-	stop := context.AfterFunc(ctx, func() {
-		tl.Debugln("Stopping local tunnel endpoint, tunnel ID:", tunnelID)
-		conn.Close()
-	})
-
-	defer func() {
-		stop()
-	}()
-
-	destinationDeviceTunnel := utils.DoProtected(
-		tm.deviceConnections,
-		func(dc *tm_deviceConnections) chan<- *protocol.TunnelData {
-			if conn, ok := dc.deviceConnections[destinationDevice]; ok {
-				return conn.tunnelOut // channels are thread-safe
-			}
-			return nil
-		})
-
-	// Example: Forward data to the destination address
-	// This is a placeholder implementation
-	var dataPackageCounter uint32 = 0
-	for {
-		select {
-		case <-ctx.Done():
-			tl.Debugln("Context done for tunnel ID:", tunnelID)
-			return
-		default:
-			// Read data from the connection and forward it
-			buffer := make([]byte, 1024*4)
-			n, err := conn.Read(buffer)
-			if err != nil {
-				tl.Debugf("Error reading from connection: %v", err)
-				return
-			}
-			// manage package counter
-			thisPackageCounter := dataPackageCounter
-			dataPackageCounter++
-
-			// Forward data to the destination
-			// This is a placeholder implementation
-			tl.Debugf("Forwarding data to device %v, %s (%d tunnel id): len: %d, counter: %d\n",
-				destinationDevice, destinationAddress, tunnelID, n, thisPackageCounter)
-
-			// Send the data to the destination device
-			destinationDeviceTunnel <- &protocol.TunnelData{
-				D: &bep.TunnelData{
-					TunnelId:           tunnelID,
-					Command:            bep.TunnelCommand_TUNNEL_COMMAND_DATA,
-					Data:               buffer[:n],
-					DataPackageCounter: &thisPackageCounter,
-				},
-			}
-		}
-	}
-}
-
-func (tm *TunnelManager) registerLocalTunnelEndpoint(deviceID protocol.DeviceID, tunnelID uint64, conn io.ReadWriteCloser) {
-	tl.Debugln("Registering local tunnel endpoint, device ID:", deviceID, "tunnel ID:", tunnelID)
-	tm.endpoints.DoProtected(func(eps *tm_localTunnelEPs) {
-		if eps.localTunnelEndpoints[deviceID] == nil {
-			eps.localTunnelEndpoints[deviceID] = make(map[uint64]*tm_localTunnelEP)
-		}
-		eps.localTunnelEndpoints[deviceID][tunnelID] = &tm_localTunnelEP{
-			endpoint:           conn,
-			nextPackageCounter: atomic.Uint32{},
-		}
-	})
-}
-
-func (tm *TunnelManager) deregisterLocalTunnelEndpoint(deviceID protocol.DeviceID, tunnelID uint64) {
-	tl.Debugln("Deregistering local tunnel endpoint, device ID:", deviceID, "tunnel ID:", tunnelID)
-	tm.endpoints.DoProtected(func(eps *tm_localTunnelEPs) {
-		delete(eps.localTunnelEndpoints[deviceID], tunnelID)
-		if len(eps.localTunnelEndpoints[deviceID]) == 0 {
-			delete(eps.localTunnelEndpoints, deviceID) // Ensure map cleanup
-		}
-	})
-}
-
-func (tm *TunnelManager) RegisterDeviceConnection(device protocol.DeviceID, tunnelIn <-chan *protocol.TunnelData, tunnelOut chan<- *protocol.TunnelData) {
-
-	tl.Debugln("Registering device connection, device ID:", device)
-	var ctxOuter context.Context = nil
-	tm.deviceConnections.DoProtected(func(dc *tm_deviceConnections) {
-		// Check if the device is already registered
-		if old, exists := dc.deviceConnections[device]; exists {
-			old.cancel() // Cancel the old context to stop any existing operations
-			tl.Debugln("Device connection already exists, replacing it:", device)
-		}
-
-		ctx, cancel := context.WithCancel(context.Background())
-		dc.deviceConnections[device] = &DeviceConnection{
-			ctx:              ctx,
-			cancel:           cancel,
-			tunnelOut:        tunnelOut,
-			serviceOfferings: make(map[string]uint32),
-		}
-		ctxOuter = ctx
-	})
-
-	// handle all incoming tunnel data for this device connection
-	go func() {
-		for {
-			select {
-			case <-ctxOuter.Done():
-				tl.Debugln("Context done for device:", device)
-				return
-			case data, ok := <-tunnelIn:
-				if !ok {
-					tl.Debugln("TunnelIn channel closed for device:", device)
-					return
-				}
-				tm.forwardRemoteTunnelData(device, data)
-			}
-		}
-	}()
-
-	go tm.config.DoProtected(func(config *tm_config) {
-		// send tunnel service offerings
-		for _, inboundSerice := range config.configIn {
-			if slices.Contains(inboundSerice.json.AllowedRemoteDeviceIds, device.String()) {
-				tunnelOut <- generateOfferCommand(inboundSerice.json)
-			}
-		}
-	})
-}
-
 func generateOfferCommand(json *bep.TunnelInbound) *protocol.TunnelData {
 	suggestedPort := strconv.FormatUint(uint64(guf.DerefOr(json.SuggestedPort, 0)), 10)
 	return &protocol.TunnelData{
@@ -639,13 +265,6 @@ func generateOfferCommand(json *bep.TunnelInbound) *protocol.TunnelData {
 			TunnelDestinationAddress: &suggestedPort,
 		},
 	}
-}
-
-func (tm *TunnelManager) DeregisterDeviceConnection(device protocol.DeviceID) {
-	tl.Debugln("Deregistering device connection, device ID:", device)
-	tm.deviceConnections.DoProtected(func(dc *tm_deviceConnections) {
-		delete(dc.deviceConnections, device)
-	})
 }
 
 func parseUint32Or(input string, defaultValue uint32) uint32 {
@@ -658,98 +277,8 @@ func parseUint32Or(input string, defaultValue uint32) uint32 {
 	return uint32(value)
 }
 
-func (tm *TunnelManager) forwardRemoteTunnelData(fromDevice protocol.DeviceID, data *protocol.TunnelData) {
-	tl.Debugln("Forwarding remote tunnel data, from device ID:", fromDevice, "command:", data.D.Command)
-	switch data.D.Command {
-	case bep.TunnelCommand_TUNNEL_COMMAND_OPEN:
-		if data.D.RemoteServiceName == nil {
-			tl.Warnf("No remote service name specified")
-			return
-		}
-		service := tm.getEnabledInboundServiceDeviceIdChecked(*data.D.RemoteServiceName, fromDevice)
-		if service == nil {
-			return
-		}
-		var TunnelDestinationAddress string
-		if service.json.LocalDialAddress == "any" {
-			if data.D.TunnelDestinationAddress == nil {
-				tl.Warnf("No tunnel destination specified")
-				return
-			}
-			TunnelDestinationAddress = *data.D.TunnelDestinationAddress
-		} else {
-			TunnelDestinationAddress = service.json.LocalDialAddress
-		}
-
-		addr, err := net.ResolveTCPAddr("tcp", TunnelDestinationAddress)
-		if err != nil {
-			tl.Warnf("Failed to resolve tunnel destination: %v", err)
-			return
-		}
-		conn, err := net.DialTCP("tcp", nil, addr)
-		if err != nil {
-			tl.Warnf("Failed to dial tunnel destination: %v", err)
-			return
-		}
-		tm.registerLocalTunnelEndpoint(fromDevice, data.D.TunnelId, conn)
-		go tm.handleLocalTunnelEndpoint(service.ctx, data.D.TunnelId, conn, fromDevice, *data.D.RemoteServiceName, TunnelDestinationAddress)
-
-	case bep.TunnelCommand_TUNNEL_COMMAND_DATA:
-		tcpConn, ok := utils.DoProtected2(tm.endpoints, func(eps *tm_localTunnelEPs) (*tm_localTunnelEP, bool) {
-			tcpConn, ok := eps.localTunnelEndpoints[fromDevice][data.D.TunnelId]
-			return tcpConn, ok // tm_localTunnelEP is thread-safe
-		})
-		if ok {
-			func() {
-				if data.D.DataPackageCounter != nil {
-					expectedDataCounter := tcpConn.nextPackageCounter.Load()
-					if expectedDataCounter != *data.D.DataPackageCounter {
-						tl.Warnf("close connection due to data counter missmatch (expected %d, got %d)",
-							expectedDataCounter, *data.D.DataPackageCounter)
-
-						// close connection as we have no way to recover from this
-						tcpConn.endpoint.Close()
-						return
-					}
-				}
-
-				tcpConn.nextPackageCounter.Add(1)
-				_, err := tcpConn.endpoint.Write(data.D.Data)
-				if err != nil {
-					tl.Warnf("Failed to forward tunnel data: %v", err)
-				}
-			}()
-		} else {
-			tl.Infof("Data: No TCP connection found for device %v, TunnelID: %d", fromDevice, data.D.TunnelId)
-		}
-	case bep.TunnelCommand_TUNNEL_COMMAND_CLOSE:
-		tcpConn, ok := utils.DoProtected2(tm.endpoints, func(eps *tm_localTunnelEPs) (*tm_localTunnelEP, bool) {
-			tcpConn, ok := eps.localTunnelEndpoints[fromDevice][data.D.TunnelId]
-			return tcpConn, ok // tm_localTunnelEP is thread-safe
-		})
-		if ok {
-			tcpConn.endpoint.Close()
-		} else {
-			tl.Infof("Close: No TCP connection found for device %v, TunnelID: %d", fromDevice, data.D.TunnelId)
-		}
-	case bep.TunnelCommand_TUNNEL_COMMAND_OFFER:
-		tm.deviceConnections.DoProtected(func(dc *tm_deviceConnections) {
-			if conn, ok := dc.deviceConnections[fromDevice]; ok {
-				conn.serviceOfferings[*data.D.RemoteServiceName] = parseUint32Or(guf.DerefOrDefault(data.D.TunnelDestinationAddress), 0)
-			}
-		})
-	default: // unknown command
-		tl.Warnf("Unknown tunnel command: %v", data.D.Command)
-	}
-}
-
 func (tm *TunnelManager) generateTunnelID() uint64 {
-	id, err := tm.idGenerator.Gen()
-	if err != nil {
-		panic(err)
-	}
-	tl.Debugln("Generated tunnel ID:", id)
-	return uint64(id)
+	return tm.localListeners.generateTunnelID()
 }
 
 func getRandomFreePort() int {
@@ -810,29 +339,29 @@ func (m *TunnelManager) Status() []map[string]interface{} {
 
 	offerings := make(map[string]map[string]map[string]interface{})
 
-	m.deviceConnections.DoProtected(func(dc *tm_deviceConnections) {
-		for deviceID, connection := range dc.deviceConnections {
-			if offerings[deviceID.String()] == nil {
-				offerings[deviceID.String()] = make(map[string]map[string]interface{})
-			}
-			for serviceName, suggestedPort := range connection.serviceOfferings {
-				info := map[string]interface{}{
-					"localListenAddress": "127.0.0.1:" + strconv.Itoa(int(suggestedPort)),
-					"remoteDeviceID":     deviceID.String(),
-					"serviceID":          serviceName,
-					"offered":            true,
-					"type":               "outbound",
-					"uiID": getUiTunnelDescriptorOutbound(&bep.TunnelOutbound{
-						LocalListenAddress: "127.0.0.1:" + strconv.Itoa(int(suggestedPort)),
-						RemoteDeviceId:     deviceID.String(),
-						RemoteServiceName:  serviceName,
-						RemoteAddress:      nil,
-					}),
-				}
-				offerings[deviceID.String()][serviceName] = info
-			}
+	offeringsIntern := m.deviceConnections.GetCopyOfAllServiceOfferings()
+
+	for deviceID, deviceOffers := range offeringsIntern {
+		if offerings[deviceID.String()] == nil {
+			offerings[deviceID.String()] = make(map[string]map[string]interface{})
 		}
-	})
+		for serviceName, suggestedPort := range deviceOffers {
+			info := map[string]interface{}{
+				"localListenAddress": "127.0.0.1:" + strconv.Itoa(int(suggestedPort)),
+				"remoteDeviceID":     deviceID.String(),
+				"serviceID":          serviceName,
+				"offered":            true,
+				"type":               "outbound",
+				"uiID": getUiTunnelDescriptorOutbound(&bep.TunnelOutbound{
+					LocalListenAddress: "127.0.0.1:" + strconv.Itoa(int(suggestedPort)),
+					RemoteDeviceId:     deviceID.String(),
+					RemoteServiceName:  serviceName,
+					RemoteAddress:      nil,
+				}),
+			}
+			offerings[deviceID.String()][serviceName] = info
+		}
+	}
 
 	status := utils.DoProtected(m.config, func(config *tm_config) []map[string]interface{} {
 		status := make([]map[string]interface{}, 0, len(config.configIn)+len(config.configOut))
@@ -1031,7 +560,7 @@ func (tm *TunnelManager) reloadConfig() error {
 	}
 
 	tm.updateInConfig(config.TunnelsIn)
-	tm.updateOutConfig(config.TunnelsOut)
+	tm.localListeners.updateOutConfig(config.TunnelsOut)
 
 	return nil
 }
@@ -1072,7 +601,7 @@ func (tm *TunnelManager) ReloadConfig() error {
 	}
 
 	tm.updateInConfig(config.TunnelsIn)
-	tm.updateOutConfig(config.TunnelsOut)
+	tm.localListeners.updateOutConfig(config.TunnelsOut)
 
 	return nil
 }
