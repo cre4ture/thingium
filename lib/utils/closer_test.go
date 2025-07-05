@@ -33,14 +33,17 @@ func TestCloser_inverseClosingOrder(t *testing.T) {
 	iter := 1
 	closed1 := 0
 	closed2 := 0
+
 	c.RegisterCleanupFunc(func() error {
 		closed1 = iter
 		iter++
+
 		return nil
 	})
 	c.RegisterCloseable(&closingFunc{func() error {
 		closed2 = iter
 		iter++
+
 		return nil
 	}})
 
@@ -59,13 +62,17 @@ func TestCloser_unregistering(t *testing.T) {
 	c.RegisterCleanupFunc(func() error {
 		closed1 = iter
 		iter++
+
 		return nil
 	})
+
 	closable2 := &closingFunc{func() error {
 		closed2 = iter
 		iter++
+
 		return nil
 	}}
+
 	c.RegisterCloseable(closable2)
 
 	c.UnregisterCloseable(closable2)
@@ -85,13 +92,17 @@ func TestCloser_unregisterAll(t *testing.T) {
 	c.RegisterCleanupFunc(func() error {
 		closed1 = iter
 		iter++
+
 		return nil
 	})
+
 	closable2 := &closingFunc{func() error {
 		closed2 = iter
 		iter++
+
 		return nil
 	}}
+
 	c.RegisterCloseable(closable2)
 
 	c.UnregisterAll()
