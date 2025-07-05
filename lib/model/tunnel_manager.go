@@ -33,12 +33,12 @@ import (
 var tl = logger.DefaultLogger.NewFacility("tunnels", "the tunnel manager stuff")
 
 var (
-	ErrTunnelAlreadyExists     = errors.New("tunnel already exists")
-	ErrTunnelNotFound         = errors.New("tunnel not found")
-	ErrInboundTunnelNotFound  = errors.New("inbound tunnel not found")
-	ErrDeviceIDAlreadyExists  = errors.New("allowed device ID already exists")
-	ErrDeviceIDNotFound       = errors.New("disallowed device ID not found")
-	ErrInvalidAction          = errors.New("invalid action")
+	ErrTunnelAlreadyExists   = errors.New("tunnel already exists")
+	ErrTunnelNotFound        = errors.New("tunnel not found")
+	ErrInboundTunnelNotFound = errors.New("inbound tunnel not found")
+	ErrDeviceIDAlreadyExists = errors.New("allowed device ID already exists")
+	ErrDeviceIDNotFound      = errors.New("disallowed device ID not found")
+	ErrInvalidAction         = errors.New("invalid action")
 )
 
 func hashDescriptor(descriptor string) string {
