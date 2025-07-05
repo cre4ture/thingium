@@ -720,7 +720,7 @@ jobs:
           RCLONE_CONFIG_OBJSTORE_REGION: ${{ secrets.S3_REGION }}
           RCLONE_CONFIG_OBJSTORE_ACL: public-read
         with:
-          args: sync -v packages objstore:nightly
+          args: sync -v --no-update-modtime packages objstore:nightly
 
   #
   # Push release artifacts to Spaces
@@ -776,7 +776,7 @@ jobs:
           RCLONE_CONFIG_OBJSTORE_REGION: ${{ secrets.S3_REGION }}
           RCLONE_CONFIG_OBJSTORE_ACL: public-read
         with:
-          args: sync -v packages objstore:release/${{ env.VERSION }}
+          args: sync -v --no-update-modtime packages objstore:release/${{ env.VERSION }}
 
       - name: Push to object store (latest)
         uses: docker://docker.io/rclone/rclone:latest
@@ -789,9 +789,9 @@ jobs:
           RCLONE_CONFIG_OBJSTORE_REGION: ${{ secrets.S3_REGION }}
           RCLONE_CONFIG_OBJSTORE_ACL: public-read
         with:
-          args: sync -v objstore:release/${{ env.VERSION }} objstore:release/latest
+          args: sync -v --no-update-modtime objstore:release/${{ env.VERSION }} objstore:release/latest
 
-      - name: Create GitHub release and push binaries
+      - name: Create GitHub releases and push binaries
         run: |
           maybePrerelease=""
           if [[ $VERSION == *-* ]]; then
@@ -799,19 +799,33 @@ jobs:
           fi
           export GH_PROMPT_DISABLED=1
           if ! gh release view --json name "$VERSION" >/dev/null 2>&1 ; then
-            gh release create \
-              "$VERSION" \
+            gh release create "$VERSION" \
               $maybePrerelease \
               --title "$VERSION" \
               --notes-from-tag
           fi
-          gh release upload "$VERSION" \
+          gh release upload --clobber "$VERSION" \
             packages/*.asc packages/*.json \
             packages/syncthing-*.tar.gz \
             packages/syncthing-*.zip \
-            packages/syncthing*.deb
+            packages/syncthing_*.deb
+
+          PKGS=$(pwd)/packages
+          cd /tmp # gh will not release for repo x while inside repo y
+          for repo in relaysrv discosrv ; do
+            export GH_REPO="syncthing/$repo"
+            if ! gh release view --json name "$VERSION" >/dev/null 2>&1 ; then
+              gh release create "$VERSION" \
+                $maybePrerelease \
+                --title "$VERSION" \
+                --notes "https://github.com/syncthing/syncthing/releases/tag/$VERSION"
+            fi
+            gh release upload --clobber "$VERSION" \
+              $PKGS/*.asc \
+              $PKGS/*${repo}*
+          done
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.ACTIONS_GITHUB_TOKEN }}
 
   #
   # Push Debian/APT archive
@@ -889,7 +903,7 @@ jobs:
           RCLONE_CONFIG_OBJSTORE_REGION: ${{ secrets.S3_REGION }}
           RCLONE_CONFIG_OBJSTORE_ACL: public-read
         with:
-          args: sync -v dists objstore:apt/dists
+          args: sync -v --no-update-modtime dists objstore:apt/dists
 
   #
   # Build and push to Docker Hub
