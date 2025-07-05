@@ -201,7 +201,7 @@ func (tm *TunnelManager) Serve(ctx context.Context) error {
 func (m *TunnelManager) AddOutboundTunnel(localListenAddress string, remoteDeviceID protocol.DeviceID, remoteServiceName string) error {
 	err := utils.DoProtected(m.config, func(config *tm_config) error {
 		if localListenAddress == "127.0.0.1:0" {
-			suggestedPort := getRandomFreePort()
+			suggestedPort := GetRandomFreePort()
 			localListenAddress = fmt.Sprintf("127.0.0.1:%d", suggestedPort)
 		}
 
@@ -442,7 +442,7 @@ func (tm *TunnelManager) generateTunnelID() uint64 {
 	return tm.localListeners.generateTunnelID()
 }
 
-func getRandomFreePort() int {
+func GetRandomFreePort() int {
 	a, err := net.ResolveTCPAddr("tcp", "localhost:0")
 	if err != nil {
 		tl.Warnf("Failed to resolve TCP address: %v", err)

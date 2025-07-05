@@ -8,6 +8,7 @@ package model
 
 import (
 	"context"
+	"fmt"
 	"net"
 	"os"
 	"testing"
@@ -144,7 +145,7 @@ func TestTunnelManager_HandleOpenRemoteCommand(t *testing.T) {
 	)
 
 	// Mock device ID and addresses
-	destinationAddress := "127.0.0.1:64780"
+	destinationAddress := fmt.Sprintf("127.0.0.1:%d", GetRandomFreePort())
 
 	// Create a channel to capture the TunnelData sent to the device
 	tunnelDataChanIn := make(chan *protocol.TunnelData, 1)
@@ -228,7 +229,7 @@ func TestTunnelManager_HandleOpenRemoteCommand_NamedService(t *testing.T) {
 
 	clientDeviceID := repeatedDeviceID(0x33)
 	// Mock device ID and addresses
-	localDestinationAddress := "127.0.0.1:64780"
+	localDestinationAddress := fmt.Sprintf("127.0.0.1:%d", GetRandomFreePort())
 	localServiceName := "http"
 
 	// Create a new TunnelManager
@@ -327,7 +328,7 @@ func TestTunnelManager_HandleOpenRemoteCommand_DisallowedClient(t *testing.T) {
 	clientDeviceID := repeatedDeviceID(0x33)
 	disallowedClientDeviceID := repeatedDeviceID(0x44)
 	// Mock device ID and addresses
-	localDestinationAddress := "127.0.0.1:64780"
+	localDestinationAddress := fmt.Sprintf("127.0.0.1:%d", GetRandomFreePort())
 	localServiceName := "http"
 
 	// Create a new TunnelManager
@@ -380,7 +381,7 @@ func TestTunnelManagerConfigUpdate_addAllowedDevice_removeAllowedDevice(t *testi
 	clientDeviceID1 := repeatedDeviceID(0x33)
 	clientDeviceID2 := repeatedDeviceID(0x44)
 	// Mock device ID and addresses
-	localDestinationAddress := "127.0.0.1:64780"
+	localDestinationAddress := fmt.Sprintf("127.0.0.1:%d", GetRandomFreePort())
 	localServiceName := "http"
 
 	// reserve a temporary file:
