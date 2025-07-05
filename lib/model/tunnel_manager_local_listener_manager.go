@@ -159,7 +159,6 @@ func (tm *LocalListenerManager) startListeners() {
 
 func (tm *LocalListenerManager) updateOutConfig(newOutTunnels []*bep.TunnelOutbound) {
 	tm.sharedConfig.DoProtected(func(config *tm_config) {
-
 		// Generate a new map of outbound tunnels
 		newConfigOut := make(map[string]*tunnelOutConfig)
 		for _, tunnel := range newOutTunnels {

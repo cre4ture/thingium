@@ -11,15 +11,16 @@ import (
 	"testing"
 
 	"github.com/alecthomas/assert/v2"
+	"github.com/stretchr/testify/require"
 )
 
 func TestHashIsAboveRangeStart(t *testing.T) {
 
 	testFunc := func(t *testing.T, hash string, start string, expected bool) {
 		hashbytes, err := hex.DecodeString(hash)
-		assert.NoError(t, err)
+		require.NoError(t, err)
 		start_bytes, err := ShardRangeParseStartHex(start)
-		assert.NoError(t, err)
+		require.NoError(t, err)
 		assert.Equal(t, expected, HashIsBelowStart(hashbytes, start_bytes))
 	}
 
@@ -47,9 +48,9 @@ func TestHashIsBelowRangeEnd(t *testing.T) {
 
 	testFunc := func(t *testing.T, hash string, end string, expected bool) {
 		hashbytes, err := hex.DecodeString(hash)
-		assert.NoError(t, err)
+		require.NoError(t, err)
 		end_bytes, err := ShardRangeParseEndHex(end)
-		assert.NoError(t, err)
+		require.NoError(t, err)
 		assert.Equal(t, expected, HashIsAboveEnd(hashbytes, end_bytes))
 	}
 
@@ -76,7 +77,7 @@ func TestShardExcludeAll(t *testing.T) {
 
 	testFunc := func(t *testing.T, hash string, expected bool) {
 		hashbytes, err := hex.DecodeString(hash)
-		assert.NoError(t, err)
+		require.NoError(t, err)
 		assert.Equal(t, expected, se.MatchHash(hashbytes))
 	}
 
@@ -94,7 +95,7 @@ func TestShardExcludeFirstAndLast16th(t *testing.T) {
 
 	testFunc := func(t *testing.T, hash string, expected bool) {
 		hashbytes, err := hex.DecodeString(hash)
-		assert.NoError(t, err)
+		require.NoError(t, err)
 		assert.Equal(t, expected, se.MatchHash(hashbytes))
 	}
 

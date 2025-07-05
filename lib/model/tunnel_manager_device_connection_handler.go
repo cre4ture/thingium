@@ -196,7 +196,6 @@ func (tm *TunnelManagerDeviceConnectionHandler) getEnabledInboundServiceDeviceId
 }
 
 func (tm *TunnelManagerDeviceConnectionHandler) getAndLockTunnelEP(tunnelId uint64) (*tm_localTunnelEP, bool) {
-
 	// first, check if the inUseMap already has the tunnelId
 	if tcpConn, exists := tm.inUseMap[tunnelId]; exists {
 		return tcpConn, true // already locked, return it

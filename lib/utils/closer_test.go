@@ -55,6 +55,7 @@ func TestCloser_unregistering(t *testing.T) {
 	iter := 1
 	closed1 := 0
 	closed2 := 0
+
 	c.RegisterCleanupFunc(func() error {
 		closed1 = iter
 		iter++
@@ -80,6 +81,7 @@ func TestCloser_unregisterAll(t *testing.T) {
 	iter := 1
 	closed1 := 0
 	closed2 := 0
+
 	c.RegisterCleanupFunc(func() error {
 		closed1 = iter
 		iter++

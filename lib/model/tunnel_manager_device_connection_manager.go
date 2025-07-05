@@ -80,7 +80,6 @@ func (m *TunnelManagerDeviceConnectionsManager) GetCopyOfAllServiceOfferings() m
 }
 
 func (tm *TunnelManagerDeviceConnectionsManager) RegisterDeviceConnection(device protocol.DeviceID, tunnelIn <-chan *protocol.TunnelData, tunnelOut chan<- *protocol.TunnelData) {
-
 	tl.Debugln("Registering device connection, device ID:", device)
 	var myConnectionHandler *TunnelManagerDeviceConnectionHandler = nil
 	connectionContext, cancel := context.WithCancel(context.Background()) // Create a cancellable context for the connection

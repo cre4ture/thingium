@@ -140,12 +140,11 @@ func NewTunnelManagerFromConfig(config *bep.TunnelConfig, configFile string) *Tu
 	if config == nil {
 		panic("TunnelManager config is nil")
 	}
-	sharedConfig :=
-		utils.NewProtected(&tm_config{
-			configIn:       make(map[string]*tunnelInConfig),
-			configOut:      make(map[string]*tunnelOutConfig),
-			serviceRunning: false,
-		})
+	sharedConfig := utils.NewProtected(&tm_config{
+		configIn:       make(map[string]*tunnelInConfig),
+		configOut:      make(map[string]*tunnelOutConfig),
+		serviceRunning: false,
+	})
 
 	localEndpointMgr := NewTunnelManagerEndpointManager()
 	sharedDeviceConnections := NewTunnelManagerDeviceConnectionsManager(
@@ -309,7 +308,6 @@ func getRandomFreePort() int {
 }
 
 func (m *TunnelManager) AddOutboundTunnel(localListenAddress string, remoteDeviceID protocol.DeviceID, remoteServiceName string) error {
-
 	err := utils.DoProtected(m.config, func(config *tm_config) error {
 		if localListenAddress == "127.0.0.1:0" {
 			suggestedPort := getRandomFreePort()
@@ -341,7 +339,6 @@ func (m *TunnelManager) AddOutboundTunnel(localListenAddress string, remoteDevic
 
 		return nil
 	})
-
 	if err != nil {
 		return err
 	}
@@ -351,7 +348,6 @@ func (m *TunnelManager) AddOutboundTunnel(localListenAddress string, remoteDevic
 
 // Status returns information about active tunnels
 func (m *TunnelManager) Status() []map[string]interface{} {
-
 	offerings := make(map[string]map[string]map[string]interface{})
 
 	offeringsIntern := m.deviceConnections.GetCopyOfAllServiceOfferings()
@@ -463,7 +459,7 @@ func saveTunnelConfig(path string, config *bep.TunnelConfig) error {
 
 	// Create directory if it doesn't exist
 	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0755); err != nil {
+	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return fmt.Errorf("failed to create directory: %w", err)
 	}
 
@@ -609,7 +605,6 @@ func (tm *tm_config) getOutboundTunnelsConfig() []*bep.TunnelOutbound {
 
 // SaveFullConfig saves the current configuration (both inbound and outbound tunnels) to the config file.
 func (tm *tm_config) saveFullConfig_no_lock(filename string) error {
-
 	config := &bep.TunnelConfig{
 		TunnelsIn:  tm.getInboundTunnelsConfig(),
 		TunnelsOut: tm.getOutboundTunnelsConfig(),

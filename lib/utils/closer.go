@@ -50,13 +50,16 @@ func NewCloser() Closer {
 func (c *closer) Close() error {
 	// close in inverse order of registration
 	err := error(nil)
+
 	for i := len(c.registeredCloseables) - 1; i >= 0; i-- {
 		currErr := c.registeredCloseables[i].Close()
 		if err == nil {
 			err = currErr
 		}
 	}
+
 	c.registeredCloseables = []io.Closer{}
+
 	return err
 }
 

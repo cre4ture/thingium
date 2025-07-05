@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"github.com/syncthing/syncthing/internal/gen/bep"
 
 	"github.com/syncthing/syncthing/lib/protocol"
@@ -78,7 +79,7 @@ func TestTunnelManager_ServeLocalListener(t *testing.T) {
 			break
 		}
 	}
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
 	// Wait for the TunnelData to be sent
 	var tunnelID uint64
@@ -95,7 +96,7 @@ func TestTunnelManager_ServeLocalListener(t *testing.T) {
 
 	msg := []byte("hello")
 	n, err := conn.Write(msg)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	assert.Len(t, msg, n)
 
 	// Wait for the TunnelData to be sent
@@ -152,7 +153,7 @@ func TestTunnelManager_HandleOpenRemoteCommand(t *testing.T) {
 
 	// Start a listener on the destination address
 	listener, err := net.Listen("tcp", destinationAddress)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	defer listener.Close()
 
 	// Send an open command to the TunnelManager
@@ -169,12 +170,12 @@ func TestTunnelManager_HandleOpenRemoteCommand(t *testing.T) {
 
 	// Wait for the TunnelManager to connect to the listener
 	conn, err := listener.Accept()
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
 	// Verify the connection
 	msg_from_server := []byte("hello from server")
 	_, err = conn.Write(msg_from_server)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
 	// Wait for the TunnelData to be sent
 
@@ -206,7 +207,7 @@ loop1:
 
 	buf := make([]byte, 1024)
 	n, err := conn.Read(buf)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	assert.Equal(t, msg_from_client, buf[:n])
 
 	conn.Close()
@@ -253,7 +254,7 @@ func TestTunnelManager_HandleOpenRemoteCommand_NamedService(t *testing.T) {
 
 	// Start a listener on the destination address
 	listener, err := net.Listen("tcp", localDestinationAddress)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	defer listener.Close()
 
 	// Send an open command to the TunnelManager
@@ -268,12 +269,12 @@ func TestTunnelManager_HandleOpenRemoteCommand_NamedService(t *testing.T) {
 
 	// Wait for the TunnelManager to connect to the listener
 	conn, err := listener.Accept()
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
 	// Verify the connection
 	msg_from_server := []byte("hello from server")
 	_, err = conn.Write(msg_from_server)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
 	// Wait for the TunnelData to be sent
 loop1:
@@ -304,7 +305,7 @@ loop1:
 
 	buf := make([]byte, 1024)
 	n, err := conn.Read(buf)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	assert.Equal(t, msg_from_client, buf[:n])
 
 	conn.Close()
@@ -352,7 +353,7 @@ func TestTunnelManager_HandleOpenRemoteCommand_DisallowedClient(t *testing.T) {
 
 	// Start a listener on the destination address
 	listener, err := net.Listen("tcp", localDestinationAddress)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	defer listener.Close()
 
 	// Send an open command to the TunnelManager
@@ -370,7 +371,7 @@ func TestTunnelManager_HandleOpenRemoteCommand_DisallowedClient(t *testing.T) {
 	if !ok {
 		t.Fatal("listener is not a *net.TCPListener")
 	}
-	assert.NoError(t, tcpListener.SetDeadline(time.Now().Add(300*time.Millisecond)))
+	require.NoError(t, tcpListener.SetDeadline(time.Now().Add(300*time.Millisecond)))
 	_, err = listener.Accept()
 	assert.ErrorIs(t, err, os.ErrDeadlineExceeded)
 }
@@ -415,7 +416,7 @@ func TestTunnelManagerConfigUpdate_addAllowedDevice_removeAllowedDevice(t *testi
 			"deviceID": clientDeviceID1.String(),
 		},
 	)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
 	status = tm.Status()
 
@@ -431,7 +432,7 @@ func TestTunnelManagerConfigUpdate_addAllowedDevice_removeAllowedDevice(t *testi
 			"deviceID": clientDeviceID2.String(),
 		},
 	)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
 	status = tm.Status()
 
@@ -448,7 +449,7 @@ func TestTunnelManagerConfigUpdate_addAllowedDevice_removeAllowedDevice(t *testi
 			"deviceID": clientDeviceID2.String(),
 		},
 	)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
 	status = tm.Status()
 
@@ -464,7 +465,7 @@ func TestTunnelManagerConfigUpdate_addAllowedDevice_removeAllowedDevice(t *testi
 			"deviceID": clientDeviceID1.String(),
 		},
 	)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
 	status = tm.Status()
 
