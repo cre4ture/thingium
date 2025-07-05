@@ -445,6 +445,27 @@ func (m *TunnelManager) Status() []map[string]interface{} {
 	return status
 }
 
+func (tm *TunnelManager) ReloadConfig() error {
+	config, err := loadTunnelConfig(tm.configFile)
+	if err != nil {
+		return fmt.Errorf("failed to reload tunnel config: %w", err)
+	}
+
+	tm.updateInConfig(config.TunnelsIn)
+	tm.localListeners.updateOutConfig(config.TunnelsOut)
+
+	return nil
+}
+
+// setter for TunnelConfig.TunnelsIn/Out.Enabled (by id "inbound/outbound-idx") which also saves the config to file
+func (tm *TunnelManager) ModifyTunnel(id string, action string, params map[string]string) error {
+	if err := tm.modifyAndSaveConfig(id, action, params); err != nil {
+		return err
+	}
+
+	return tm.reloadConfig()
+}
+
 func loadTunnelConfig(path string) (*bep.TunnelConfig, error) {
 	tl.Debugln("Loading tunnel config from file:", path)
 	file, err := os.Open(path)
@@ -468,7 +489,8 @@ func saveTunnelConfig(path string, config *bep.TunnelConfig) error {
 
 	// Create directory if it doesn't exist
 	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	err := os.MkdirAll(dir, 0o755)
+	if err != nil {
 		return fmt.Errorf("failed to create directory: %w", err)
 	}
 
@@ -508,15 +530,6 @@ func saveTunnelConfig(path string, config *bep.TunnelConfig) error {
 	success = true
 	tl.Debugln("Saved tunnel config:", config)
 	return nil
-}
-
-// setter for TunnelConfig.TunnelsIn/Out.Enabled (by id "inbound/outbound-idx") which also saves the config to file
-func (tm *TunnelManager) ModifyTunnel(id string, action string, params map[string]string) error {
-	if err := tm.modifyAndSaveConfig(id, action, params); err != nil {
-		return err
-	}
-
-	return tm.reloadConfig()
 }
 
 func (tm *TunnelManager) modifyAndSaveConfig(id string, action string, params map[string]string) error {
@@ -620,16 +633,4 @@ func (tm *tm_config) saveFullConfig_no_lock(filename string) error {
 	}
 
 	return saveTunnelConfig(filename, config)
-}
-
-func (tm *TunnelManager) ReloadConfig() error {
-	config, err := loadTunnelConfig(tm.configFile)
-	if err != nil {
-		return fmt.Errorf("failed to reload tunnel config: %w", err)
-	}
-
-	tm.updateInConfig(config.TunnelsIn)
-	tm.localListeners.updateOutConfig(config.TunnelsOut)
-
-	return nil
 }
