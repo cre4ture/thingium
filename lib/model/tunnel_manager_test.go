@@ -55,7 +55,12 @@ func TestTunnelManager_ServeLocalListener(t *testing.T) {
 	defer cancel()
 
 	// Start the listener
-	go tm.Serve(ctx)
+	go func() {
+		err := tm.Serve(ctx)
+		if err != nil {
+			t.Errorf("Serve failed: %v", err)
+		}
+	}()
 
 	// Create a channel to capture the TunnelData sent to the device
 	tunnelDataChan := make(chan *protocol.TunnelData, 1)
@@ -89,7 +94,9 @@ func TestTunnelManager_ServeLocalListener(t *testing.T) {
 	}
 
 	msg := []byte("hello")
-	conn.Write(msg)
+	n, err := conn.Write(msg)
+	assert.NoError(t, err)
+	assert.Len(t, msg, n)
 
 	// Wait for the TunnelData to be sent
 	select {
@@ -359,7 +366,11 @@ func TestTunnelManager_HandleOpenRemoteCommand_DisallowedClient(t *testing.T) {
 	}
 
 	// Wait for the TunnelManager to connect to the listener
-	listener.(*net.TCPListener).SetDeadline(time.Now().Add(300 * time.Millisecond))
+	tcpListener, ok := listener.(*net.TCPListener)
+	if !ok {
+		t.Fatal("listener is not a *net.TCPListener")
+	}
+	assert.NoError(t, tcpListener.SetDeadline(time.Now().Add(300*time.Millisecond)))
 	_, err = listener.Accept()
 	assert.ErrorIs(t, err, os.ErrDeadlineExceeded)
 }

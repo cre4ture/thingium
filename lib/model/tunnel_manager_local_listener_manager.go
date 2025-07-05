@@ -208,6 +208,13 @@ func (tm *LocalListenerManager) serveOutboundTunnel(tunnel *tunnelOutConfig) {
 	if err != nil {
 		tl.Warnln("failed to parse device ID:", err)
 	}
-	go tm.ServeListener(tunnel.ctx, tunnel.json.LocalListenAddress,
-		device, tunnel.json.RemoteServiceName, tunnel.json.RemoteAddress)
+	go func() {
+		err := tm.ServeListener(tunnel.ctx, tunnel.json.LocalListenAddress,
+			device, tunnel.json.RemoteServiceName, tunnel.json.RemoteAddress)
+		if err != nil {
+			tl.Warnf("Failed to serve listener for tunnel %s: %v", tunnel.descriptor, err)
+		} else {
+			tl.Debugln("Listener for tunnel", tunnel.descriptor, "stopped")
+		}
+	}()
 }

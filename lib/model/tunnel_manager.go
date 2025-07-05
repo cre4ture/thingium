@@ -124,14 +124,6 @@ type TunnelManager struct {
 	localListeners    *LocalListenerManager
 }
 
-func (m *TunnelManager) TunnelStatus() []map[string]interface{} {
-	return m.Status()
-}
-
-func (m *TunnelManager) AddTunnelOutbound(localListenAddress string, remoteDeviceID protocol.DeviceID, remoteServiceName string) error {
-	return m.AddOutboundTunnel(localListenAddress, remoteDeviceID, remoteServiceName)
-}
-
 func NewTunnelManager(configFile string) *TunnelManager {
 	// Replace the filename with "tunnels.json"
 	configFile = fmt.Sprintf("%s/tunnels.json", filepath.Dir(configFile))
@@ -176,6 +168,14 @@ func NewTunnelManagerFromConfig(config *bep.TunnelConfig, configFile string) *Tu
 	return tm
 }
 
+func (m *TunnelManager) TunnelStatus() []map[string]interface{} {
+	return m.Status()
+}
+
+func (m *TunnelManager) AddTunnelOutbound(localListenAddress string, remoteDeviceID protocol.DeviceID, remoteServiceName string) error {
+	return m.AddOutboundTunnel(localListenAddress, remoteDeviceID, remoteServiceName)
+}
+
 func (tm *TunnelManager) updateInConfig(newInTunnels []*bep.TunnelInbound) {
 	tm.config.DoProtected(func(config *tm_config) {
 		// Generate a new map of inbound tunnels
@@ -200,7 +200,9 @@ func (tm *TunnelManager) updateInConfig(newInTunnels []*bep.TunnelInbound) {
 							ctx:        ctx,
 							cancel:     cancel,
 						}
-						go tm.deviceConnections.TrySendTunnelData(deviceID, generateOfferCommand(newTun))
+						go func() {
+							_ = tm.deviceConnections.TrySendTunnelData(deviceID, generateOfferCommand(newTun))
+						}()
 					} else {
 						allowedClients[deviceIDStr] = existingTun.allowedClients[deviceIDStr]
 					}
@@ -295,7 +297,12 @@ func getRandomFreePort() int {
 		var l *net.TCPListener
 		if l, err = net.ListenTCP("tcp", a); err == nil {
 			defer l.Close()
-			return l.Addr().(*net.TCPAddr).Port
+			if addr, ok := l.Addr().(*net.TCPAddr); ok {
+				tl.Debugf("Found free port: %d", addr.Port)
+				return addr.Port
+			} else {
+				tl.Warnf("Failed to get TCP address from listener: %v", err)
+			}
 		}
 	}
 	panic("no free ports")
@@ -339,8 +346,7 @@ func (m *TunnelManager) AddOutboundTunnel(localListenAddress string, remoteDevic
 		return err
 	}
 
-	m.reloadConfig()
-	return nil
+	return m.reloadConfig()
 }
 
 // Status returns information about active tunnels
@@ -417,8 +423,17 @@ func (m *TunnelManager) Status() []map[string]interface{} {
 
 	// sort by uiID
 	slices.SortFunc(status, func(a map[string]interface{}, b map[string]interface{}) int {
-		aID := a["uiID"].(string)
-		bID := b["uiID"].(string)
+		aID, aOk := a["uiID"].(string)
+		bID, bOk := b["uiID"].(string)
+		if !aOk && !bOk {
+			return 0
+		}
+		if !aOk {
+			return -1
+		}
+		if !bOk {
+			return 1
+		}
 		return strings.Compare(aID, bID)
 	})
 

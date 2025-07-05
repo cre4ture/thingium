@@ -11,11 +11,14 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"github.com/syncthing/syncthing/lib/utils"
 )
 
-var ErrTest1 = errors.New("test1")
-var ErrTest2 = errors.New("test2")
+var (
+	ErrTest1 = errors.New("test1")
+	ErrTest2 = errors.New("test2")
+)
 
 type closingFunc struct {
 	closable func() error
@@ -41,10 +44,10 @@ func TestCloser_inverseClosingOrder(t *testing.T) {
 		return nil
 	}})
 
-	assert.NoError(t, c.Close())
+	require.NoError(t, c.Close())
 
-	assert.Equal(t, closed2, 1)
-	assert.Equal(t, closed1, 2)
+	assert.Equal(t, 1, closed2)
+	assert.Equal(t, 2, closed1)
 }
 
 func TestCloser_unregistering(t *testing.T) {
@@ -66,10 +69,10 @@ func TestCloser_unregistering(t *testing.T) {
 
 	c.UnregisterCloseable(closable2)
 
-	assert.NoError(t, c.Close())
+	require.NoError(t, c.Close())
 
-	assert.Equal(t, closed2, 0)
-	assert.Equal(t, closed1, 1)
+	assert.Equal(t, 0, closed2)
+	assert.Equal(t, 1, closed1)
 }
 
 func TestCloser_unregisterAll(t *testing.T) {
@@ -91,10 +94,10 @@ func TestCloser_unregisterAll(t *testing.T) {
 
 	c.UnregisterAll()
 
-	assert.NoError(t, c.Close())
+	require.NoError(t, c.Close())
 
-	assert.Equal(t, closed2, 0)
-	assert.Equal(t, closed1, 0)
+	assert.Equal(t, 0, closed2)
+	assert.Equal(t, 0, closed1)
 }
 
 func TestCloser_errorForwarding1(t *testing.T) {
