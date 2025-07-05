@@ -446,25 +446,24 @@ func getRandomFreePort() int {
 	a, err := net.ResolveTCPAddr("tcp", "localhost:0")
 	if err != nil {
 		tl.Warnf("Failed to resolve TCP address: %v", err)
-		return 0
+		panic("no free ports")
 	}
 
 	l, err := net.ListenTCP("tcp", a)
 	if err != nil {
 		tl.Warnf("Failed to listen on TCP address: %v", err)
-		return 0
+		panic("no free ports")
 	}
 	defer l.Close()
 
 	addr, ok := l.Addr().(*net.TCPAddr)
 	if !ok {
 		tl.Warnf("Failed to get TCP address from listener")
-		return 0
+		panic("no free ports")
 	}
 
 	tl.Debugf("Found free port: %d", addr.Port)
 	return addr.Port
-	panic("no free ports")
 }
 
 func loadTunnelConfig(path string) (*bep.TunnelConfig, error) {
