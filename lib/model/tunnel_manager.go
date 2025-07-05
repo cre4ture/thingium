@@ -292,18 +292,27 @@ func (tm *TunnelManager) generateTunnelID() uint64 {
 }
 
 func getRandomFreePort() int {
-	if a, err := net.ResolveTCPAddr("tcp", "localhost:0"); err == nil {
-		var l *net.TCPListener
-		if l, err = net.ListenTCP("tcp", a); err == nil {
-			defer l.Close()
-			if addr, ok := l.Addr().(*net.TCPAddr); ok {
-				tl.Debugf("Found free port: %d", addr.Port)
-				return addr.Port
-			} else {
-				tl.Warnf("Failed to get TCP address from listener: %v", err)
-			}
-		}
+	a, err := net.ResolveTCPAddr("tcp", "localhost:0")
+	if err != nil {
+		tl.Warnf("Failed to resolve TCP address: %v", err)
+		return 0
 	}
+
+	l, err := net.ListenTCP("tcp", a)
+	if err != nil {
+		tl.Warnf("Failed to listen on TCP address: %v", err)
+		return 0
+	}
+	defer l.Close()
+
+	addr, ok := l.Addr().(*net.TCPAddr)
+	if !ok {
+		tl.Warnf("Failed to get TCP address from listener")
+		return 0
+	}
+
+	tl.Debugf("Found free port: %d", addr.Port)
+	return addr.Port
 	panic("no free ports")
 }
 
