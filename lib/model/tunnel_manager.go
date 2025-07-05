@@ -11,6 +11,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -30,6 +31,15 @@ import (
 )
 
 var tl = logger.DefaultLogger.NewFacility("tunnels", "the tunnel manager stuff")
+
+var (
+	ErrTunnelAlreadyExists     = errors.New("tunnel already exists")
+	ErrTunnelNotFound         = errors.New("tunnel not found")
+	ErrInboundTunnelNotFound  = errors.New("inbound tunnel not found")
+	ErrDeviceIDAlreadyExists  = errors.New("allowed device ID already exists")
+	ErrDeviceIDNotFound       = errors.New("disallowed device ID not found")
+	ErrInvalidAction          = errors.New("invalid action")
+)
 
 func hashDescriptor(descriptor string) string {
 	hash := sha256.Sum256([]byte(descriptor))
@@ -138,7 +148,6 @@ func NewTunnelManagerFromConfig(config *bep.TunnelConfig, configFile string) *Tu
 	if config == nil {
 		panic("TunnelManager config is nil")
 	}
-
 	sharedConfig :=
 		utils.NewProtected(&tm_config{
 			configIn:       make(map[string]*tunnelInConfig),
@@ -309,7 +318,7 @@ func (m *TunnelManager) AddOutboundTunnel(localListenAddress string, remoteDevic
 
 		// Check if the tunnel already exists
 		if _, exists := config.configOut[descriptor]; exists {
-			return fmt.Errorf("tunnel with descriptor %s already exists", descriptor)
+			return fmt.Errorf("%w: descriptor %s", ErrTunnelAlreadyExists, descriptor)
 		}
 
 		bepConfig := &bep.TunnelConfig{
@@ -528,9 +537,9 @@ func (tm *TunnelManager) modifyAndSaveConfig(id string, action string, params ma
 					tunnel.json.AllowedRemoteDeviceIds = append(tunnel.json.AllowedRemoteDeviceIds, newAllowedDeviceID)
 					return config.saveFullConfig_no_lock(tm.configFile)
 				}
-				return fmt.Errorf("allowed device ID %s already exists in tunnel %s", newAllowedDeviceID, id)
+				return fmt.Errorf("%w: device ID %s in tunnel %s", ErrDeviceIDAlreadyExists, newAllowedDeviceID, id)
 			}
-			return fmt.Errorf("inbound tunnel not found: %s", id)
+			return fmt.Errorf("%w: %s", ErrInboundTunnelNotFound, id)
 		} else if action == "remove-allowed-device" {
 			// Check if the ID corresponds to an inbound tunnel
 			if tunnel, exists := config.configIn[id]; exists {
@@ -541,15 +550,15 @@ func (tm *TunnelManager) modifyAndSaveConfig(id string, action string, params ma
 					tunnel.json.AllowedRemoteDeviceIds = slices.Delete(tunnel.json.AllowedRemoteDeviceIds, index, index+1)
 					return config.saveFullConfig_no_lock(tm.configFile)
 				}
-				return fmt.Errorf("disallowed device ID %s not found in tunnel %s", disallowedDeviceID, id)
+				return fmt.Errorf("%w: device ID %s in tunnel %s", ErrDeviceIDNotFound, disallowedDeviceID, id)
 			}
-			return fmt.Errorf("inbound tunnel not found: %s", id)
+			return fmt.Errorf("%w: %s", ErrInboundTunnelNotFound, id)
 		} else {
-			return fmt.Errorf("invalid action: %s", action)
+			return fmt.Errorf("%w: %s", ErrInvalidAction, action)
 		}
 
 		// If the ID is not found, return an error
-		return fmt.Errorf("tunnel with ID %s not found", id)
+		return fmt.Errorf("%w: %s", ErrTunnelNotFound, id)
 	})
 }
 

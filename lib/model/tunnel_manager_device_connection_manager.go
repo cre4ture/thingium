@@ -8,10 +8,16 @@ package model
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/syncthing/syncthing/lib/protocol"
 	"github.com/syncthing/syncthing/lib/utils"
+)
+
+var (
+	ErrDeviceNotFound       = errors.New("device not found in TunnelManager")
+	ErrTunnelDataSendFailed = errors.New("failed to send tunnel data")
 )
 
 type tm_deviceConnections struct {
@@ -52,14 +58,14 @@ func (m *TunnelManagerDeviceConnectionsManager) TryGetDeviceChannel(deviceID pro
 func (m *TunnelManagerDeviceConnectionsManager) TrySendTunnelData(deviceID protocol.DeviceID, data *protocol.TunnelData) error {
 	tunnelOut := m.TryGetDeviceChannel(deviceID)
 	if tunnelOut == nil {
-		return fmt.Errorf("device %v not found in TunnelManager", deviceID)
+		return fmt.Errorf("%w: %v", ErrDeviceNotFound, deviceID)
 	}
 
 	select {
 	case tunnelOut <- data:
 		return nil
 	default:
-		return fmt.Errorf("failed to send tunnel data to device %v", deviceID)
+		return fmt.Errorf("%w to device %v", ErrTunnelDataSendFailed, deviceID)
 	}
 }
 
@@ -77,6 +83,7 @@ func (tm *TunnelManagerDeviceConnectionsManager) RegisterDeviceConnection(device
 
 	tl.Debugln("Registering device connection, device ID:", device)
 	var myConnectionHandler *TunnelManagerDeviceConnectionHandler = nil
+	connectionContext, cancel := context.WithCancel(context.Background()) // Create a cancellable context for the connection
 	tm.deviceConnections.DoProtected(func(dc *tm_deviceConnections) {
 		// Check if the device is already registered
 		if old, exists := dc.deviceConnections[device]; exists {
@@ -85,7 +92,7 @@ func (tm *TunnelManagerDeviceConnectionsManager) RegisterDeviceConnection(device
 		}
 
 		myConnectionHandler = NewTunnelManagerDeviceConnectionHandler(
-			context.Background(),
+			cancel,
 			device,
 			tm.sharedConfig,
 			tm.sharedEndpointMgr,
@@ -95,7 +102,7 @@ func (tm *TunnelManagerDeviceConnectionsManager) RegisterDeviceConnection(device
 
 	// handle all incoming tunnel data for this device connection
 	go func() {
-		myConnectionHandler.mainLoop(tunnelIn)
+		myConnectionHandler.mainLoop(connectionContext, tunnelIn)
 	}()
 }
 

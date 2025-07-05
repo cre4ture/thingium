@@ -391,6 +391,14 @@ func (c *rawConnection) DownloadProgress(ctx context.Context, dp *DownloadProgre
 	c.send(ctx, dp.toWire(), nil)
 }
 
+func (c *rawConnection) TunnelIn() <-chan *TunnelData {
+	return c.tunnelIn
+}
+
+func (c *rawConnection) TunnelOut() chan<- *TunnelData {
+	return c.tunnelOut
+}
+
 func (c *rawConnection) ping() bool {
 	return c.send(context.Background(), &bep.Ping{}, nil)
 }
@@ -1179,12 +1187,4 @@ func (c *rawConnection) handleTunnelData(msg *TunnelData) {
 		case <-c.closed:
 		}
 	}
-}
-
-func (c *rawConnection) TunnelIn() <-chan *TunnelData {
-	return c.tunnelIn
-}
-
-func (c *rawConnection) TunnelOut() chan<- *TunnelData {
-	return c.tunnelOut
 }

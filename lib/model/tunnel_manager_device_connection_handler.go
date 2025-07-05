@@ -17,39 +17,46 @@ import (
 	"github.com/syncthing/syncthing/lib/utils"
 )
 
-// only for one device connection
+// only for one device connection.
 type TunnelManagerDeviceConnectionHandler struct {
 	fromDevice       protocol.DeviceID
 	sharedConfig     *utils.Protected[*tm_config]
 	sharedEndpoints  *TunnelManagerEndpointManager
 	inUseMap         map[uint64]*tm_localTunnelEP
-	ctx              context.Context
 	cancel           context.CancelFunc
 	tunnelOut        chan<- *protocol.TunnelData
 	serviceOfferings *utils.Protected[map[string]uint32]
 }
 
 func NewTunnelManagerDeviceConnectionHandler(
-	ctx context.Context,
+	cancel context.CancelFunc,
 	fromDevice protocol.DeviceID,
 	sharedConfig *utils.Protected[*tm_config],
 	sharedEndpoints *TunnelManagerEndpointManager,
 	tunnelOut chan<- *protocol.TunnelData,
 ) *TunnelManagerDeviceConnectionHandler {
-	ctx, cancel := context.WithCancel(context.Background())
 	return &TunnelManagerDeviceConnectionHandler{
 		fromDevice:       fromDevice,
 		sharedConfig:     sharedConfig,
 		sharedEndpoints:  sharedEndpoints,
 		inUseMap:         make(map[uint64]*tm_localTunnelEP),
-		ctx:              ctx,
 		cancel:           cancel,
 		tunnelOut:        tunnelOut,
 		serviceOfferings: utils.NewProtected(make(map[string]uint32)),
 	}
 }
 
-func (tm *TunnelManagerDeviceConnectionHandler) mainLoop(tunnelIn <-chan *protocol.TunnelData) {
+func (tm *TunnelManagerDeviceConnectionHandler) GetCopyOfServiceOfferings() map[string]uint32 {
+	return utils.DoProtected(tm.serviceOfferings, func(offerings map[string]uint32) map[string]uint32 {
+		copied := make(map[string]uint32, len(offerings))
+		for k, v := range offerings {
+			copied[k] = v
+		}
+		return copied
+	})
+}
+
+func (tm *TunnelManagerDeviceConnectionHandler) mainLoop(ctx context.Context, tunnelIn <-chan *protocol.TunnelData) {
 	go tm.sharedConfig.DoProtected(func(config *tm_config) {
 		// send tunnel service offerings
 		for _, inboundSerice := range config.configIn {
@@ -67,7 +74,7 @@ func (tm *TunnelManagerDeviceConnectionHandler) mainLoop(tunnelIn <-chan *protoc
 
 	for {
 		select {
-		case <-tm.ctx.Done():
+		case <-ctx.Done():
 			tl.Debugln("Context done for device:", tm.fromDevice)
 			return
 		case data, ok := <-tunnelIn:
@@ -184,7 +191,6 @@ func (tm *TunnelManagerDeviceConnectionHandler) getEnabledInboundServiceDeviceId
 			return service
 		}
 	}
-
 	tl.Warnf("Device %v is not allowed to access service %s", tm.fromDevice, name)
 	return nil
 }
@@ -213,14 +219,4 @@ func (tm *TunnelManagerDeviceConnectionHandler) getAndLockTunnelEP(tunnelId uint
 	tm.inUseMap[tunnelId] = ltep // save the locked connection in our inUseMap
 
 	return ltep, true // tm_localTunnelEP is thread-safe
-}
-
-func (tm *TunnelManagerDeviceConnectionHandler) GetCopyOfServiceOfferings() map[string]uint32 {
-	return utils.DoProtected(tm.serviceOfferings, func(offerings map[string]uint32) map[string]uint32 {
-		copied := make(map[string]uint32, len(offerings))
-		for k, v := range offerings {
-			copied[k] = v
-		}
-		return copied
-	})
 }

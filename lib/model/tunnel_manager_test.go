@@ -394,10 +394,10 @@ func TestTunnelManagerConfigUpdate_addAllowedDevice_removeAllowedDevice(t *testi
 	)
 
 	status := tm.Status()
-	assert.Equal(t, 1, len(status))
+	assert.Len(t, status, 1)
 	assert.Equal(t, localServiceName, status[0]["serviceID"])
 	allowedDevices := status[0]["allowedRemoteDeviceIDs"].([]string)
-	assert.Equal(t, 0, len(allowedDevices))
+	assert.Empty(t, allowedDevices)
 
 	err = tm.ModifyTunnel(status[0]["id"].(string), "add-allowed-device",
 		map[string]string{
@@ -408,11 +408,11 @@ func TestTunnelManagerConfigUpdate_addAllowedDevice_removeAllowedDevice(t *testi
 
 	status = tm.Status()
 
-	assert.Equal(t, 1, len(status))
+	assert.Len(t, status, 1)
 	assert.Equal(t, localServiceName, status[0]["serviceID"])
 	assert.Equal(t, localDestinationAddress, status[0]["localDialAddress"])
 	allowedDevices = status[0]["allowedRemoteDeviceIDs"].([]string)
-	assert.Equal(t, 1, len(allowedDevices))
+	assert.Len(t, allowedDevices, 1)
 	assert.Equal(t, clientDeviceID1.String(), allowedDevices[0])
 
 	err = tm.ModifyTunnel(status[0]["id"].(string), "add-allowed-device",
@@ -462,5 +462,5 @@ func TestTunnelManagerConfigUpdate_addAllowedDevice_removeAllowedDevice(t *testi
 	assert.Equal(t, localServiceName, status[0]["serviceID"])
 	assert.Equal(t, localDestinationAddress, status[0]["localDialAddress"])
 	allowedDevices = status[0]["allowedRemoteDeviceIDs"].([]string)
-	assert.Equal(t, 0, len(allowedDevices))
+	assert.Empty(t, allowedDevices)
 }

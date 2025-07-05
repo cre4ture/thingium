@@ -14,6 +14,9 @@ import (
 	"github.com/syncthing/syncthing/lib/utils"
 )
 
+var ErrTest1 = errors.New("test1")
+var ErrTest2 = errors.New("test2")
+
 type closingFunc struct {
 	closable func() error
 }
@@ -93,9 +96,6 @@ func TestCloser_unregisterAll(t *testing.T) {
 	assert.Equal(t, closed2, 0)
 	assert.Equal(t, closed1, 0)
 }
-
-var ErrTest1 = errors.New("test1")
-var ErrTest2 = errors.New("test2")
 
 func TestCloser_errorForwarding1(t *testing.T) {
 	c := utils.NewCloser()

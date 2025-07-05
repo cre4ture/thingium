@@ -133,7 +133,7 @@ func (tm *TunnelManagerEndpointManager) handleLocalTunnelEndpoint(
 		stop()
 	}()
 
-	var destinationDeviceTunnel chan<- *protocol.TunnelData = nil
+	var destinationDeviceTunnel chan<- *protocol.TunnelData
 	{
 		sharedDeviceConnections := tm.tryGetSharedDeviceConnections()
 		if sharedDeviceConnections == nil {
