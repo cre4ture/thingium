@@ -10,6 +10,7 @@ import (
 	"context"
 	"net"
 	"slices"
+	"time"
 
 	"github.com/ek220/guf"
 	"github.com/syncthing/syncthing/internal/gen/bep"
@@ -19,6 +20,7 @@ import (
 
 // only for one device connection.
 type TunnelManagerDeviceConnectionHandler struct {
+	connectionTime   time.Time
 	fromDevice       protocol.DeviceID
 	sharedConfig     *utils.Protected[*tm_config]
 	sharedEndpoints  *TunnelManagerEndpointManager
@@ -36,6 +38,7 @@ func NewTunnelManagerDeviceConnectionHandler(
 	tunnelOut chan<- *protocol.TunnelData,
 ) *TunnelManagerDeviceConnectionHandler {
 	return &TunnelManagerDeviceConnectionHandler{
+		connectionTime:   time.Now(),
 		fromDevice:       fromDevice,
 		sharedConfig:     sharedConfig,
 		sharedEndpoints:  sharedEndpoints,

@@ -10,6 +10,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/syncthing/syncthing/lib/protocol"
 	"github.com/syncthing/syncthing/lib/utils"
@@ -21,7 +22,8 @@ var (
 )
 
 type tm_deviceConnections struct {
-	deviceConnections map[protocol.DeviceID]*TunnelManagerDeviceConnectionHandler
+	// multiple connections are possible for the same device ID
+	deviceConnections map[protocol.DeviceID]map[string]*TunnelManagerDeviceConnectionHandler
 }
 
 type TunnelManagerDeviceConnectionsManager struct {
@@ -38,7 +40,7 @@ func NewTunnelManagerDeviceConnectionsManager(
 		sharedConfig:      sharedConfig,
 		sharedEndpointMgr: sharedEndpointMgr,
 		deviceConnections: utils.NewProtected(&tm_deviceConnections{
-			deviceConnections: make(map[protocol.DeviceID]*TunnelManagerDeviceConnectionHandler),
+			deviceConnections: make(map[protocol.DeviceID]map[string]*TunnelManagerDeviceConnectionHandler),
 		}),
 	}
 }
@@ -50,7 +52,24 @@ func (m *TunnelManagerDeviceConnectionsManager) TryGetDeviceChannel(deviceID pro
 			if !ok {
 				return nil
 			}
-			return conn.tunnelOut // channels are thread-safe
+
+			var connections = len(conn)
+			if connections == 0 {
+				return nil
+			}
+
+			// use last established connection
+			connId := ""
+			connTime := time.Time{}
+			for k := range conn {
+				i := conn[k]
+				if i.connectionTime.After(connTime) {
+					connId = k
+					connTime = i.connectionTime
+				}
+			}
+
+			return conn[connId].tunnelOut
 		})
 	return tunnelOut
 }
@@ -72,22 +91,33 @@ func (m *TunnelManagerDeviceConnectionsManager) TrySendTunnelData(deviceID proto
 func (m *TunnelManagerDeviceConnectionsManager) GetCopyOfAllServiceOfferings() map[protocol.DeviceID]map[string]uint32 {
 	return utils.DoProtected(m.deviceConnections, func(dc *tm_deviceConnections) map[protocol.DeviceID]map[string]uint32 {
 		copied := make(map[protocol.DeviceID]map[string]uint32, len(dc.deviceConnections))
-		for deviceID, handler := range dc.deviceConnections {
-			copied[deviceID] = handler.GetCopyOfServiceOfferings()
+		for deviceID, handlers := range dc.deviceConnections {
+			for _, handler := range handlers {
+				if _, exists := copied[deviceID]; !exists {
+					copied[deviceID] = make(map[string]uint32)
+				}
+
+				// merge service offerings
+				for service, port := range handler.GetCopyOfServiceOfferings() {
+					copied[deviceID][service] = port
+				}
+			}
 		}
 		return copied
 	})
 }
 
-func (tm *TunnelManagerDeviceConnectionsManager) RegisterDeviceConnection(device protocol.DeviceID, tunnelIn <-chan *protocol.TunnelData, tunnelOut chan<- *protocol.TunnelData) {
+func (tm *TunnelManagerDeviceConnectionsManager) RegisterDeviceConnection(
+	device protocol.DeviceID,
+	conn protocol.Connection,
+) {
 	tl.Debugln("Registering device connection, device ID:", device)
 	var myConnectionHandler *TunnelManagerDeviceConnectionHandler = nil
 	connectionContext, cancel := context.WithCancel(context.Background()) // Create a cancellable context for the connection
 	tm.deviceConnections.DoProtected(func(dc *tm_deviceConnections) {
 		// Check if the device is already registered
-		if old, exists := dc.deviceConnections[device]; exists {
-			old.cancel() // Cancel the old context to stop any existing operations
-			tl.Debugln("Device connection already exists, replacing it:", device)
+		if _, exists := dc.deviceConnections[device]; !exists {
+			dc.deviceConnections[device] = make(map[string]*TunnelManagerDeviceConnectionHandler)
 		}
 
 		myConnectionHandler = NewTunnelManagerDeviceConnectionHandler(
@@ -95,19 +125,24 @@ func (tm *TunnelManagerDeviceConnectionsManager) RegisterDeviceConnection(device
 			device,
 			tm.sharedConfig,
 			tm.sharedEndpointMgr,
-			tunnelOut)
-		dc.deviceConnections[device] = myConnectionHandler
+			conn.TunnelOut())
+		conn.ConnectionID()
+		dc.deviceConnections[device][conn.ConnectionID()] = myConnectionHandler
 	})
 
 	// handle all incoming tunnel data for this device connection
 	go func() {
-		myConnectionHandler.mainLoop(connectionContext, tunnelIn)
+		myConnectionHandler.mainLoop(connectionContext, conn.TunnelIn())
 	}()
 }
 
-func (tm *TunnelManagerDeviceConnectionsManager) DeregisterDeviceConnection(device protocol.DeviceID) {
+func (tm *TunnelManagerDeviceConnectionsManager) DeregisterDeviceConnection(
+	device protocol.DeviceID, conn protocol.Connection,
+) {
 	tl.Debugln("Deregistering device connection, device ID:", device)
 	tm.deviceConnections.DoProtected(func(dc *tm_deviceConnections) {
-		delete(dc.deviceConnections, device)
+		if connectionMap, ok := dc.deviceConnections[device]; ok {
+			delete(connectionMap, conn.ConnectionID())
+		}
 	})
 }

@@ -174,14 +174,38 @@ func (tm *TunnelManagerEndpointManager) handleLocalTunnelEndpoint(
 			tl.Debugf("Forwarding data to device %v, %s (%d tunnel id): len: %d, counter: %d\n",
 				destinationDevice, destinationAddress, tunnelID, n, thisPackageCounter)
 
-			// Send the data to the destination device
-			destinationDeviceTunnel <- &protocol.TunnelData{
-				D: &bep.TunnelData{
-					TunnelId:           tunnelID,
-					Command:            bep.TunnelCommand_TUNNEL_COMMAND_DATA,
-					Data:               buffer[:n],
-					DataPackageCounter: &thisPackageCounter,
-				},
+			// Send the data to the destination device, handle if channel is closed
+		loop_send:
+			for {
+				select {
+				case destinationDeviceTunnel <- &protocol.TunnelData{
+					D: &bep.TunnelData{
+						TunnelId:           tunnelID,
+						Command:            bep.TunnelCommand_TUNNEL_COMMAND_DATA,
+						Data:               buffer[:n],
+						DataPackageCounter: &thisPackageCounter,
+					},
+				}:
+					// sent successfully
+					break loop_send
+				default:
+					tl.Warnf("Failed to send data to device %v, tunnel channel may be closed (tunnel ID: %d)", destinationDevice, tunnelID)
+					{
+						sharedDeviceConnections := tm.tryGetSharedDeviceConnections()
+						if sharedDeviceConnections == nil {
+							// in shutdown phase, sharedDeviceConnections might be nil
+							return
+						}
+
+						destinationDeviceTunnel = sharedDeviceConnections.TryGetDeviceChannel(destinationDevice)
+						if destinationDeviceTunnel == nil {
+							tl.Warnf("No tunnel channel found for device %v, cannot handle local tunnel endpoint",
+								destinationDevice)
+							return
+						}
+						tl.Debugf("Re-trying to send data to device", destinationDevice, "tunnel ID:", tunnelID)
+					}
+				}
 			}
 		}
 	}
