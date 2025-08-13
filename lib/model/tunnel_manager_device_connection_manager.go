@@ -60,8 +60,7 @@ func (m *TunnelManagerDeviceConnectionsManager) TryGetDeviceChannel(deviceID pro
 				return nil
 			}
 
-			var connections = len(conn)
-			if connections == 0 {
+			if len(conn) == 0 {
 				return nil
 			}
 
