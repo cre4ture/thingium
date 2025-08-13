@@ -66,7 +66,13 @@ func TestTunnelManager_ServeLocalListener(t *testing.T) {
 
 	// Create a channel to capture the TunnelData sent to the device
 	tunnelDataChan := make(chan *protocol.TunnelData, 1)
-	tm.deviceConnections.RegisterDeviceConnection(serverDeviceID, nil, tunnelDataChan)
+	tm.deviceConnections.RegisterDeviceConnection(
+		&TunnelManagerDeviceConnection{
+			DeviceID:     serverDeviceID,
+			ConnectionID: "test-connection",
+			TunnelOut:    tunnelDataChan,
+		},
+	)
 
 	var conn net.Conn
 	var err error
@@ -150,7 +156,14 @@ func TestTunnelManager_HandleOpenRemoteCommand(t *testing.T) {
 	// Create a channel to capture the TunnelData sent to the device
 	tunnelDataChanIn := make(chan *protocol.TunnelData, 1)
 	tunnelDataChanOut := make(chan *protocol.TunnelData, 1)
-	tm.deviceConnections.RegisterDeviceConnection(clientDeviceID, tunnelDataChanIn, tunnelDataChanOut)
+	tm.deviceConnections.RegisterDeviceConnection(
+		&TunnelManagerDeviceConnection{
+			DeviceID:     clientDeviceID,
+			ConnectionID: "test-connection",
+			TunnelIn:     tunnelDataChanIn,
+			TunnelOut:    tunnelDataChanOut,
+		},
+	)
 
 	// Start a listener on the destination address
 	listener, err := net.Listen("tcp", destinationAddress)
@@ -251,7 +264,14 @@ func TestTunnelManager_HandleOpenRemoteCommand_NamedService(t *testing.T) {
 	// Create a channel to capture the TunnelData sent to the device
 	tunnelDataChanIn := make(chan *protocol.TunnelData, 1)
 	tunnelDataChanOut := make(chan *protocol.TunnelData, 1)
-	tm.deviceConnections.RegisterDeviceConnection(clientDeviceID, tunnelDataChanIn, tunnelDataChanOut)
+	tm.deviceConnections.RegisterDeviceConnection(
+		&TunnelManagerDeviceConnection{
+			DeviceID:     clientDeviceID,
+			ConnectionID: "test-connection",
+			TunnelIn:     tunnelDataChanIn,
+			TunnelOut:    tunnelDataChanOut,
+		},
+	)
 
 	// Start a listener on the destination address
 	listener, err := net.Listen("tcp", localDestinationAddress)
@@ -350,7 +370,14 @@ func TestTunnelManager_HandleOpenRemoteCommand_DisallowedClient(t *testing.T) {
 	// Create a channel to capture the TunnelData sent to the device
 	tunnelDataChanIn := make(chan *protocol.TunnelData, 1)
 	tunnelDataChanOut := make(chan *protocol.TunnelData, 1)
-	tm.deviceConnections.RegisterDeviceConnection(disallowedClientDeviceID, tunnelDataChanIn, tunnelDataChanOut)
+	tm.deviceConnections.RegisterDeviceConnection(
+		&TunnelManagerDeviceConnection{
+			DeviceID:     disallowedClientDeviceID,
+			ConnectionID: "test-connection",
+			TunnelIn:     tunnelDataChanIn,
+			TunnelOut:    tunnelDataChanOut,
+		},
+	)
 
 	// Start a listener on the destination address
 	listener, err := net.Listen("tcp", localDestinationAddress)

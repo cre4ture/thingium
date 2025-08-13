@@ -21,6 +21,13 @@ var (
 	ErrTunnelDataSendFailed = errors.New("failed to send tunnel data")
 )
 
+type TunnelManagerDeviceConnection struct {
+	DeviceID     protocol.DeviceID
+	ConnectionID string
+	TunnelIn     <-chan *protocol.TunnelData
+	TunnelOut    chan<- *protocol.TunnelData
+}
+
 type tm_deviceConnections struct {
 	// multiple connections are possible for the same device ID
 	deviceConnections map[protocol.DeviceID]map[string]*TunnelManagerDeviceConnectionHandler
@@ -108,41 +115,40 @@ func (m *TunnelManagerDeviceConnectionsManager) GetCopyOfAllServiceOfferings() m
 }
 
 func (tm *TunnelManagerDeviceConnectionsManager) RegisterDeviceConnection(
-	device protocol.DeviceID,
-	conn protocol.Connection,
+	conn *TunnelManagerDeviceConnection,
 ) {
-	tl.Debugln("Registering device connection, device ID:", device)
+	tl.Debugln("Registering device connection, device ID:", conn.DeviceID, "connection ID:", conn.ConnectionID)
 	var myConnectionHandler *TunnelManagerDeviceConnectionHandler = nil
 	connectionContext, cancel := context.WithCancel(context.Background()) // Create a cancellable context for the connection
 	tm.deviceConnections.DoProtected(func(dc *tm_deviceConnections) {
 		// Check if the device is already registered
-		if _, exists := dc.deviceConnections[device]; !exists {
-			dc.deviceConnections[device] = make(map[string]*TunnelManagerDeviceConnectionHandler)
+		if _, exists := dc.deviceConnections[conn.DeviceID]; !exists {
+			dc.deviceConnections[conn.DeviceID] = make(map[string]*TunnelManagerDeviceConnectionHandler)
 		}
 
 		myConnectionHandler = NewTunnelManagerDeviceConnectionHandler(
 			cancel,
-			device,
+			conn.DeviceID,
 			tm.sharedConfig,
 			tm.sharedEndpointMgr,
-			conn.TunnelOut())
-		conn.ConnectionID()
-		dc.deviceConnections[device][conn.ConnectionID()] = myConnectionHandler
+			conn.TunnelOut)
+
+		dc.deviceConnections[conn.DeviceID][conn.ConnectionID] = myConnectionHandler
 	})
 
 	// handle all incoming tunnel data for this device connection
 	go func() {
-		myConnectionHandler.mainLoop(connectionContext, conn.TunnelIn())
+		myConnectionHandler.mainLoop(connectionContext, conn.TunnelIn)
 	}()
 }
 
 func (tm *TunnelManagerDeviceConnectionsManager) DeregisterDeviceConnection(
-	device protocol.DeviceID, conn protocol.Connection,
+	device protocol.DeviceID, connectionID string,
 ) {
 	tl.Debugln("Deregistering device connection, device ID:", device)
 	tm.deviceConnections.DoProtected(func(dc *tm_deviceConnections) {
 		if connectionMap, ok := dc.deviceConnections[device]; ok {
-			delete(connectionMap, conn.ConnectionID())
+			delete(connectionMap, connectionID)
 		}
 	})
 }

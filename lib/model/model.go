@@ -2388,11 +2388,17 @@ func (m *model) AddConnection(conn protocol.Connection, hello protocol.Hello) {
 	m.deviceWasSeen(deviceID)
 	m.scheduleConnectionPromotion()
 
-	m.tunnelManager.deviceConnections.RegisterDeviceConnection(deviceID, conn)
+	m.tunnelManager.deviceConnections.RegisterDeviceConnection(
+		&TunnelManagerDeviceConnection{
+			DeviceID:     deviceID,
+			ConnectionID: conn.ConnectionID(),
+			TunnelIn:     conn.TunnelIn(),
+			TunnelOut:    conn.TunnelOut(),
+		},
+	)
 	go func() {
 		<-conn.Closed()
-		// TODO: what if there are multiple connections to the same device?
-		m.tunnelManager.deviceConnections.DeregisterDeviceConnection(deviceID, conn)
+		m.tunnelManager.deviceConnections.DeregisterDeviceConnection(deviceID, conn.ConnectionID())
 	}()
 }
 
