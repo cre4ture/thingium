@@ -49,7 +49,7 @@ jobs:
         runner: ["windows-latest", "ubuntu-latest", "macos-latest"]
         # The oldest version in this list should match what we have in our go.mod.
         # Variables don't seem to be supported here, or we could have done something nice.
-        go: ["~1.22.6", "~1.23.0"]
+        go: ["~1.23.0"]
     runs-on: ${{ matrix.runner }}
     steps:
       - name: Set git to use LF
