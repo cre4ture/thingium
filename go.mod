@@ -1,6 +1,6 @@
 module github.com/syncthing/syncthing
 
-go 1.22.0
+go 1.23.0
 
 require (
 	github.com/AudriusButkevicius/recli v0.0.7-0.20220911121932-d000ce8fbf0f
@@ -59,7 +59,6 @@ require (
 	github.com/cenkalti/backoff/v4 v4.3.0 // indirect
 	github.com/certifi/gocertifi v0.0.0-20210507211836-431795d63e8d // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
-	github.com/coreos/go-semver v0.3.1 // indirect
 	github.com/cpuguy83/go-md2man/v2 v2.0.5 // indirect
 	github.com/davecgh/go-spew v1.1.1 // indirect
 	github.com/ebitengine/purego v0.8.3 // indirect
