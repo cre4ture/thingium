@@ -9,6 +9,7 @@ package model
 import (
 	"context"
 	"io"
+	"time"
 	"weak"
 
 	"github.com/syncthing/syncthing/internal/gen/bep"
@@ -134,6 +135,7 @@ func (tm *TunnelManagerEndpointManager) handleLocalTunnelEndpoint(
 	}()
 
 	var destinationDeviceTunnel chan<- *protocol.TunnelData
+	var destinationDeviceTunnelId string
 	{
 		sharedDeviceConnections := tm.tryGetSharedDeviceConnections()
 		if sharedDeviceConnections == nil {
@@ -141,13 +143,17 @@ func (tm *TunnelManagerEndpointManager) handleLocalTunnelEndpoint(
 			return
 		}
 
-		destinationDeviceTunnel = sharedDeviceConnections.TryGetDeviceChannel(destinationDevice)
+		destinationDeviceTunnel, destinationDeviceTunnelId = sharedDeviceConnections.TryGetDeviceChannel(destinationDevice, "")
 		if destinationDeviceTunnel == nil {
 			tl.Warnf("No tunnel channel found for device %v, cannot handle local tunnel endpoint",
 				destinationDevice)
 			return
 		}
 	}
+
+	tl.Infoln("Starting to forward data for local tunnel endpoint, tunnel ID:", tunnelID,
+		"to device:", destinationDevice,
+		"address:", destinationAddress)
 
 	// Example: Forward data to the destination address
 	// This is a placeholder implementation
@@ -175,8 +181,9 @@ func (tm *TunnelManagerEndpointManager) handleLocalTunnelEndpoint(
 				destinationDevice, destinationAddress, tunnelID, n, thisPackageCounter)
 
 			// Send the data to the destination device, handle if channel is closed
+			retryCount := 0
 		loop_send:
-			for {
+			for ; retryCount <= 5; retryCount++ {
 				select {
 				case destinationDeviceTunnel <- &protocol.TunnelData{
 					D: &bep.TunnelData{
@@ -188,22 +195,21 @@ func (tm *TunnelManagerEndpointManager) handleLocalTunnelEndpoint(
 				}:
 					// sent successfully
 					break loop_send
-				default:
+				case <-time.After(1 * time.Second):
 					tl.Warnf("Failed to send data to device %v, tunnel channel may be closed (tunnel ID: %d)", destinationDevice, tunnelID)
-					{
-						sharedDeviceConnections := tm.tryGetSharedDeviceConnections()
-						if sharedDeviceConnections == nil {
-							// in shutdown phase, sharedDeviceConnections might be nil
-							return
-						}
+					sharedDeviceConnections := tm.tryGetSharedDeviceConnections()
+					if sharedDeviceConnections == nil {
+						tl.Warnf("Shutdown phase, cannot re-get device channel")
+						return
+					}
 
-						destinationDeviceTunnel = sharedDeviceConnections.TryGetDeviceChannel(destinationDevice)
-						if destinationDeviceTunnel == nil {
-							tl.Warnf("No tunnel channel found for device %v, cannot handle local tunnel endpoint",
-								destinationDevice)
-							return
-						}
-						tl.Debugf("Re-trying to send data to device", destinationDevice, "tunnel ID:", tunnelID)
+					newDestinationDeviceTunnel, newConnId := sharedDeviceConnections.TryGetDeviceChannel(
+						destinationDevice, destinationDeviceTunnelId)
+					if newDestinationDeviceTunnel == nil {
+						tl.Warnf("No (new) tunnel channel found for device %v, retry with old ...", destinationDevice)
+					} else {
+						destinationDeviceTunnelId = newConnId
+						tl.Infoln("Re-trying to send data to device", destinationDevice, " with new tunnel ID:", tunnelID)
 					}
 				}
 			}

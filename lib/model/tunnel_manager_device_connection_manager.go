@@ -52,16 +52,18 @@ func NewTunnelManagerDeviceConnectionsManager(
 	}
 }
 
-func (m *TunnelManagerDeviceConnectionsManager) TryGetDeviceChannel(deviceID protocol.DeviceID) chan<- *protocol.TunnelData {
-	tunnelOut := utils.DoProtected(m.deviceConnections,
-		func(dc *tm_deviceConnections) chan<- *protocol.TunnelData {
+func (m *TunnelManagerDeviceConnectionsManager) TryGetDeviceChannel(
+	deviceID protocol.DeviceID, ignoreTunnelId string,
+) (chan<- *protocol.TunnelData, string) {
+	tunnelOut, connId := utils.DoProtected2(m.deviceConnections,
+		func(dc *tm_deviceConnections) (chan<- *protocol.TunnelData, string) {
 			conn, ok := dc.deviceConnections[deviceID]
 			if !ok {
-				return nil
+				return nil, ""
 			}
 
 			if len(conn) == 0 {
-				return nil
+				return nil, ""
 			}
 
 			// use last established connection
@@ -69,19 +71,23 @@ func (m *TunnelManagerDeviceConnectionsManager) TryGetDeviceChannel(deviceID pro
 			connTime := time.Time{}
 			for k := range conn {
 				i := conn[k]
-				if i.connectionTime.After(connTime) {
+				if (i.connectionTime.After(connTime)) && (k != ignoreTunnelId) {
 					connId = k
 					connTime = i.connectionTime
 				}
 			}
 
-			return conn[connId].tunnelOut
+			if connId == "" {
+				return nil, ""
+			}
+
+			return conn[connId].tunnelOut, connId
 		})
-	return tunnelOut
+	return tunnelOut, connId
 }
 
 func (m *TunnelManagerDeviceConnectionsManager) TrySendTunnelData(deviceID protocol.DeviceID, data *protocol.TunnelData) error {
-	tunnelOut := m.TryGetDeviceChannel(deviceID)
+	tunnelOut, _ := m.TryGetDeviceChannel(deviceID, "")
 	if tunnelOut == nil {
 		return fmt.Errorf("%w: %v", ErrDeviceNotFound, deviceID)
 	}
