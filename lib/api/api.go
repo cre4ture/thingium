@@ -2134,6 +2134,7 @@ func (s *service) postTunnelsModify(w http.ResponseWriter, r *http.Request) {
 func (s *service) postTunnelsAddOutbound(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		LocalListenAddress string `json:"localListenAddress"`
+		Protocol           string `json:"protocol"` // "tcp" or "udp"
 		RemoteDeviceID     string `json:"remoteDeviceID"`
 		RemoteServiceName  string `json:"remoteServiceName"`
 	}
@@ -2149,7 +2150,7 @@ func (s *service) postTunnelsAddOutbound(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	err = s.model.GetTunnelManager().AddTunnelOutbound(req.LocalListenAddress, deviceId, req.RemoteServiceName)
+	err = s.model.GetTunnelManager().AddTunnelOutbound(req.LocalListenAddress, req.Protocol, deviceId, req.RemoteServiceName)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return

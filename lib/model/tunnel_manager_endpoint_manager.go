@@ -8,6 +8,7 @@ package model
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"time"
 	"weak"
@@ -41,7 +42,7 @@ func (tm *TunnelManagerEndpointManager) SetSharedDeviceConnections(sharedDeviceC
 	})
 }
 
-func (tm *TunnelManagerEndpointManager) registerLocalTunnelEndpoint(deviceID protocol.DeviceID, tunnelID uint64, conn io.ReadWriteCloser) {
+func (tm *TunnelManagerEndpointManager) registerLocalTunnelEndpoint(deviceID protocol.DeviceID, tunnelID uint64, conn io.WriteCloser) {
 	tl.Debugln("Registering local tunnel endpoint, device ID:", deviceID, "tunnel ID:", tunnelID)
 	tm.localTunnelEndpoints.DoProtected(func(eps *tm_localTunnelEPs) {
 		if eps.localTunnelEndpoints[deviceID] == nil {
@@ -94,6 +95,84 @@ func (tm *TunnelManagerEndpointManager) tryGetSharedDeviceConnections() *TunnelM
 		})
 }
 
+type tmepm_OptimizedTrySendTunnelData struct {
+	destinationDevice         protocol.DeviceID
+	destinationDeviceTunnel   chan<- *protocol.TunnelData
+	destinationDeviceTunnelId string
+}
+
+func NewConnectedTmepmOptimizedTrySendTunnelData(destinationDevice protocol.DeviceID, tm *TunnelManagerEndpointManager) *tmepm_OptimizedTrySendTunnelData {
+	instance := NewUnconnectedTmepmOptimizedTrySendTunnelData(destinationDevice)
+	instance.tryGetNewDeviceConnection(tm)
+	if instance.destinationDeviceTunnel == nil {
+		tl.Warnf("No tunnel channel found for device %v", destinationDevice)
+		return nil
+	}
+
+	return instance
+}
+
+func NewUnconnectedTmepmOptimizedTrySendTunnelData(destinationDevice protocol.DeviceID) *tmepm_OptimizedTrySendTunnelData {
+	return &tmepm_OptimizedTrySendTunnelData{
+		destinationDevice:         destinationDevice,
+		destinationDeviceTunnel:   nil,
+		destinationDeviceTunnelId: "",
+	}
+}
+
+func (o *tmepm_OptimizedTrySendTunnelData) tryGetNewDeviceConnection(
+	tm *TunnelManagerEndpointManager,
+) error {
+	sharedDeviceConnections := tm.tryGetSharedDeviceConnections()
+	if sharedDeviceConnections == nil {
+		tl.Warnf("Shutdown phase, cannot re-get device channel")
+		return fmt.Errorf("shutdown phase, cannot re-get device channel")
+	}
+
+	newDestinationDeviceTunnel, newConnId := sharedDeviceConnections.TryGetDeviceChannel(
+		o.destinationDevice, o.destinationDeviceTunnelId)
+	if newDestinationDeviceTunnel == nil {
+		tl.Warnf("No (new) tunnel channel found for device %v, retry with old ...", o.destinationDevice)
+	} else {
+		o.destinationDeviceTunnelId = newConnId
+		o.destinationDeviceTunnel = newDestinationDeviceTunnel
+		tl.Infoln("Re-trying to send data to device", o.destinationDevice, " with new connection ID:", newConnId)
+	}
+
+	return nil
+}
+
+func (o *tmepm_OptimizedTrySendTunnelData) TrySendTunnelDataWithRetries(
+	data *protocol.TunnelData,
+	maxRetries uint,
+	tm *TunnelManagerEndpointManager,
+) error {
+	var retryCount uint = 0
+	for ; retryCount <= maxRetries; retryCount++ {
+		if (o.destinationDeviceTunnel == nil) || (retryCount > 0) {
+			err := o.tryGetNewDeviceConnection(tm)
+			if err != nil {
+				tl.Warnf("Shutdown phase, cannot re-get device channel")
+				return err
+			}
+		}
+		if o.destinationDeviceTunnel == nil {
+			tl.Warnf("No tunnel channel found for device %v, cannot send data, retrying ...", o.destinationDevice)
+			time.Sleep(1 * time.Second)
+			continue // skip sending, try to get a new connection
+		}
+
+		select {
+		case o.destinationDeviceTunnel <- data:
+			// sent successfully
+			return nil
+		case <-time.After(1 * time.Second):
+			// timeout, try to get a new connection
+		}
+	}
+	return fmt.Errorf("failed to send data to device %v after %d retries", o.destinationDevice, retryCount)
+}
+
 func (tm *TunnelManagerEndpointManager) handleLocalTunnelEndpoint(
 	ctx context.Context,
 	tunnelID uint64,
@@ -134,21 +213,11 @@ func (tm *TunnelManagerEndpointManager) handleLocalTunnelEndpoint(
 		stop()
 	}()
 
-	var destinationDeviceTunnel chan<- *protocol.TunnelData
-	var destinationDeviceTunnelId string
-	{
-		sharedDeviceConnections := tm.tryGetSharedDeviceConnections()
-		if sharedDeviceConnections == nil {
-			// in shutdown phase, sharedDeviceConnections might be nil
-			return
-		}
-
-		destinationDeviceTunnel, destinationDeviceTunnelId = sharedDeviceConnections.TryGetDeviceChannel(destinationDevice, "")
-		if destinationDeviceTunnel == nil {
-			tl.Warnf("No tunnel channel found for device %v, cannot handle local tunnel endpoint",
-				destinationDevice)
-			return
-		}
+	robustSender := NewConnectedTmepmOptimizedTrySendTunnelData(destinationDevice, tm)
+	if robustSender == nil {
+		tl.Warnf("No tunnel channel found for device %v, cannot handle local tunnel endpoint",
+			destinationDevice)
+		return
 	}
 
 	tl.Infoln("Starting to forward data for local tunnel endpoint, tunnel ID:", tunnelID,
@@ -181,37 +250,18 @@ func (tm *TunnelManagerEndpointManager) handleLocalTunnelEndpoint(
 				destinationDevice, destinationAddress, tunnelID, n, thisPackageCounter)
 
 			// Send the data to the destination device, handle if channel is closed
-			retryCount := 0
-		loop_send:
-			for ; retryCount <= 5; retryCount++ {
-				select {
-				case destinationDeviceTunnel <- &protocol.TunnelData{
+			err = robustSender.TrySendTunnelDataWithRetries(
+				&protocol.TunnelData{
 					D: &bep.TunnelData{
 						TunnelId:           tunnelID,
 						Command:            bep.TunnelCommand_TUNNEL_COMMAND_DATA,
 						Data:               buffer[:n],
 						DataPackageCounter: &thisPackageCounter,
 					},
-				}:
-					// sent successfully
-					break loop_send
-				case <-time.After(1 * time.Second):
-					tl.Warnf("Failed to send data to device %v, tunnel channel may be closed (tunnel ID: %d)", destinationDevice, tunnelID)
-					sharedDeviceConnections := tm.tryGetSharedDeviceConnections()
-					if sharedDeviceConnections == nil {
-						tl.Warnf("Shutdown phase, cannot re-get device channel")
-						return
-					}
-
-					newDestinationDeviceTunnel, newConnId := sharedDeviceConnections.TryGetDeviceChannel(
-						destinationDevice, destinationDeviceTunnelId)
-					if newDestinationDeviceTunnel == nil {
-						tl.Warnf("No (new) tunnel channel found for device %v, retry with old ...", destinationDevice)
-					} else {
-						destinationDeviceTunnelId = newConnId
-						tl.Infoln("Re-trying to send data to device", destinationDevice, " with new tunnel ID:", tunnelID)
-					}
-				}
+				}, 5 /* retries */, tm)
+			if err != nil {
+				tl.Warnf("Failed to send tunnel data to device %v after retries: %v", destinationDevice, err)
+				return
 			}
 		}
 	}

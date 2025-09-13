@@ -247,6 +247,11 @@ enum FileDownloadProgressUpdateType {
 
 // Tunnel
 
+enum TunnelProtocol {
+  TUNNEL_PROTOCOL_TCP = 0;
+  TUNNEL_PROTOCOL_UDP = 1;
+}
+
 message TunnelData {
   TunnelCommand command = 1;
   uint64 tunnel_id = 2;
@@ -254,6 +259,7 @@ message TunnelData {
   optional string tunnel_destination_address = 4;
   optional bytes data = 3;
   optional uint32 data_package_counter = 6;
+  optional TunnelProtocol protocol = 7;
 }
 
 enum TunnelCommand {
@@ -276,6 +282,7 @@ message TunnelOutbound {
   string remote_service_name = 3;
   optional string remote_address = 4;
   optional bool enabled = 5;
+  optional TunnelProtocol protocol = 6;
 }
 
 message TunnelInbound {
@@ -284,6 +291,7 @@ message TunnelInbound {
   repeated string allowed_remote_device_ids = 3;
   optional bool enabled = 4;
   optional uint32 suggested_port = 5;
+  optional TunnelProtocol protocol = 6;
 }
 
 // ---- tunnels.json ---- TODO: move out of here  ----

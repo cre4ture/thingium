@@ -23,6 +23,8 @@ import (
 	"sync/atomic"
 	"weak"
 
+	"google.golang.org/protobuf/encoding/protojson"
+
 	"github.com/ek220/guf"
 	"github.com/syncthing/syncthing/internal/gen/bep"
 	"github.com/syncthing/syncthing/lib/logger"
@@ -70,8 +72,9 @@ func getConfigDescriptorInbound(cfg *bep.TunnelInbound, withAllowedDevices bool)
 }
 
 func getUiTunnelDescriptorOutbound(cfg *bep.TunnelOutbound) string {
-	plainDescriptor := fmt.Sprintf("out-%s>%s:%s:%s",
+	plainDescriptor := fmt.Sprintf("out-%s>%s:%v:%s:%s",
 		cfg.LocalListenAddress,
+		guf.DerefOr(cfg.Protocol, bep.TunnelProtocol_TUNNEL_PROTOCOL_TCP),
 		cfg.RemoteDeviceId,
 		cfg.RemoteServiceName,
 		guf.DerefOrDefault(cfg.RemoteAddress),
@@ -80,11 +83,19 @@ func getUiTunnelDescriptorOutbound(cfg *bep.TunnelOutbound) string {
 }
 
 func getUiTunnelDescriptorInbound(cfg *bep.TunnelInbound) string {
-	plainDescriptor := fmt.Sprintf("in-%s:%s",
+	plainDescriptor := fmt.Sprintf("in-%s:%s:%v",
 		cfg.LocalServiceName,
 		cfg.LocalDialAddress,
+		guf.DerefOr(cfg.Protocol, bep.TunnelProtocol_TUNNEL_PROTOCOL_TCP),
 	)
 	return fmt.Sprintf("i-%s-%s", cfg.LocalServiceName, hashDescriptor(plainDescriptor))
+}
+
+func getProtocolString(proto bep.TunnelProtocol) string {
+	if proto == bep.TunnelProtocol_TUNNEL_PROTOCOL_UDP {
+		return "udp"
+	}
+	return "tcp"
 }
 
 type tunnelBaseConfig struct {
@@ -98,10 +109,18 @@ type tunnelOutConfig struct {
 	json *bep.TunnelOutbound
 }
 
+func (c *tunnelOutConfig) getProtocol() bep.TunnelProtocol {
+	return guf.DerefOr(c.json.Protocol, bep.TunnelProtocol_TUNNEL_PROTOCOL_TCP)
+}
+
 type tunnelInConfig struct {
 	tunnelBaseConfig
 	allowedClients map[string]tunnelBaseConfig
 	json           *bep.TunnelInbound
+}
+
+func (c *tunnelInConfig) getProtocol() bep.TunnelProtocol {
+	return guf.DerefOr(c.json.Protocol, bep.TunnelProtocol_TUNNEL_PROTOCOL_TCP)
 }
 
 type tm_config struct {
@@ -111,7 +130,7 @@ type tm_config struct {
 }
 
 type tm_localTunnelEP struct {
-	endpoint           io.ReadWriteCloser
+	endpoint           io.WriteCloser
 	inUse              atomic.Pointer[map[uint64]*tm_localTunnelEP]
 	nextPackageCounter uint32 // used to identify lost packages
 }
@@ -171,8 +190,8 @@ func (m *TunnelManager) TunnelStatus() []map[string]interface{} {
 	return m.Status()
 }
 
-func (m *TunnelManager) AddTunnelOutbound(localListenAddress string, remoteDeviceID protocol.DeviceID, remoteServiceName string) error {
-	return m.AddOutboundTunnel(localListenAddress, remoteDeviceID, remoteServiceName)
+func (m *TunnelManager) AddTunnelOutbound(localListenAddress string, protocol string, remoteDeviceID protocol.DeviceID, remoteServiceName string) error {
+	return m.AddOutboundTunnel(localListenAddress, protocol, remoteDeviceID, remoteServiceName)
 }
 
 func (tm *TunnelManager) Serve(ctx context.Context) error {
@@ -198,10 +217,25 @@ func (tm *TunnelManager) Serve(ctx context.Context) error {
 	return nil
 }
 
-func (m *TunnelManager) AddOutboundTunnel(localListenAddress string, remoteDeviceID protocol.DeviceID, remoteServiceName string) error {
+func (m *TunnelManager) AddOutboundTunnel(localListenAddress string, protocolStr string, remoteDeviceID protocol.DeviceID, remoteServiceName string) error {
 	err := utils.DoProtected(m.config, func(config *tm_config) error {
+		var proto bep.TunnelProtocol
+		if protocolStr == "tcp" {
+			proto = bep.TunnelProtocol_TUNNEL_PROTOCOL_TCP
+		} else if protocolStr == "udp" {
+			proto = bep.TunnelProtocol_TUNNEL_PROTOCOL_UDP
+		} else {
+			return fmt.Errorf("%w: invalid protocol %s", ErrInvalidAction, protocolStr)
+		}
 		if localListenAddress == "127.0.0.1:0" {
-			suggestedPort := GetRandomFreePort()
+			var suggestedPort int
+			if proto == bep.TunnelProtocol_TUNNEL_PROTOCOL_TCP {
+				suggestedPort = GetRandomFreePortTCP()
+			} else if proto == bep.TunnelProtocol_TUNNEL_PROTOCOL_UDP {
+				suggestedPort = GetRandomFreePortUDP()
+			} else {
+				return fmt.Errorf("%w: invalid protocol(2) %v", ErrInvalidAction, proto)
+			}
 			localListenAddress = fmt.Sprintf("127.0.0.1:%d", suggestedPort)
 		}
 
@@ -209,6 +243,7 @@ func (m *TunnelManager) AddOutboundTunnel(localListenAddress string, remoteDevic
 			LocalListenAddress: localListenAddress,
 			RemoteDeviceId:     remoteDeviceID.String(),
 			RemoteServiceName:  remoteServiceName,
+			Protocol:           &proto,
 		}
 		descriptor := getConfigDescriptorOutbound(newConfig)
 
@@ -247,18 +282,24 @@ func (m *TunnelManager) Status() []map[string]interface{} {
 		if offerings[deviceID.String()] == nil {
 			offerings[deviceID.String()] = make(map[string]map[string]interface{})
 		}
-		for serviceName, suggestedPort := range deviceOffers {
+		for serviceName, offer := range deviceOffers {
+			protoString := "tcp"
+			if offer.protocol == bep.TunnelProtocol_TUNNEL_PROTOCOL_UDP {
+				protoString = "udp"
+			}
 			info := map[string]interface{}{
-				"localListenAddress": "127.0.0.1:" + strconv.Itoa(int(suggestedPort)),
+				"localListenAddress": "127.0.0.1:" + strconv.Itoa(int(offer.suggestedPort)),
 				"remoteDeviceID":     deviceID.String(),
 				"serviceID":          serviceName,
 				"offered":            true,
 				"type":               "outbound",
+				"protocol":           protoString,
 				"uiID": getUiTunnelDescriptorOutbound(&bep.TunnelOutbound{
-					LocalListenAddress: "127.0.0.1:" + strconv.Itoa(int(suggestedPort)),
+					LocalListenAddress: "127.0.0.1:" + strconv.Itoa(int(offer.suggestedPort)),
 					RemoteDeviceId:     deviceID.String(),
 					RemoteServiceName:  serviceName,
 					RemoteAddress:      nil,
+					Protocol:           &offer.protocol,
 				}),
 			}
 			offerings[deviceID.String()][serviceName] = info
@@ -274,6 +315,7 @@ func (m *TunnelManager) Status() []map[string]interface{} {
 				"serviceID":              tunnel.json.LocalServiceName,
 				"allowedRemoteDeviceIDs": tunnel.json.AllowedRemoteDeviceIds,
 				"localDialAddress":       tunnel.json.LocalDialAddress,
+				"protocol":               getProtocolString(tunnel.getProtocol()),
 				"active":                 guf.DerefOr(tunnel.json.Enabled, true),
 				"type":                   "inbound",
 				"uiID":                   getUiTunnelDescriptorInbound(tunnel.json),
@@ -291,6 +333,7 @@ func (m *TunnelManager) Status() []map[string]interface{} {
 				"remoteDeviceID":     tunnel.json.RemoteDeviceId,
 				"serviceID":          tunnel.json.RemoteServiceName,
 				"remoteAddress":      tunnel.json.RemoteAddress,
+				"protocol":           getProtocolString(tunnel.getProtocol()),
 				"active":             guf.DerefOr(tunnel.json.Enabled, true),
 				"type":               "outbound",
 				"uiID":               getUiTunnelDescriptorOutbound(tunnel.json),
@@ -419,11 +462,13 @@ func (tm *TunnelManager) updateInConfig(newInTunnels []*bep.TunnelInbound) {
 
 func generateOfferCommand(json *bep.TunnelInbound) *protocol.TunnelData {
 	suggestedPort := strconv.FormatUint(uint64(guf.DerefOr(json.SuggestedPort, 0)), 10)
+	proto := guf.DerefOr(json.Protocol, bep.TunnelProtocol_TUNNEL_PROTOCOL_TCP)
 	return &protocol.TunnelData{
 		D: &bep.TunnelData{
 			Command:                  bep.TunnelCommand_TUNNEL_COMMAND_OFFER,
 			RemoteServiceName:        &json.LocalServiceName,
 			TunnelDestinationAddress: &suggestedPort,
+			Protocol:                 &proto,
 		},
 	}
 }
@@ -442,7 +487,7 @@ func (tm *TunnelManager) generateTunnelID() uint64 {
 	return tm.localListeners.generateTunnelID()
 }
 
-func GetRandomFreePort() int {
+func GetRandomFreePortTCP() int {
 	a, err := net.ResolveTCPAddr("tcp", "localhost:0")
 	if err != nil {
 		tl.Warnf("Failed to resolve TCP address: %v", err)
@@ -466,6 +511,30 @@ func GetRandomFreePort() int {
 	return addr.Port
 }
 
+func GetRandomFreePortUDP() int {
+	a, err := net.ResolveUDPAddr("udp", "localhost:0")
+	if err != nil {
+		tl.Warnf("Failed to resolve UDP address: %v", err)
+		panic("no free ports")
+	}
+
+	l, err := net.ListenUDP("udp", a)
+	if err != nil {
+		tl.Warnf("Failed to listen on UDP address: %v", err)
+		panic("no free ports")
+	}
+	defer l.Close()
+
+	addr, ok := l.LocalAddr().(*net.UDPAddr)
+	if !ok {
+		tl.Warnf("Failed to get UDP address from listener")
+		panic("no free ports")
+	}
+
+	tl.Debugf("Found free UDP port: %d", addr.Port)
+	return addr.Port
+}
+
 func loadTunnelConfig(path string) (*bep.TunnelConfig, error) {
 	tl.Debugln("Loading tunnel config from file:", path)
 	file, err := os.Open(path)
@@ -474,9 +543,13 @@ func loadTunnelConfig(path string) (*bep.TunnelConfig, error) {
 	}
 	defer file.Close()
 
+	data, err := io.ReadAll(file)
+	if err != nil {
+		return nil, err
+	}
+
 	var config bep.TunnelConfig
-	decoder := json.NewDecoder(file)
-	if err := decoder.Decode(&config); err != nil {
+	if err := protojson.Unmarshal(data, &config); err != nil {
 		return nil, err
 	}
 

@@ -8,6 +8,7 @@ package model
 
 import (
 	"context"
+	"io"
 	"net"
 	"slices"
 	"time"
@@ -18,6 +19,11 @@ import (
 	"github.com/syncthing/syncthing/lib/utils"
 )
 
+type offeringData struct {
+	suggestedPort uint32
+	protocol      bep.TunnelProtocol
+}
+
 // only for one device connection.
 type TunnelManagerDeviceConnectionHandler struct {
 	connectionTime   time.Time
@@ -27,7 +33,7 @@ type TunnelManagerDeviceConnectionHandler struct {
 	inUseMap         map[uint64]*tm_localTunnelEP
 	cancel           context.CancelFunc
 	tunnelOut        chan<- *protocol.TunnelData
-	serviceOfferings *utils.Protected[map[string]uint32]
+	serviceOfferings *utils.Protected[map[string]offeringData]
 }
 
 func NewTunnelManagerDeviceConnectionHandler(
@@ -45,13 +51,13 @@ func NewTunnelManagerDeviceConnectionHandler(
 		inUseMap:         make(map[uint64]*tm_localTunnelEP),
 		cancel:           cancel,
 		tunnelOut:        tunnelOut,
-		serviceOfferings: utils.NewProtected(make(map[string]uint32)),
+		serviceOfferings: utils.NewProtected(make(map[string]offeringData)),
 	}
 }
 
-func (tm *TunnelManagerDeviceConnectionHandler) GetCopyOfServiceOfferings() map[string]uint32 {
-	return utils.DoProtected(tm.serviceOfferings, func(offerings map[string]uint32) map[string]uint32 {
-		copied := make(map[string]uint32, len(offerings))
+func (tm *TunnelManagerDeviceConnectionHandler) GetCopyOfServiceOfferings() map[string]offeringData {
+	return utils.DoProtected(tm.serviceOfferings, func(offerings map[string]offeringData) map[string]offeringData {
+		copied := make(map[string]offeringData, len(offerings))
 		for k, v := range offerings {
 			copied[k] = v
 		}
@@ -90,60 +96,80 @@ func (tm *TunnelManagerDeviceConnectionHandler) mainLoop(ctx context.Context, tu
 	}
 }
 
-func (tm *TunnelManagerDeviceConnectionHandler) forwardRemoteDeviceTunnelData(data *protocol.TunnelData) {
-	tl.Debugln("Forwarding remote tunnel data, from device ID:", tm.fromDevice, "command:", data.D.Command)
-	switch data.D.Command {
-	case bep.TunnelCommand_TUNNEL_COMMAND_OPEN:
-		if data.D.RemoteServiceName == nil {
-			tl.Warnf("No remote service name specified")
-			return
-		}
-		service := tm.getEnabledInboundServiceDeviceIdChecked(*data.D.RemoteServiceName)
-		if service == nil {
-			return
-		}
-		var TunnelDestinationAddress string
-		if service.json.LocalDialAddress == "any" {
-			if data.D.TunnelDestinationAddress == nil {
-				tl.Warnf("No tunnel destination specified")
-				return
-			}
-			TunnelDestinationAddress = *data.D.TunnelDestinationAddress
-		} else {
-			TunnelDestinationAddress = service.json.LocalDialAddress
-		}
+func (tm *TunnelManagerDeviceConnectionHandler) handleRemoteDeviceOpenCommand(data *protocol.TunnelData) {
+	if data.D.RemoteServiceName == nil {
+		tl.Warnf("No remote service name specified")
+		return
+	}
+	service := tm.getEnabledInboundServiceDeviceIdChecked(*data.D.RemoteServiceName)
+	if service == nil {
+		return
+	}
+	isUdp := service.getProtocol() == bep.TunnelProtocol_TUNNEL_PROTOCOL_UDP
 
+	var TunnelDestinationAddress string
+	if service.json.LocalDialAddress == "any" {
+		if data.D.TunnelDestinationAddress == nil {
+			tl.Warnf("No tunnel destination specified")
+			return
+		}
+		TunnelDestinationAddress = *data.D.TunnelDestinationAddress
+	} else {
+		TunnelDestinationAddress = service.json.LocalDialAddress
+	}
+
+	var conn io.ReadWriteCloser
+	if isUdp {
+		addr, err := net.ResolveUDPAddr("udp", TunnelDestinationAddress)
+		if err != nil {
+			tl.Warnf("Failed to resolve UDP tunnel destination: %v", err)
+			return
+		}
+		conn, err = net.DialUDP("udp", nil, addr)
+		if err != nil {
+			tl.Warnf("Failed to dial UDP tunnel destination: %v", err)
+			return
+		}
+	} else {
 		addr, err := net.ResolveTCPAddr("tcp", TunnelDestinationAddress)
 		if err != nil {
-			tl.Warnf("Failed to resolve tunnel destination: %v", err)
+			tl.Warnf("Failed to resolve TCP tunnel destination: %v", err)
 			return
 		}
-		conn, err := net.DialTCP("tcp", nil, addr)
+		conn, err = net.DialTCP("tcp", nil, addr)
 		if err != nil {
 			tl.Warnf("Failed to dial tunnel destination: %v", err)
 			return
 		}
-		tm.sharedEndpoints.registerLocalTunnelEndpoint(tm.fromDevice, data.D.TunnelId, conn)
-		go tm.sharedEndpoints.handleLocalTunnelEndpoint(service.ctx, data.D.TunnelId, conn, tm.fromDevice, *data.D.RemoteServiceName, TunnelDestinationAddress)
+	}
+	tm.sharedEndpoints.registerLocalTunnelEndpoint(tm.fromDevice, data.D.TunnelId, conn)
+	go tm.sharedEndpoints.handleLocalTunnelEndpoint(service.ctx, data.D.TunnelId, conn, tm.fromDevice, *data.D.RemoteServiceName, TunnelDestinationAddress)
+}
+
+func (tm *TunnelManagerDeviceConnectionHandler) forwardRemoteDeviceTunnelData(data *protocol.TunnelData) {
+	tl.Debugln("Forwarding remote tunnel data, from device ID:", tm.fromDevice, "command:", data.D.Command)
+	switch data.D.Command {
+	case bep.TunnelCommand_TUNNEL_COMMAND_OPEN:
+		tm.handleRemoteDeviceOpenCommand(data)
 
 	case bep.TunnelCommand_TUNNEL_COMMAND_DATA:
-		tcpConn, ok := tm.getAndLockTunnelEP(data.D.TunnelId)
+		tcpOrUdpConn, ok := tm.getAndLockTunnelEP(data.D.TunnelId)
 		if ok {
 			func() {
 				if data.D.DataPackageCounter != nil {
-					expectedDataCounter := tcpConn.nextPackageCounter
+					expectedDataCounter := tcpOrUdpConn.nextPackageCounter
 					if expectedDataCounter != *data.D.DataPackageCounter {
 						tl.Warnf("close connection due to data counter missmatch (expected %d, got %d)",
 							expectedDataCounter, *data.D.DataPackageCounter)
 
 						// close connection as we have no way to recover from this
-						tcpConn.endpoint.Close()
+						tcpOrUdpConn.endpoint.Close()
 						return
 					}
 				}
 
-				tcpConn.nextPackageCounter++
-				_, err := tcpConn.endpoint.Write(data.D.Data)
+				tcpOrUdpConn.nextPackageCounter++
+				_, err := tcpOrUdpConn.endpoint.Write(data.D.Data)
 				if err != nil {
 					tl.Warnf("Failed to forward tunnel data: %v", err)
 				}
@@ -154,8 +180,11 @@ func (tm *TunnelManagerDeviceConnectionHandler) forwardRemoteDeviceTunnelData(da
 	case bep.TunnelCommand_TUNNEL_COMMAND_CLOSE:
 		tm.sharedEndpoints.closeLocalTunnelEndpoint(tm.fromDevice, data.D.TunnelId)
 	case bep.TunnelCommand_TUNNEL_COMMAND_OFFER:
-		tm.serviceOfferings.DoProtected(func(offerings map[string]uint32) {
-			offerings[*data.D.RemoteServiceName] = parseUint32Or(guf.DerefOrDefault(data.D.TunnelDestinationAddress), 0)
+		tm.serviceOfferings.DoProtected(func(offerings map[string]offeringData) {
+			offerings[*data.D.RemoteServiceName] = offeringData{
+				suggestedPort: parseUint32Or(guf.DerefOrDefault(data.D.TunnelDestinationAddress), 0),
+				protocol:      guf.DerefOr(data.D.Protocol, bep.TunnelProtocol_TUNNEL_PROTOCOL_TCP),
+			}
 		})
 	default: // unknown command
 		tl.Warnf("Unknown tunnel command: %v", data.D.Command)

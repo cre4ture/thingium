@@ -677,6 +677,7 @@ angular.module('syncthing.core')
                 localListenAddress: tunnel.localListenAddress,
                 remoteDeviceID: tunnel.remoteDeviceID,
                 remoteServiceName: tunnel.serviceID,
+                protocol: tunnel.protocol,
             };
 
             $http.post(urlbase + '/system/tunnels-add-outbound', payload)

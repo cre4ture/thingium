@@ -86,6 +86,45 @@ func (m *TunnelManagerDeviceConnectionsManager) TryGetDeviceChannel(
 	return tunnelOut, connId
 }
 
+func (m *TunnelManagerDeviceConnectionsManager) TrySendTunnelDataWithRetries(
+	ctx context.Context,
+	deviceID protocol.DeviceID,
+	data *protocol.TunnelData,
+	maxRetries uint,
+) error {
+
+	var err error
+	var try uint
+	for try = 0; (try < maxRetries) && ctx.Err() == nil; try++ {
+		err = m.TrySendTunnelData(deviceID, data)
+		if err == nil {
+			return nil
+		} else {
+			// sleep and retry - device might not yet be connected
+			retry := func() bool {
+				timer := time.NewTimer(time.Second)
+				defer timer.Stop()
+
+				tl.Warnf("Failed to send tunnel data to device %v: %v", deviceID, err)
+				select {
+				case <-ctx.Done():
+					tl.Debugln("Context done, stopping listener")
+					return false
+				case <-timer.C:
+					tl.Debugln("Retrying to send tunnel data to device", deviceID)
+					return true
+				}
+			}()
+
+			if !retry {
+				return context.Canceled
+			}
+		}
+	}
+
+	return err
+}
+
 func (m *TunnelManagerDeviceConnectionsManager) TrySendTunnelData(deviceID protocol.DeviceID, data *protocol.TunnelData) error {
 	tunnelOut, _ := m.TryGetDeviceChannel(deviceID, "")
 	if tunnelOut == nil {
@@ -100,13 +139,13 @@ func (m *TunnelManagerDeviceConnectionsManager) TrySendTunnelData(deviceID proto
 	}
 }
 
-func (m *TunnelManagerDeviceConnectionsManager) GetCopyOfAllServiceOfferings() map[protocol.DeviceID]map[string]uint32 {
-	return utils.DoProtected(m.deviceConnections, func(dc *tm_deviceConnections) map[protocol.DeviceID]map[string]uint32 {
-		copied := make(map[protocol.DeviceID]map[string]uint32, len(dc.deviceConnections))
+func (m *TunnelManagerDeviceConnectionsManager) GetCopyOfAllServiceOfferings() map[protocol.DeviceID]map[string]offeringData {
+	return utils.DoProtected(m.deviceConnections, func(dc *tm_deviceConnections) map[protocol.DeviceID]map[string]offeringData {
+		copied := make(map[protocol.DeviceID]map[string]offeringData, len(dc.deviceConnections))
 		for deviceID, handlers := range dc.deviceConnections {
 			for _, handler := range handlers {
 				if _, exists := copied[deviceID]; !exists {
-					copied[deviceID] = make(map[string]uint32)
+					copied[deviceID] = make(map[string]offeringData)
 				}
 
 				// merge service offerings

@@ -74,7 +74,7 @@ type Availability struct {
 type TunnelManagerInterface interface {
 	TunnelStatus() []map[string]interface{}
 	ModifyTunnel(id string, action string, params map[string]string) error
-	AddTunnelOutbound(localListenAddress string, remoteDeviceID protocol.DeviceID, remoteServiceName string) error
+	AddTunnelOutbound(localListenAddress string, protocol string, remoteDeviceID protocol.DeviceID, remoteServiceName string) error
 	ReloadConfig() error
 }
 
