@@ -72,7 +72,7 @@ func (tm *TunnelManagerEndpointManager) closeLocalTunnelEndpoint(deviceID protoc
 	if ok {
 		tcpConn.endpoint.Close()
 	} else {
-		tl.Infof("Close: No TCP connection found for device %v, TunnelID: %d", deviceID, tunnelID)
+		tl.Debugf("Close: No TCP connection found for device %v, TunnelID: %d", deviceID, tunnelID)
 	}
 }
 
@@ -101,7 +101,7 @@ func (tm *TunnelManagerEndpointManager) handleLocalTunnelEndpoint(
 	destinationServiceName string,
 	destinationAddress string,
 ) {
-	tl.Infoln("TunnelManager: Handling local tunnel endpoint, tunnel ID:", tunnelID,
+	tl.Debugln("TunnelManager: Handling local tunnel endpoint, tunnel ID:", tunnelID,
 		"destination device:", destinationDevice,
 		"destination service name:", destinationServiceName,
 		"destination address:", destinationAddress)
@@ -121,7 +121,7 @@ func (tm *TunnelManagerEndpointManager) handleLocalTunnelEndpoint(
 				Command:  bep.TunnelCommand_TUNNEL_COMMAND_CLOSE,
 			},
 		})
-		tl.Infoln("Closed local tunnel endpoint, tunnel ID:", tunnelID)
+		tl.Debugln("Closed local tunnel endpoint, tunnel ID:", tunnelID)
 	}()
 
 	stop := context.AfterFunc(ctx, func() {
@@ -143,7 +143,7 @@ func (tm *TunnelManagerEndpointManager) handleLocalTunnelEndpoint(
 
 		destinationDeviceTunnel = sharedDeviceConnections.TryGetDeviceChannel(destinationDevice)
 		if destinationDeviceTunnel == nil {
-			tl.Warnf("No tunnel channel found for device %v, cannot handle local tunnel endpoint",
+			tl.Debugf("No tunnel channel found for device %v, cannot handle local tunnel endpoint",
 				destinationDevice)
 			return
 		}
@@ -189,7 +189,7 @@ func (tm *TunnelManagerEndpointManager) handleLocalTunnelEndpoint(
 					// sent successfully
 					break loop_send
 				default:
-					tl.Warnf("Failed to send data to device %v, tunnel channel may be closed (tunnel ID: %d)", destinationDevice, tunnelID)
+					tl.Debugf("Failed to send data to device %v, tunnel channel may be closed (tunnel ID: %d)", destinationDevice, tunnelID)
 					{
 						sharedDeviceConnections := tm.tryGetSharedDeviceConnections()
 						if sharedDeviceConnections == nil {
@@ -199,7 +199,7 @@ func (tm *TunnelManagerEndpointManager) handleLocalTunnelEndpoint(
 
 						destinationDeviceTunnel = sharedDeviceConnections.TryGetDeviceChannel(destinationDevice)
 						if destinationDeviceTunnel == nil {
-							tl.Warnf("No tunnel channel found for device %v, cannot handle local tunnel endpoint",
+							tl.Debugf("No tunnel channel found for device %v, cannot handle local tunnel endpoint",
 								destinationDevice)
 							return
 						}

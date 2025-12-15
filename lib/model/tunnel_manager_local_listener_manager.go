@@ -51,7 +51,7 @@ func (tm *LocalListenerManager) ServeListener(
 	destinationServiceName string,
 	destinationAddress *string,
 ) error {
-	tl.Infoln("ServeListener started for address:", listenAddress, "destination device:", destinationDevice, "destination address:", destinationAddress)
+	tl.Debugln("ServeListener started for address:", listenAddress, "destination device:", destinationDevice, "destination address:", destinationAddress)
 	listener, err := net.Listen("tcp", listenAddress)
 	if err != nil {
 		return fmt.Errorf("failed to listen on %s: %w", listenAddress, err)
@@ -110,7 +110,7 @@ func (tm *LocalListenerManager) handleAcceptedListenConnection(
 				timer := time.NewTimer(time.Second)
 				defer timer.Stop()
 
-				tl.Warnf("Failed to send tunnel data to device %v: %v", destinationDevice, err)
+				tl.Debugf("Failed to send tunnel data to device %v: %v", destinationDevice, err)
 				select {
 				case <-ctx.Done():
 					tl.Debugln("Context done, stopping listener")
@@ -205,13 +205,13 @@ func (tm *LocalListenerManager) serveOutboundTunnel(tunnel *tunnelOutConfig) {
 	tl.Debugln("Starting listener for tunnel, device:", tunnel)
 	device, err := protocol.DeviceIDFromString(tunnel.json.RemoteDeviceId)
 	if err != nil {
-		tl.Warnln("failed to parse device ID:", err)
+		tl.Debugln("failed to parse device ID:", err)
 	}
 	go func() {
 		err := tm.ServeListener(tunnel.ctx, tunnel.json.LocalListenAddress,
 			device, tunnel.json.RemoteServiceName, tunnel.json.RemoteAddress)
 		if err != nil {
-			tl.Warnf("Failed to serve listener for tunnel %s: %v", tunnel.descriptor, err)
+			tl.Debugf("Failed to serve listener for tunnel %s: %v", tunnel.descriptor, err)
 		} else {
 			tl.Debugln("Listener for tunnel", tunnel.descriptor, "stopped")
 		}
