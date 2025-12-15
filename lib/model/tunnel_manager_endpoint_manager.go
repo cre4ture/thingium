@@ -203,7 +203,7 @@ func (tm *TunnelManagerEndpointManager) handleLocalTunnelEndpoint(
 								destinationDevice)
 							return
 						}
-						tl.Debugf("Re-trying to send data to device", destinationDevice, "tunnel ID:", tunnelID)
+						tl.Debugln("Re-trying to send data to device", destinationDevice, "tunnel ID:", tunnelID)
 					}
 				}
 			}

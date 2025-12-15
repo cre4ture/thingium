@@ -30,7 +30,7 @@ func repeatedDeviceID(v byte) (d protocol.DeviceID) {
 
 func TestTunnelManager_ServeLocalListener(t *testing.T) {
 	// Activate debug logging
-	l.SetDebug("module", true)
+	//l.SetDebug("module", true)
 
 	// Mock device ID and addresses
 	serverDeviceID := repeatedDeviceID(0x11)
@@ -130,7 +130,7 @@ func TestTunnelManager_ServeLocalListener(t *testing.T) {
 
 func TestTunnelManager_HandleOpenRemoteCommand(t *testing.T) {
 	// Activate debug logging
-	l.SetDebug("module", true)
+	//l.SetDebug("module", true)
 
 	clientDeviceID := repeatedDeviceID(0x22)
 
@@ -238,7 +238,7 @@ loop1:
 
 func TestTunnelManager_HandleOpenRemoteCommand_NamedService(t *testing.T) {
 	// Activate debug logging
-	l.SetDebug("module", true)
+	//l.SetDebug("module", true)
 
 	clientDeviceID := repeatedDeviceID(0x33)
 	// Mock device ID and addresses
@@ -343,7 +343,7 @@ loop1:
 
 func TestTunnelManager_HandleOpenRemoteCommand_DisallowedClient(t *testing.T) {
 	// Activate debug logging
-	l.SetDebug("module", true)
+	//l.SetDebug("module", true)
 
 	clientDeviceID := repeatedDeviceID(0x33)
 	disallowedClientDeviceID := repeatedDeviceID(0x44)
