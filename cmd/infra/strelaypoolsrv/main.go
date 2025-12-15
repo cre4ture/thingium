@@ -17,6 +17,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -31,7 +32,6 @@ import (
 	"github.com/syncthing/syncthing/lib/protocol"
 	"github.com/syncthing/syncthing/lib/rand"
 	"github.com/syncthing/syncthing/lib/relay/client"
-	"github.com/syncthing/syncthing/lib/sync"
 	"github.com/syncthing/syncthing/lib/tlsutil"
 )
 
@@ -115,7 +115,7 @@ var (
 
 	requests chan request
 
-	mut             = sync.NewRWMutex()
+	mut             sync.RWMutex
 	knownRelays     = make([]*relay, 0)
 	permanentRelays = make([]*relay, 0)
 	evictionTimers  = make(map[string]*time.Timer)
@@ -162,7 +162,7 @@ func main() {
 
 	testCert = createTestCertificate()
 
-	for i := 0; i < requestProcessors; i++ {
+	for range requestProcessors {
 		go requestProcessor(geoip)
 	}
 
@@ -180,7 +180,7 @@ func main() {
 				relayTestsTotal.WithLabelValues("success").Inc()
 			}
 		}
-		// Run the the stats refresher once the relays are loaded.
+		// Run the stats refresher once the relays are loaded.
 		statsRefresher(statsRefresh)
 	}()
 
@@ -620,7 +620,7 @@ func createTestCertificate() tls.Certificate {
 	}
 
 	certFile, keyFile := filepath.Join(tmpDir, "cert.pem"), filepath.Join(tmpDir, "key.pem")
-	cert, err := tlsutil.NewCertificate(certFile, keyFile, "relaypoolsrv", 20*365)
+	cert, err := tlsutil.NewCertificate(certFile, keyFile, "relaypoolsrv", 20*365, false)
 	if err != nil {
 		log.Fatalln("Failed to create test X509 key pair:", err)
 	}
@@ -653,6 +653,7 @@ func getLocation(host string, geoip *geoip.Provider) location {
 
 type loggingResponseWriter struct {
 	http.ResponseWriter
+
 	statusCode int
 }
 
