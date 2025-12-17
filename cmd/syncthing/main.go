@@ -39,10 +39,10 @@ import (
 	"github.com/syncthing/syncthing/cmd/syncthing/cli"
 	"github.com/syncthing/syncthing/cmd/syncthing/decrypt"
 	"github.com/syncthing/syncthing/cmd/syncthing/generate"
+	"github.com/syncthing/syncthing/cmd/syncthing/purge"
 	"github.com/syncthing/syncthing/internal/db"
 	"github.com/syncthing/syncthing/internal/db/sqlite"
 	"github.com/syncthing/syncthing/internal/slogutil"
-	"github.com/syncthing/syncthing/cmd/syncthing/purge"
 	_ "github.com/syncthing/syncthing/lib/automaxprocs"
 	"github.com/syncthing/syncthing/lib/build"
 	"github.com/syncthing/syncthing/lib/config"
@@ -131,15 +131,15 @@ type CLI struct {
 	Serve serveCmd `cmd:"" help:"Run Syncthing (default)" default:"withargs"`
 	CLI   cli.CLI  `cmd:"" help:"Command line interface for Syncthing"`
 
-	Browser  browserCmd   `cmd:"" help:"Open GUI in browser, then exit"`
-	Decrypt  decrypt.CLI  `cmd:"" help:"Decrypt or verify an encrypted folder"`
-	DeviceID deviceIDCmd  `cmd:"" help:"Show device ID, then exit"`
+	Browser            browserCmd                   `cmd:"" help:"Open GUI in browser, then exit"`
+	Decrypt            decrypt.CLI                  `cmd:"" help:"Decrypt or verify an encrypted folder"`
+	DeviceID           deviceIDCmd                  `cmd:"" help:"Show device ID, then exit"`
 	Generate           generate.CLI                 `cmd:"" help:"Generate key and config, then exit"`
-	Paths    pathsCmd     `cmd:"" help:"Show configuration paths, then exit"`
-	Upgrade  upgradeCmd   `cmd:"" help:"Perform or check for upgrade, then exit"`
-	Version  versionCmd   `cmd:"" help:"Show current version, then exit"`
-	Debug    debugCmd     `cmd:"" help:"Various debugging commands"`
-	Purge    purge.CLI    `cmd:"" help:"Purge ignored local files of folder"`
+	Paths              pathsCmd                     `cmd:"" help:"Show configuration paths, then exit"`
+	Upgrade            upgradeCmd                   `cmd:"" help:"Perform or check for upgrade, then exit"`
+	Version            versionCmd                   `cmd:"" help:"Show current version, then exit"`
+	Debug              debugCmd                     `cmd:"" help:"Various debugging commands"`
+	Purge              purge.CLI                    `cmd:"" help:"Purge ignored local files of folder"`
 	InstallCompletions kongplete.InstallCompletions `cmd:"" help:"Print commands to install shell completions"`
 }
 
@@ -179,7 +179,7 @@ type serveCmd struct {
 	DebugGUIAssetsDir   string `help:"Directory to load GUI assets from" placeholder:"PATH" env:"STGUIASSETS"`
 	DebugPerfStats      bool   `help:"Write running performance statistics to perf-$pid.csv (Unix only)" env:"STPERFSTATS"`
 	DebugProfileBlock   bool   `help:"Write block profiles to block-$pid-$timestamp.pprof every 20 seconds" env:"STBLOCKPROFILE"`
-	DebugProfileCPU           bool          `help:"Write a CPU profile to cpu-$pid.pprof on exit" env:"STCPUPROFILE"`
+	DebugProfileCPU     bool   `help:"Write a CPU profile to cpu-$pid.pprof on exit" env:"STCPUPROFILE"`
 	DebugProfileHeap    bool   `help:"Write heap profiles to heap-$pid-$timestamp.pprof each time heap usage increases" env:"STHEAPPROFILE"`
 	DebugProfilerListen string `help:"Network profiler listen address" placeholder:"ADDR" env:"STPROFILER" `
 	DebugResetDeltaIdxs bool   `help:"Reset delta index IDs, forcing a full index exchange"`
@@ -309,7 +309,7 @@ func (c *serveCmd) Run() error {
 
 	if c.InternalInnerProcess {
 		c.syncthingMain()
-			} else {
+	} else {
 		c.monitorMain()
 	}
 	return nil
@@ -784,11 +784,11 @@ func initialAutoUpgradeCheck(misc *db.Typed) (upgrade.Release, error) {
 // suitable time after they have gone out of fashion.
 func cleanConfigDirectory() {
 	patterns := map[string]time.Duration{
-		"panic-*.log":        7 * 24 * time.Hour,  // keep panic logs for a week
-		"audit-*.log":        7 * 24 * time.Hour,  // keep audit logs for a week
+		"panic-*.log":               7 * 24 * time.Hour,  // keep panic logs for a week
+		"audit-*.log":               7 * 24 * time.Hour,  // keep audit logs for a week
 		"index-v0.14.0.db-migrated": 14 * 24 * time.Hour, // keep old index format for two weeks
-		"config.xml.v*":      30 * 24 * time.Hour, // old config versions for a month
-		"support-bundle-*":   30 * 24 * time.Hour, // keep old support bundle zip or folder for a month
+		"config.xml.v*":             30 * 24 * time.Hour, // old config versions for a month
+		"support-bundle-*":          30 * 24 * time.Hour, // keep old support bundle zip or folder for a month
 	}
 
 	locations := slices.Compact([]string{
@@ -797,24 +797,24 @@ func cleanConfigDirectory() {
 	})
 	for _, loc := range locations {
 		fs := fs.NewFilesystem(fs.FilesystemTypeBasic, loc)
-	for pat, dur := range patterns {
+		for pat, dur := range patterns {
 			entries, err := fs.Glob(pat)
-		if err != nil {
-				slog.Warn("Failed to clean config directory", slogutil.Error(err))
-			continue
-		}
-
-			for _, entry := range entries {
-				info, err := fs.Lstat(entry)
 			if err != nil {
-					slog.Warn("Failed to clean config directory", slogutil.Error(err))
+				slog.Warn("Failed to clean config directory", slogutil.Error(err))
 				continue
 			}
 
-			if time.Since(info.ModTime()) > dur {
+			for _, entry := range entries {
+				info, err := fs.Lstat(entry)
+				if err != nil {
+					slog.Warn("Failed to clean config directory", slogutil.Error(err))
+					continue
+				}
+
+				if time.Since(info.ModTime()) > dur {
 					if err = fs.RemoveAll(entry); err != nil {
 						slog.Warn("Failed to clean config directory", slogutil.Error(err))
-				} else {
+					} else {
 						slog.Warn("Cleaned away old file", slogutil.FilePath(filepath.Base(entry)))
 					}
 				}
@@ -863,7 +863,7 @@ func (deviceIDCmd) Run() error {
 	if err != nil {
 		slog.Error("Failed to read device ID", slogutil.Error(err))
 		os.Exit(svcutil.ExitError.AsInt())
-		}
+	}
 
 	fmt.Println(protocol.NewDeviceID(cert.Certificate[0]))
 	return nil
