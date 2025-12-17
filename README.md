@@ -9,6 +9,11 @@
 ## Thingium is a Syncthing Fork
 It's a personal experiment. It tries to simplify automatic updates for a few of the features I added to Syncthing, but where not (yet?) accepted for syncthing vanilla version.
 
+### Features
+
+- Sharding of files using ignore pattern based on hashed filename [PR documentation](https://github.com/cre4ture/thingium/pull/3)
+- TCP port tunneling through syncthing network [PR documentation](https://github.com/cre4ture/thingium/pull/4)
+
 ### Compatibility
 Thingium is fully compatible with Syncthing on protocol and configuration and database files.
 It is designed to be able to replace Syncthing, offering additional, compatible features.
@@ -19,11 +24,6 @@ If you like to replace Syncthing with Thingium, just point Thingium to the confi
 
 Default Thingium GUI URL: http://127.0.0.1:8386/
 Default Thingium QUIC/TCP listen port: [::]:22002
-
-### Features
-
-- Sharding of files using ignore pattern based on hashed filename [PR documentation](https://github.com/cre4ture/thingium/pull/3)
-- TCP port tunneling through syncthing network
 
 ## Following is original Syncthing Readme
 
