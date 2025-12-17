@@ -622,7 +622,7 @@ jobs:
     if: github.repository_owner == 'cre4ture' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && (github.ref == 'refs/heads/release-nightly' || startsWith(github.ref, 'refs/tags/v'))
     environment: release
     needs:
-      - codesign-windows
+      - package-windows
       - package-linux
       - package-illumos
       - package-macos
@@ -815,7 +815,7 @@ jobs:
 
   publish-release-files:
     name: Publish release files
-    if: github.repository_owner == 'syncthing' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && (github.ref == 'refs/heads/release' || startsWith(github.ref, 'refs/tags/v'))
+    if: github.repository_owner == 'cre4ture' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && (github.ref == 'refs/heads/release' || startsWith(github.ref, 'refs/tags/v'))
     environment: release
     permissions:
       contents: write
@@ -840,6 +840,7 @@ jobs:
           path: packages
 
       - name: Download debian packages
+        if: false
         uses: actions/download-artifact@v4
         with:
           name: debian-packages
@@ -852,6 +853,7 @@ jobs:
 
       - name: Push to object store (${{ env.VERSION }})
         uses: docker://docker.io/rclone/rclone:latest
+        if: false
         env:
           RCLONE_CONFIG_OBJSTORE_TYPE: s3
           RCLONE_CONFIG_OBJSTORE_PROVIDER: ${{ secrets.S3_PROVIDER }}
@@ -865,6 +867,7 @@ jobs:
 
       - name: Push to object store (latest)
         uses: docker://docker.io/rclone/rclone:latest
+        if: false
         env:
           RCLONE_CONFIG_OBJSTORE_TYPE: s3
           RCLONE_CONFIG_OBJSTORE_PROVIDER: ${{ secrets.S3_PROVIDER }}
@@ -879,9 +882,6 @@ jobs:
       - name: Create GitHub releases and push binaries
         run: |
           maybePrerelease=""
-          if [[ $VERSION == *-* ]]; then
-            maybePrerelease="--prerelease"
-          fi
           export GH_PROMPT_DISABLED=1
           if ! gh release view --json name "$VERSION" >/dev/null 2>&1 ; then
             gh release create "$VERSION" \
@@ -895,6 +895,8 @@ jobs:
             packages/syncthing-*.zip \
             packages/syncthing_*.deb
 
+          exit 0 # Skip relaysrv/discosrv for thingium
+
           PKGS=$(pwd)/packages
           cd /tmp # gh will not release for repo x while inside repo y
           for repo in relaysrv discosrv ; do
@@ -903,7 +905,7 @@ jobs:
               gh release create "$VERSION" \
                 $maybePrerelease \
                 --title "$VERSION" \
-                --notes "https://github.com/syncthing/syncthing/releases/tag/$VERSION"
+                --notes "https://github.com/cre4ture/thingium/releases/tag/$VERSION"
             fi
             gh release upload --clobber "$VERSION" \
               $PKGS/*.asc \
