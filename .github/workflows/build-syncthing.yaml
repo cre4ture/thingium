@@ -821,7 +821,6 @@ jobs:
       contents: write
     needs:
       - sign-for-upgrade
-      - package-debian
       - facts
     env:
       VERSION: ${{ needs.facts.outputs.version }}
