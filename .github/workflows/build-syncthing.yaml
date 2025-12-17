@@ -981,6 +981,7 @@ jobs:
 
   docker-ghcr:
     name: Build and push Docker images (GHCR)
+    if: false
     runs-on: ubuntu-latest
     permissions:
       contents: read
