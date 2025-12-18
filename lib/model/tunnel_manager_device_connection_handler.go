@@ -138,7 +138,7 @@ func (tm *TunnelManagerDeviceConnectionHandler) handleRemoteDeviceOpenCommand(da
 		}
 		conn, err = net.DialTCP("tcp", nil, addr)
 		if err != nil {
-			tl.Warnf("Failed to dial tunnel destination: %v", err)
+			tl.Debugf("Failed to dial tunnel destination: %v", err)
 			return
 		}
 	}
@@ -159,7 +159,7 @@ func (tm *TunnelManagerDeviceConnectionHandler) forwardRemoteDeviceTunnelData(da
 				if data.D.DataPackageCounter != nil {
 					expectedDataCounter := tcpOrUdpConn.nextPackageCounter
 					if expectedDataCounter != *data.D.DataPackageCounter {
-						tl.Warnf("close connection due to data counter missmatch (expected %d, got %d)",
+						tl.Debugf("close connection due to data counter missmatch (expected %d, got %d)",
 							expectedDataCounter, *data.D.DataPackageCounter)
 
 						// close connection as we have no way to recover from this
@@ -171,11 +171,11 @@ func (tm *TunnelManagerDeviceConnectionHandler) forwardRemoteDeviceTunnelData(da
 				tcpOrUdpConn.nextPackageCounter++
 				_, err := tcpOrUdpConn.endpoint.Write(data.D.Data)
 				if err != nil {
-					tl.Warnf("Failed to forward tunnel data: %v", err)
+					tl.Debugf("Failed to forward tunnel data: %v", err)
 				}
 			}()
 		} else {
-			tl.Infof("Data: No TCP connection found for device %v, TunnelID: %d", tm.fromDevice, data.D.TunnelId)
+			tl.Debugf("Data: No TCP connection found for device %v, TunnelID: %d", tm.fromDevice, data.D.TunnelId)
 		}
 	case bep.TunnelCommand_TUNNEL_COMMAND_CLOSE:
 		tm.sharedEndpoints.closeLocalTunnelEndpoint(tm.fromDevice, data.D.TunnelId)
@@ -187,7 +187,7 @@ func (tm *TunnelManagerDeviceConnectionHandler) forwardRemoteDeviceTunnelData(da
 			}
 		})
 	default: // unknown command
-		tl.Warnf("Unknown tunnel command: %v", data.D.Command)
+		tl.Debugf("Unknown tunnel command: %v", data.D.Command)
 	}
 }
 
@@ -210,20 +210,20 @@ func (tm *TunnelManagerDeviceConnectionHandler) getEnabledInboundServiceDeviceId
 		return nil
 	}
 	if !guf.DerefOr(service.json.Enabled, true) {
-		tl.Warnf("Device %v tries to access disabled service %s", tm.fromDevice, name)
+		tl.Debugf("Device %v tries to access disabled service %s", tm.fromDevice, name)
 		return nil
 	}
 	for _, device := range service.json.AllowedRemoteDeviceIds {
 		deviceID, err := protocol.DeviceIDFromString(device)
 		if err != nil {
-			tl.Warnln("failed to parse device ID:", err)
+			tl.Debugln("failed to parse device ID:", err)
 			continue
 		}
 		if tm.fromDevice == deviceID {
 			return service
 		}
 	}
-	tl.Warnf("Device %v is not allowed to access service %s", tm.fromDevice, name)
+	tl.Debugf("Device %v is not allowed to access service %s", tm.fromDevice, name)
 	return nil
 }
 
@@ -235,14 +235,14 @@ func (tm *TunnelManagerDeviceConnectionHandler) getAndLockTunnelEP(tunnelId uint
 
 	ltep := tm.sharedEndpoints.getLocalTunnelEndpoint(tm.fromDevice, tunnelId)
 	if ltep == nil {
-		tl.Warnf("No local tunnel endpoint found for device %v, TunnelID: %d", tm.fromDevice, tunnelId)
+		tl.Debugf("No local tunnel endpoint found for device %v, TunnelID: %d", tm.fromDevice, tunnelId)
 		return nil, false // no endpoint found
 	}
 
 	// Check if the connection is in use by another goroutine
 	swapped := ltep.inUse.CompareAndSwap(nil, &tm.inUseMap)
 	if !swapped {
-		tl.Warnf("Connection for device %v, TunnelID: %d is already in use", tm.fromDevice, tunnelId)
+		tl.Debugf("Connection for device %v, TunnelID: %d is already in use", tm.fromDevice, tunnelId)
 		return nil, false // another goroutine is already using this connection
 	}
 

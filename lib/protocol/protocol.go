@@ -4,14 +4,12 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this file,
 // You can obtain one at https://mozilla.org/MPL/2.0/.
 
-//go:generate -command counterfeiter go run github.com/maxbrunsfeld/counterfeiter/v6
-
 // Prevents import loop, for internal testing
-//go:generate counterfeiter -o mocked_connection_info_test.go --fake-name mockedConnectionInfo . ConnectionInfo
+//go:generate go tool counterfeiter -o mocked_connection_info_test.go --fake-name mockedConnectionInfo . ConnectionInfo
 //go:generate go run ../../script/prune_mocks.go -t mocked_connection_info_test.go
 
-//go:generate counterfeiter -o mocks/connection_info.go --fake-name ConnectionInfo . ConnectionInfo
-//go:generate counterfeiter -o mocks/connection.go --fake-name Connection . Connection
+//go:generate go tool counterfeiter -o mocks/connection_info.go --fake-name ConnectionInfo . ConnectionInfo
+//go:generate go tool counterfeiter -o mocks/connection.go --fake-name Connection . Connection
 
 package protocol
 
@@ -422,7 +420,7 @@ func (c *rawConnection) readerLoop() {
 	for {
 		msg, err := c.readMessage(fourByteBuf)
 		if err != nil {
-			if err == errUnknownMessage {
+			if errors.Is(err, errUnknownMessage) {
 				// Unknown message types are skipped, for future extensibility.
 				continue
 			}
@@ -543,8 +541,9 @@ func (c *rawConnection) readMessageAfterHeader(hdr *bep.Header, fourByteBuf []by
 	// Then comes the message
 
 	buf := BufferPool.Get(int(msgLen))
+	defer BufferPool.Put(buf)
+
 	if _, err := io.ReadFull(c.cr, buf); err != nil {
-		BufferPool.Put(buf)
 		return nil, fmt.Errorf("reading message: %w", err)
 	}
 
@@ -556,7 +555,6 @@ func (c *rawConnection) readMessageAfterHeader(hdr *bep.Header, fourByteBuf []by
 
 	case bep.MessageCompression_MESSAGE_COMPRESSION_LZ4:
 		decomp, err := lz4Decompress(buf)
-		BufferPool.Put(buf)
 		if err != nil {
 			return nil, fmt.Errorf("decompressing message: %w", err)
 		}
@@ -572,14 +570,11 @@ func (c *rawConnection) readMessageAfterHeader(hdr *bep.Header, fourByteBuf []by
 
 	msg, err := newMessage(hdr.Type)
 	if err != nil {
-		BufferPool.Put(buf)
 		return nil, err
 	}
 	if err := proto.Unmarshal(buf, msg); err != nil {
-		BufferPool.Put(buf)
 		return nil, fmt.Errorf("unmarshalling message: %w", err)
 	}
-	BufferPool.Put(buf)
 
 	return msg, nil
 }
@@ -598,16 +593,16 @@ func (c *rawConnection) readHeader(fourByteBuf []byte) (*bep.Header, error) {
 	// Then comes the header
 
 	buf := BufferPool.Get(int(hdrLen))
+	defer BufferPool.Put(buf)
+
 	if _, err := io.ReadFull(c.cr, buf); err != nil {
-		BufferPool.Put(buf)
 		return nil, fmt.Errorf("reading header: %w", err)
 	}
 
 	var hdr bep.Header
 	err := proto.Unmarshal(buf, &hdr)
-	BufferPool.Put(buf)
 	if err != nil {
-		return nil, fmt.Errorf("unmarshalling header: %w %x", err, buf)
+		return nil, fmt.Errorf("unmarshalling header: %w", err)
 	}
 
 	metricDeviceRecvDecompressedBytes.WithLabelValues(c.idString).Add(float64(2 + len(buf)))
@@ -964,7 +959,7 @@ func (c *rawConnection) shouldCompressMessage(msg proto.Message) bool {
 	}
 }
 
-// Close is called when the connection is regularely closed and thus the Close
+// Close is called when the connection is regularly closed and thus the Close
 // BEP message is sent before terminating the actual connection. The error
 // argument specifies the reason for closing the connection.
 func (c *rawConnection) Close(err error) {

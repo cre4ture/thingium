@@ -27,12 +27,12 @@ import (
 
 	"github.com/ek220/guf"
 	"github.com/syncthing/syncthing/internal/gen/bep"
-	"github.com/syncthing/syncthing/lib/logger"
+	"github.com/syncthing/syncthing/internal/slogutil"
 	"github.com/syncthing/syncthing/lib/protocol"
 	"github.com/syncthing/syncthing/lib/utils"
 )
 
-var tl = logger.DefaultLogger.NewFacility("tunnels", "the tunnel manager stuff")
+var tl = slogutil.NewAdapter("tunnels")
 
 var (
 	ErrTunnelAlreadyExists   = errors.New("tunnel already exists")
@@ -149,7 +149,7 @@ func NewTunnelManager(configFile string) *TunnelManager {
 	tl.Debugln("TunnelManager created with config file:", configFile)
 	config, err := loadTunnelConfig(configFile)
 	if err != nil {
-		tl.Infoln("failed to load tunnel config:", err)
+		tl.Debugln("failed to load tunnel config:", err)
 		config = &bep.TunnelConfig{}
 	}
 	return NewTunnelManagerFromConfig(config, configFile)
@@ -406,7 +406,7 @@ func (tm *TunnelManager) updateInConfig(newInTunnels []*bep.TunnelInbound) {
 				for _, deviceIDStr := range newTun.AllowedRemoteDeviceIds {
 					deviceID, err := protocol.DeviceIDFromString(deviceIDStr)
 					if err != nil {
-						tl.Warnf("failed to parse device ID: %v", err)
+						tl.Debugf("failed to parse device ID: %v", err)
 						continue
 					}
 					if _, exists := existingTun.allowedClients[deviceIDStr]; !exists {
@@ -477,7 +477,7 @@ func parseUint32Or(input string, defaultValue uint32) uint32 {
 	// Parse the input string as a uint32
 	value, err := strconv.ParseUint(input, 10, 32)
 	if err != nil {
-		tl.Warnf("Failed to parse %s as uint32: %v", input, err)
+		tl.Debugf("Failed to parse %s as uint32: %v", input, err)
 		return defaultValue
 	}
 	return uint32(value)
@@ -490,20 +490,20 @@ func (tm *TunnelManager) generateTunnelID() uint64 {
 func GetRandomFreePortTCP() int {
 	a, err := net.ResolveTCPAddr("tcp", "localhost:0")
 	if err != nil {
-		tl.Warnf("Failed to resolve TCP address: %v", err)
+		tl.Debugf("Failed to resolve TCP address: %v", err)
 		panic("no free ports")
 	}
 
 	l, err := net.ListenTCP("tcp", a)
 	if err != nil {
-		tl.Warnf("Failed to listen on TCP address: %v", err)
+		tl.Debugf("Failed to listen on TCP address: %v", err)
 		panic("no free ports")
 	}
 	defer l.Close()
 
 	addr, ok := l.Addr().(*net.TCPAddr)
 	if !ok {
-		tl.Warnf("Failed to get TCP address from listener")
+		tl.Debugf("Failed to get TCP address from listener")
 		panic("no free ports")
 	}
 

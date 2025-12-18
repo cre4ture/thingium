@@ -153,7 +153,9 @@ func (e encryptedModel) DownloadProgress(p *DownloadProgress) error {
 		return e.model.DownloadProgress(p)
 	}
 
-	// Encrypted devices shouldn't send these - ignore them.
+	// We currently ignore these, though we could in principle translate
+	// them and use partially downloaded encrypted files like we do normal
+	// files.
 	return nil
 }
 
@@ -169,6 +171,7 @@ func (e encryptedModel) Closed(err error) {
 // encrypts outgoing metadata and decrypts incoming responses.
 type encryptedConnection struct {
 	ConnectionInfo
+
 	conn       *rawConnection
 	folderKeys *folderKeyRegistry
 	keyGen     *KeyGenerator
@@ -365,10 +368,12 @@ func encryptFileInfo(keyGen *KeyGenerator, fi FileInfo, folderKey *[keySize]byte
 		Permissions: 0o644,
 		ModifiedS:   1234567890, // Sat Feb 14 00:31:30 CET 2009
 		Deleted:     fi.Deleted,
-		RawInvalid:  fi.IsInvalid(),
 		Version:     version,
 		Sequence:    fi.Sequence,
 		Encrypted:   encryptedFI,
+	}
+	if fi.IsInvalid() {
+		enc.LocalFlags = FlagLocalRemoteInvalid
 	}
 	if typ == FileInfoTypeFile {
 		enc.Size = offset // new total file size

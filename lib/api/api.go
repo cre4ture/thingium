@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/url"
@@ -28,33 +29,32 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 	"unicode"
 
 	"github.com/calmh/incontainer"
 	"github.com/julienschmidt/httprouter"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
-	"github.com/rcrowley/go-metrics"
 	"github.com/thejerf/suture/v4"
 	"github.com/vitrun/qart/qr"
 	"golang.org/x/text/runes"
 	"golang.org/x/text/transform"
 	"golang.org/x/text/unicode/norm"
 
+	"github.com/syncthing/syncthing/internal/db"
+	"github.com/syncthing/syncthing/internal/slogutil"
 	"github.com/syncthing/syncthing/lib/build"
 	"github.com/syncthing/syncthing/lib/config"
 	"github.com/syncthing/syncthing/lib/connections"
-	"github.com/syncthing/syncthing/lib/db"
 	"github.com/syncthing/syncthing/lib/discover"
 	"github.com/syncthing/syncthing/lib/events"
 	"github.com/syncthing/syncthing/lib/fs"
 	"github.com/syncthing/syncthing/lib/locations"
-	"github.com/syncthing/syncthing/lib/logger"
 	"github.com/syncthing/syncthing/lib/model"
 	"github.com/syncthing/syncthing/lib/protocol"
 	"github.com/syncthing/syncthing/lib/rand"
 	"github.com/syncthing/syncthing/lib/svcutil"
-	"github.com/syncthing/syncthing/lib/sync"
 	"github.com/syncthing/syncthing/lib/tlsutil"
 	"github.com/syncthing/syncthing/lib/upgrade"
 	"github.com/syncthing/syncthing/lib/ur"
@@ -92,11 +92,11 @@ type service struct {
 	startupErr           error
 	listenerAddr         net.Addr
 	exitChan             chan *svcutil.FatalErr
-	miscDB               *db.NamespacedKV
+	miscDB               *db.Typed
 	shutdownTimeout      time.Duration
 
-	guiErrors logger.Recorder
-	systemLog logger.Recorder
+	guiErrors slogutil.Recorder
+	systemLog slogutil.Recorder
 }
 
 var _ config.Verifier = &service{}
@@ -107,7 +107,7 @@ type Service interface {
 	WaitForStart() error
 }
 
-func New(id protocol.DeviceID, cfg config.Wrapper, assetDir, tlsDefaultCommonName string, m model.Model, defaultSub, diskSub events.BufferedSubscription, evLogger events.Logger, discoverer discover.Manager, connectionsService connections.Service, urService *ur.Service, fss model.FolderSummaryService, errors, systemLog logger.Recorder, noUpgrade bool, miscDB *db.NamespacedKV) Service {
+func New(id protocol.DeviceID, cfg config.Wrapper, assetDir, tlsDefaultCommonName string, m model.Model, defaultSub, diskSub events.BufferedSubscription, evLogger events.Logger, discoverer discover.Manager, connectionsService connections.Service, urService *ur.Service, fss model.FolderSummaryService, errors, systemLog slogutil.Recorder, noUpgrade bool, miscDB *db.Typed) Service {
 	return &service{
 		id:      id,
 		cfg:     cfg,
@@ -117,7 +117,6 @@ func New(id protocol.DeviceID, cfg config.Wrapper, assetDir, tlsDefaultCommonNam
 			DefaultEventMask: defaultSub,
 			DiskEventMask:    diskSub,
 		},
-		eventSubsMut:         sync.NewMutex(),
 		evLogger:             evLogger,
 		discoverer:           discoverer,
 		connectionsService:   connectionsService,
@@ -151,8 +150,10 @@ func (s *service) getListener(guiCfg config.GUIConfiguration) (net.Listener, err
 		err = shouldRegenerateCertificate(cert)
 	}
 	if err != nil {
-		l.Infoln("Loading HTTPS certificate:", err)
-		l.Infoln("Creating new HTTPS certificate")
+		if !os.IsNotExist(err) {
+			slog.Warn("Failed to load HTTPS certificate", slogutil.Error(err))
+		}
+		slog.Info("Creating new HTTPS certificate")
 
 		// When generating the HTTPS certificate, use the system host name per
 		// default. If that isn't available, use the "syncthing" default.
@@ -166,7 +167,7 @@ func (s *service) getListener(guiCfg config.GUIConfiguration) (net.Listener, err
 			name = s.tlsDefaultCommonName
 		}
 
-		cert, err = tlsutil.NewCertificate(httpsCertFile, httpsKeyFile, name, httpsCertLifetimeDays)
+		cert, err = tlsutil.NewCertificate(httpsCertFile, httpsKeyFile, name, httpsCertLifetimeDays, true)
 	}
 	if err != nil {
 		return nil, err
@@ -222,7 +223,7 @@ func (s *service) Serve(ctx context.Context) error {
 		case <-s.startedOnce:
 			// We let this be a loud user-visible warning as it may be the only
 			// indication they get that the GUI won't be available.
-			l.Warnln("Starting API/GUI:", err)
+			slog.ErrorContext(ctx, "Failed to start API/GUI", slogutil.Error(err))
 
 		default:
 			// This is during initialization. A failure here should be fatal
@@ -280,7 +281,7 @@ func (s *service) Serve(ctx context.Context) error {
 	restMux.HandlerFunc(http.MethodGet, "/rest/system/status", s.getSystemStatus)             // -
 	restMux.HandlerFunc(http.MethodGet, "/rest/system/upgrade", s.getSystemUpgrade)           // -
 	restMux.HandlerFunc(http.MethodGet, "/rest/system/version", s.getSystemVersion)           // -
-	restMux.HandlerFunc(http.MethodGet, "/rest/system/debug", s.getSystemDebug)               // -
+	restMux.HandlerFunc(http.MethodGet, "/rest/system/loglevels", s.getSystemDebug)           // -
 	restMux.HandlerFunc(http.MethodGet, "/rest/system/log", s.getSystemLog)                   // [since]
 	restMux.HandlerFunc(http.MethodGet, "/rest/system/log.txt", s.getSystemLogTxt)            // [since]
 	restMux.HandlerFunc(http.MethodGet, "/rest/system/tunnels", s.getTunnels)
@@ -301,7 +302,7 @@ func (s *service) Serve(ctx context.Context) error {
 	restMux.HandlerFunc(http.MethodPost, "/rest/system/upgrade", s.postSystemUpgrade)            // -
 	restMux.HandlerFunc(http.MethodPost, "/rest/system/pause", s.makeDevicePauseHandler(true))   // [device]
 	restMux.HandlerFunc(http.MethodPost, "/rest/system/resume", s.makeDevicePauseHandler(false)) // [device]
-	restMux.HandlerFunc(http.MethodPost, "/rest/system/debug", s.postSystemDebug)                // [enable] [disable]
+	restMux.HandlerFunc(http.MethodPost, "/rest/system/loglevels", s.postSystemDebug)            // [enable] [disable]
 	restMux.HandlerFunc(http.MethodPost, "/rest/system/tunnels-modify", s.postTunnelsModify)
 	restMux.HandlerFunc(http.MethodPost, "/rest/system/tunnels-add-outbound", s.postTunnelsAddOutbound)
 	restMux.HandlerFunc(http.MethodPost, "/rest/system/tunnels-reload-config", s.postTunnelsReload)
@@ -338,16 +339,14 @@ func (s *service) Serve(ctx context.Context) error {
 
 	// Debug endpoints, not for general use
 	debugMux := http.NewServeMux()
-	debugMux.HandleFunc("/rest/debug/peerCompletion", s.getPeerCompletion)
-	debugMux.HandleFunc("/rest/debug/httpmetrics", s.getSystemHTTPMetrics)
 	debugMux.HandleFunc("/rest/debug/cpuprof", s.getCPUProf) // duration
 	debugMux.HandleFunc("/rest/debug/heapprof", s.getHeapProf)
 	debugMux.HandleFunc("/rest/debug/support", s.getSupportBundle)
 	debugMux.HandleFunc("/rest/debug/file", s.getDebugFile)
-	restMux.Handler(http.MethodGet, "/rest/debug/*method", s.whenDebugging(debugMux))
+	restMux.Handler(http.MethodGet, "/rest/debug/*method", debugMux)
 
 	// A handler that disables caching
-	noCacheRestMux := noCacheMiddleware(metricsMiddleware(restMux))
+	noCacheRestMux := noCacheMiddleware(restMux)
 
 	// The main routing handler
 	mux := http.NewServeMux()
@@ -413,8 +412,8 @@ func (s *service) Serve(ctx context.Context) error {
 		srv.ErrorLog = log.Default()
 	}
 
-	l.Infoln("GUI and API listening on", listener.Addr())
-	l.Infoln("Access the GUI via the following URL:", guiCfg.URL())
+	slog.InfoContext(ctx, "GUI and API listening", slogutil.Address(listener.Addr()))
+	slog.InfoContext(ctx, "Access the GUI via the following URL: "+guiCfg.URL()) //nolint:sloglint
 	if s.started != nil {
 		// only set when run by the tests
 		select {
@@ -447,20 +446,20 @@ func (s *service) Serve(ctx context.Context) error {
 	select {
 	case <-ctx.Done():
 		// Shutting down permanently
-		l.Debugln("shutting down (stop)")
+		slog.DebugContext(ctx, "Shutting down (stop)")
 	case <-s.configChanged:
 		// Soft restart due to configuration change
-		l.Debugln("restarting (config changed)")
+		slog.DebugContext(ctx, "Restarting (config changed)")
 	case err = <-s.exitChan:
 	case err = <-serveError:
 		// Restart due to listen/serve failure
-		l.Warnln("GUI/API:", err, "(restarting)")
+		slog.ErrorContext(ctx, "GUI/API error (restarting)", slogutil.Error(err))
 	}
 	// Give it a moment to shut down gracefully, e.g. if we are restarting
 	// due to a config change through the API, let that finish successfully.
 	timeout, cancel := context.WithTimeout(context.Background(), s.shutdownTimeout)
 	defer cancel()
-	if err := srv.Shutdown(timeout); err == timeout.Err() {
+	if err := srv.Shutdown(timeout); errors.Is(err, timeout.Err()) {
 		srv.Close()
 	}
 
@@ -491,9 +490,6 @@ func (*service) VerifyConfiguration(_, to config.Configuration) error {
 }
 
 func (s *service) CommitConfiguration(from, to config.Configuration) bool {
-	// No action required when this changes, so mask the fact that it changed at all.
-	from.GUI.Debugging = to.GUI.Debugging
-
 	if to.GUI == from.GUI {
 		// No GUI changes, we're done here.
 		return true
@@ -554,7 +550,7 @@ func corsMiddleware(next http.Handler, allowFrameLoading bool) http.Handler {
 	// See https://www.w3.org/TR/cors/ for details.
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Process OPTIONS requests
-		if r.Method == "OPTIONS" {
+		if r.Method == http.MethodOptions {
 			// Add a generous access-control-allow-origin header for CORS requests
 			w.Header().Add("Access-Control-Allow-Origin", "*")
 			// Only GET/POST/OPTIONS Methods are supported
@@ -565,7 +561,7 @@ func corsMiddleware(next http.Handler, allowFrameLoading bool) http.Handler {
 			w.Header().Set("Access-Control-Max-Age", "600")
 
 			// Indicate that no content will be returned
-			w.WriteHeader(204)
+			w.WriteHeader(http.StatusNoContent)
 
 			return
 		}
@@ -593,15 +589,6 @@ func corsMiddleware(next http.Handler, allowFrameLoading bool) http.Handler {
 
 		// For everything else, pass to the next handler
 		next.ServeHTTP(w, r)
-	})
-}
-
-func metricsMiddleware(h http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		t := metrics.GetOrRegisterTimer(r.URL.Path, nil)
-		t0 := time.Now()
-		h.ServeHTTP(w, r)
-		t.UpdateSince(t0)
 	})
 }
 
@@ -643,17 +630,6 @@ func localhostMiddleware(h http.Handler) http.Handler {
 		}
 
 		http.Error(w, "Host check error", http.StatusForbidden)
-	})
-}
-
-func (s *service) whenDebugging(h http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if s.cfg.GUI().Debugging {
-			h.ServeHTTP(w, r)
-			return
-		}
-
-		http.Error(w, "Debugging disabled", http.StatusForbidden)
 	})
 }
 
@@ -753,31 +729,20 @@ func (*service) getSystemVersion(w http.ResponseWriter, _ *http.Request) {
 }
 
 func (*service) getSystemDebug(w http.ResponseWriter, _ *http.Request) {
-	names := l.Facilities()
-	enabled := l.FacilityDebugging()
-	slices.Sort(enabled)
-	sendJSON(w, map[string]interface{}{
-		"facilities": names,
-		"enabled":    enabled,
+	sendJSON(w, map[string]any{
+		"packages": slogutil.PackageDescrs(),
+		"levels":   slogutil.PackageLevels(),
 	})
 }
 
 func (*service) postSystemDebug(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	q := r.URL.Query()
-	for _, f := range strings.Split(q.Get("enable"), ",") {
-		if f == "" || l.ShouldDebug(f) {
-			continue
-		}
-		l.SetDebug(f, true)
-		l.Infof("Enabled debug data for %q", f)
+	var levelRequest map[string]slog.Level
+	if err := json.NewDecoder(r.Body).Decode(&levelRequest); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
 	}
-	for _, f := range strings.Split(q.Get("disable"), ",") {
-		if f == "" || !l.ShouldDebug(f) {
-			continue
-		}
-		l.SetDebug(f, false)
-		l.Infof("Disabled debug data for %q", f)
+	for pkg, level := range levelRequest {
+		slogutil.SetPackageLevel(pkg, level)
 	}
 }
 
@@ -989,16 +954,11 @@ func (s *service) getDBFile(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	mtimeMapping, mtimeErr := s.model.GetMtimeMapping(folder, file)
 
 	sendJSON(w, map[string]interface{}{
 		"global":       jsonFileInfo(gf),
 		"local":        jsonFileInfo(lf),
 		"availability": av,
-		"mtime": map[string]interface{}{
-			"err":   mtimeErr,
-			"value": mtimeMapping,
-		},
 	})
 }
 
@@ -1007,28 +967,14 @@ func (s *service) getDebugFile(w http.ResponseWriter, r *http.Request) {
 	folder := qs.Get("folder")
 	file := qs.Get("file")
 
-	snap, err := s.model.DBSnapshot(folder)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusNotFound)
-		return
-	}
-
-	mtimeMapping, mtimeErr := s.model.GetMtimeMapping(folder, file)
-
-	lf, _ := snap.Get(protocol.LocalDeviceID, file)
-	gf, _ := snap.GetGlobal(file)
-	av := snap.Availability(file)
-	vl := snap.DebugGlobalVersions(file)
+	lf, _, _ := s.model.CurrentFolderFile(folder, file)
+	gf, _, _ := s.model.CurrentGlobalFile(folder, file)
+	av, _ := s.model.Availability(folder, protocol.FileInfo{Name: file}, protocol.BlockInfo{})
 
 	sendJSON(w, map[string]interface{}{
-		"global":         jsonFileInfo(gf),
-		"local":          jsonFileInfo(lf),
-		"availability":   av,
-		"globalVersions": vl.String(),
-		"mtime": map[string]interface{}{
-			"err":   mtimeErr,
-			"value": mtimeMapping,
-		},
+		"global":       jsonFileInfo(gf),
+		"local":        jsonFileInfo(lf),
+		"availability": av,
 	})
 }
 
@@ -1129,7 +1075,7 @@ func (s *service) getSystemStatus(w http.ResponseWriter, _ *http.Request) {
 }
 
 func (s *service) getSystemError(w http.ResponseWriter, _ *http.Request) {
-	sendJSON(w, map[string][]logger.Line{
+	sendJSON(w, map[string][]slogutil.Line{
 		"errors": s.guiErrors.Since(time.Time{}),
 	})
 }
@@ -1137,7 +1083,7 @@ func (s *service) getSystemError(w http.ResponseWriter, _ *http.Request) {
 func (*service) postSystemError(_ http.ResponseWriter, r *http.Request) {
 	bs, _ := io.ReadAll(r.Body)
 	r.Body.Close()
-	l.Warnln(string(bs))
+	slog.Error("External error report", slogutil.Error(string(bs)))
 }
 
 func (s *service) postSystemErrorClear(_ http.ResponseWriter, _ *http.Request) {
@@ -1150,7 +1096,7 @@ func (s *service) getSystemLog(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		l.Debugln(err)
 	}
-	sendJSON(w, map[string][]logger.Line{
+	sendJSON(w, map[string][]slogutil.Line{
 		"messages": s.systemLog.Since(since),
 	})
 }
@@ -1179,7 +1125,7 @@ func (s *service) getSupportBundle(w http.ResponseWriter, r *http.Request) {
 
 	// Redacted configuration as a JSON
 	if jsonConfig, err := json.MarshalIndent(getRedactedConfig(s), "", "  "); err != nil {
-		l.Warnln("Support bundle: failed to create config.json:", err)
+		slog.Warn("Failed to create config.json in support bundle", slogutil.Error(err))
 	} else {
 		files = append(files, fileEntry{name: "config.json.txt", data: jsonConfig})
 	}
@@ -1194,7 +1140,7 @@ func (s *service) getSupportBundle(w http.ResponseWriter, r *http.Request) {
 	// Errors as a JSON
 	if errs := s.guiErrors.Since(time.Time{}); len(errs) > 0 {
 		if jsonError, err := json.MarshalIndent(errs, "", "  "); err != nil {
-			l.Warnln("Support bundle: failed to create errors.json:", err)
+			slog.Warn("Failed to create errors.json in support bundle", slogutil.Error(err))
 		} else {
 			files = append(files, fileEntry{name: "errors.json.txt", data: jsonError})
 		}
@@ -1204,7 +1150,7 @@ func (s *service) getSupportBundle(w http.ResponseWriter, r *http.Request) {
 	if panicFiles, err := filepath.Glob(filepath.Join(locations.GetBaseDir(locations.ConfigBaseDir), "panic*")); err == nil {
 		for _, f := range panicFiles {
 			if panicFile, err := os.ReadFile(f); err != nil {
-				l.Warnf("Support bundle: failed to load %s: %s", filepath.Base(f), err)
+				slog.Warn("Failed to load panic file for support bundle", slogutil.FilePath(filepath.Base(f)), slogutil.Error(err))
 			} else {
 				files = append(files, fileEntry{name: filepath.Base(f), data: panicFile})
 			}
@@ -1227,15 +1173,15 @@ func (s *service) getSupportBundle(w http.ResponseWriter, r *http.Request) {
 	}, "", "  "); err == nil {
 		files = append(files, fileEntry{name: "version-platform.json.txt", data: versionPlatform})
 	} else {
-		l.Warnln("Failed to create versionPlatform.json: ", err)
+		slog.Warn("Failed to create versionPlatform.json in support bundle", slogutil.Error(err))
 	}
 
 	// Report Data as a JSON
 	if r, err := s.urService.ReportDataPreview(r.Context(), ur.Version); err != nil {
-		l.Warnln("Support bundle: failed to create usage-reporting.json.txt:", err)
+		slog.Warn("Failed to create usage-reporting.json.txt in support bundle", slogutil.Error(err))
 	} else {
 		if usageReportingData, err := json.MarshalIndent(r, "", "  "); err != nil {
-			l.Warnln("Support bundle: failed to serialize usage-reporting.json.txt", err)
+			slog.Warn("Failed to serialize usage-reporting.json.txt in support bundle", slogutil.Error(err))
 		} else {
 			files = append(files, fileEntry{name: "usage-reporting.json.txt", data: usageReportingData})
 		}
@@ -1250,7 +1196,7 @@ func (s *service) getSupportBundle(w http.ResponseWriter, r *http.Request) {
 	// Connection data as JSON
 	connStats := s.model.ConnectionStats()
 	if connStatsJSON, err := json.MarshalIndent(connStats, "", "  "); err != nil {
-		l.Warnln("Support bundle: failed to serialize connection-stats.json.txt", err)
+		slog.Warn("Failed to serialize connection-stats.json.txt in support bundle", slogutil.Error(err))
 	} else {
 		files = append(files, fileEntry{name: "connection-stats.json.txt", data: connStatsJSON})
 	}
@@ -1296,7 +1242,7 @@ func (s *service) getSupportBundle(w http.ResponseWriter, r *http.Request) {
 	// Add buffer files to buffer zip
 	var zipFilesBuffer bytes.Buffer
 	if err := writeZip(&zipFilesBuffer, files); err != nil {
-		l.Warnln("Support bundle: failed to create support bundle zip:", err)
+		slog.Warn("Failed to create support bundle zip (buffer)", slogutil.Error(err))
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -1307,33 +1253,13 @@ func (s *service) getSupportBundle(w http.ResponseWriter, r *http.Request) {
 
 	// Write buffer zip to local zip file (back up)
 	if err := os.WriteFile(zipFilePath, zipFilesBuffer.Bytes(), 0o600); err != nil {
-		l.Warnln("Support bundle: support bundle zip could not be created:", err)
+		slog.Warn("Failed to create support bundle zip (file)", slogutil.FilePath(zipFilePath), slogutil.Error(err))
 	}
 
 	// Serve the buffer zip to client for download
 	w.Header().Set("Content-Type", "application/zip")
 	w.Header().Set("Content-Disposition", "attachment; filename="+zipFileName)
 	io.Copy(w, &zipFilesBuffer)
-}
-
-func (*service) getSystemHTTPMetrics(w http.ResponseWriter, _ *http.Request) {
-	stats := make(map[string]interface{})
-	metrics.Each(func(name string, intf interface{}) {
-		if m, ok := intf.(*metrics.StandardTimer); ok {
-			pct := m.Percentiles([]float64{0.50, 0.95, 0.99})
-			for i := range pct {
-				pct[i] /= 1e6 // ns to ms
-			}
-			stats[name] = map[string]interface{}{
-				"count":         m.Count(),
-				"sumMs":         m.Sum() / 1e6, // ns to ms
-				"ratesPerS":     []float64{m.Rate1(), m.Rate5(), m.Rate15()},
-				"percentilesMs": pct,
-			}
-		}
-	})
-	bs, _ := json.MarshalIndent(stats, "", "  ")
-	w.Write(bs)
 }
 
 func (s *service) getSystemDiscovery(w http.ResponseWriter, _ *http.Request) {
@@ -1557,7 +1483,7 @@ func (s *service) postSystemUpgrade(w http.ResponseWriter, _ *http.Request) {
 	if upgrade.CompareVersions(rel.Tag, build.Version) > upgrade.Equal {
 		err = upgrade.To(rel)
 		if err != nil {
-			l.Warnln("upgrading:", err)
+			slog.Error("Failed to upgrade", slogutil.Error(err))
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
@@ -1658,35 +1584,6 @@ func (*service) getQR(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "image/png")
 	w.Write(code.PNG())
-}
-
-func (s *service) getPeerCompletion(w http.ResponseWriter, _ *http.Request) {
-	tot := map[string]float64{}
-	count := map[string]float64{}
-
-	for _, folder := range s.cfg.Folders() {
-		for _, device := range folder.DeviceIDs() {
-			deviceStr := device.String()
-			if s.model.ConnectedTo(device) {
-				comp, err := s.model.Completion(device, folder.ID)
-				if err != nil {
-					http.Error(w, err.Error(), http.StatusInternalServerError)
-					return
-				}
-				tot[deviceStr] += comp.CompletionPct
-			} else {
-				tot[deviceStr] = 0
-			}
-			count[deviceStr]++
-		}
-	}
-
-	comp := map[string]int{}
-	for device := range tot {
-		comp[device] = int(tot[device] / count[device])
-	}
-
-	sendJSON(w, comp)
 }
 
 func (s *service) getFolderVersions(w http.ResponseWriter, r *http.Request) {
@@ -1879,22 +1776,23 @@ func (f jsonFileInfo) MarshalJSON() ([]byte, error) {
 
 func fileIntfJSONMap(f protocol.FileInfo) map[string]interface{} {
 	out := map[string]interface{}{
-		"name":          f.FileName(),
-		"type":          f.FileType().String(),
-		"size":          f.FileSize(),
-		"deleted":       f.IsDeleted(),
-		"invalid":       f.IsInvalid(),
-		"ignored":       f.IsIgnored(),
-		"mustRescan":    f.MustRescan(),
-		"noPermissions": !f.HasPermissionBits(),
-		"modified":      f.ModTime(),
-		"modifiedBy":    f.FileModifiedBy().String(),
-		"sequence":      f.SequenceNo(),
-		"version":       jsonVersionVector(f.FileVersion()),
-		"localFlags":    f.FileLocalFlags(),
-		"platform":      f.PlatformData(),
-		"inodeChange":   f.InodeChangeTime(),
-		"blocksHash":    f.FileBlocksHash(),
+		"name":               f.FileName(),
+		"type":               f.FileType().String(),
+		"size":               f.FileSize(),
+		"deleted":            f.IsDeleted(),
+		"invalid":            f.IsInvalid(),
+		"ignored":            f.IsIgnored(),
+		"mustRescan":         f.MustRescan(),
+		"noPermissions":      !f.HasPermissionBits(),
+		"modified":           f.ModTime(),
+		"modifiedBy":         f.FileModifiedBy().String(),
+		"sequence":           f.SequenceNo(),
+		"version":            jsonVersionVector(f.FileVersion()),
+		"localFlags":         f.FileLocalFlags(),
+		"platform":           f.PlatformData(),
+		"inodeChange":        f.InodeChangeTime(),
+		"blocksHash":         f.FileBlocksHash(),
+		"previousBlocksHash": f.PreviousBlocksHash,
 	}
 	if f.HasPermissionBits() {
 		out["permissions"] = fmt.Sprintf("%#o", f.FilePermissions())

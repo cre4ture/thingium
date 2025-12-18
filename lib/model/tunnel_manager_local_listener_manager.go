@@ -50,7 +50,7 @@ func (tm *LocalListenerManager) ServeListenerTCP(
 	destinationServiceName string,
 	destinationAddress *string,
 ) error {
-	tl.Infoln("ServeListener started for address:", listenAddress, "destination device:", destinationDevice, "destination address:", destinationAddress)
+	tl.Debugln("ServeListener started for address:", listenAddress, "destination device:", destinationDevice, "destination address:", destinationAddress)
 	listener, err := net.Listen("tcp", listenAddress)
 	if err != nil {
 		return fmt.Errorf("failed to listen on %s: %w", listenAddress, err)
@@ -271,7 +271,7 @@ func (tm *LocalListenerManager) serveOutboundTunnel(tunnel *tunnelOutConfig) {
 	tl.Debugln("Starting listener for tunnel, device:", tunnel)
 	device, err := protocol.DeviceIDFromString(tunnel.json.RemoteDeviceId)
 	if err != nil {
-		tl.Warnln("failed to parse device ID:", err)
+		tl.Debugln("failed to parse device ID:", err)
 	}
 	go func() {
 		isUdp := guf.DerefOr(tunnel.json.Protocol, bep.TunnelProtocol_TUNNEL_PROTOCOL_TCP) ==
