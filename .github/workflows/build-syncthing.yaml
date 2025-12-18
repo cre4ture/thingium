@@ -891,8 +891,7 @@ jobs:
           gh release upload --clobber "$VERSION" \
             packages/*.asc packages/*.json \
             packages/syncthing-*.tar.gz \
-            packages/syncthing-*.zip \
-            packages/syncthing_*.deb
+            packages/syncthing-*.zip
 
           exit 0 # Skip relaysrv/discosrv for thingium
 
