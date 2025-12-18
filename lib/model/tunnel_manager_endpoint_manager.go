@@ -105,7 +105,7 @@ func NewConnectedTmepmOptimizedTrySendTunnelData(destinationDevice protocol.Devi
 	instance := NewUnconnectedTmepmOptimizedTrySendTunnelData(destinationDevice)
 	instance.tryGetNewDeviceConnection(tm)
 	if instance.destinationDeviceTunnel == nil {
-		tl.Warnf("No tunnel channel found for device %v", destinationDevice)
+		tl.Debugf("No tunnel channel found for device %v", destinationDevice)
 		return nil
 	}
 
@@ -125,18 +125,18 @@ func (o *tmepm_OptimizedTrySendTunnelData) tryGetNewDeviceConnection(
 ) error {
 	sharedDeviceConnections := tm.tryGetSharedDeviceConnections()
 	if sharedDeviceConnections == nil {
-		tl.Warnf("Shutdown phase, cannot re-get device channel")
+		tl.Debugf("Shutdown phase, cannot re-get device channel")
 		return fmt.Errorf("shutdown phase, cannot re-get device channel")
 	}
 
 	newDestinationDeviceTunnel, newConnId := sharedDeviceConnections.TryGetDeviceChannel(
 		o.destinationDevice, o.destinationDeviceTunnelId)
 	if newDestinationDeviceTunnel == nil {
-		tl.Warnf("No (new) tunnel channel found for device %v, retry with old ...", o.destinationDevice)
+		tl.Debugf("No (new) tunnel channel found for device %v, retry with old ...", o.destinationDevice)
 	} else {
 		o.destinationDeviceTunnelId = newConnId
 		o.destinationDeviceTunnel = newDestinationDeviceTunnel
-		tl.Infoln("Re-trying to send data to device", o.destinationDevice, " with new connection ID:", newConnId)
+		tl.Debugln("Re-trying to send data to device", o.destinationDevice, " with new connection ID:", newConnId)
 	}
 
 	return nil
@@ -152,12 +152,12 @@ func (o *tmepm_OptimizedTrySendTunnelData) TrySendTunnelDataWithRetries(
 		if (o.destinationDeviceTunnel == nil) || (retryCount > 0) {
 			err := o.tryGetNewDeviceConnection(tm)
 			if err != nil {
-				tl.Warnf("Shutdown phase, cannot re-get device channel")
+				tl.Debugf("Shutdown phase, cannot re-get device channel")
 				return err
 			}
 		}
 		if o.destinationDeviceTunnel == nil {
-			tl.Warnf("No tunnel channel found for device %v, cannot send data, retrying ...", o.destinationDevice)
+			tl.Debugf("No tunnel channel found for device %v, cannot send data, retrying ...", o.destinationDevice)
 			time.Sleep(1 * time.Second)
 			continue // skip sending, try to get a new connection
 		}
@@ -215,12 +215,12 @@ func (tm *TunnelManagerEndpointManager) handleLocalTunnelEndpoint(
 
 	robustSender := NewConnectedTmepmOptimizedTrySendTunnelData(destinationDevice, tm)
 	if robustSender == nil {
-		tl.Warnf("No tunnel channel found for device %v, cannot handle local tunnel endpoint",
+		tl.Debugf("No tunnel channel found for device %v, cannot handle local tunnel endpoint",
 			destinationDevice)
 		return
 	}
 
-	tl.Infoln("Starting to forward data for local tunnel endpoint, tunnel ID:", tunnelID,
+	tl.Debugln("Starting to forward data for local tunnel endpoint, tunnel ID:", tunnelID,
 		"to device:", destinationDevice,
 		"address:", destinationAddress)
 
@@ -260,7 +260,7 @@ func (tm *TunnelManagerEndpointManager) handleLocalTunnelEndpoint(
 					},
 				}, 5 /* retries */, tm)
 			if err != nil {
-				tl.Warnf("Failed to send tunnel data to device %v after retries: %v", destinationDevice, err)
+				tl.Debugf("Failed to send tunnel data to device %v after retries: %v", destinationDevice, err)
 				return
 			}
 		}

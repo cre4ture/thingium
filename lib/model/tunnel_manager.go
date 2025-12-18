@@ -514,20 +514,20 @@ func GetRandomFreePortTCP() int {
 func GetRandomFreePortUDP() int {
 	a, err := net.ResolveUDPAddr("udp", "localhost:0")
 	if err != nil {
-		tl.Warnf("Failed to resolve UDP address: %v", err)
+		tl.Debugf("Failed to resolve UDP address: %v", err)
 		panic("no free ports")
 	}
 
 	l, err := net.ListenUDP("udp", a)
 	if err != nil {
-		tl.Warnf("Failed to listen on UDP address: %v", err)
+		tl.Debugf("Failed to listen on UDP address: %v", err)
 		panic("no free ports")
 	}
 	defer l.Close()
 
 	addr, ok := l.LocalAddr().(*net.UDPAddr)
 	if !ok {
-		tl.Warnf("Failed to get UDP address from listener")
+		tl.Debugf("Failed to get UDP address from listener")
 		panic("no free ports")
 	}
 

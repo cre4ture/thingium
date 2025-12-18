@@ -105,7 +105,7 @@ func (m *TunnelManagerDeviceConnectionsManager) TrySendTunnelDataWithRetries(
 				timer := time.NewTimer(time.Second)
 				defer timer.Stop()
 
-				tl.Warnf("Failed to send tunnel data to device %v: %v", deviceID, err)
+				tl.Debugf("Failed to send tunnel data to device %v: %v", deviceID, err)
 				select {
 				case <-ctx.Done():
 					tl.Debugln("Context done, stopping listener")

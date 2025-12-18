@@ -98,7 +98,7 @@ func (tm *TunnelManagerDeviceConnectionHandler) mainLoop(ctx context.Context, tu
 
 func (tm *TunnelManagerDeviceConnectionHandler) handleRemoteDeviceOpenCommand(data *protocol.TunnelData) {
 	if data.D.RemoteServiceName == nil {
-		tl.Warnf("No remote service name specified")
+		tl.Debugf("No remote service name specified")
 		return
 	}
 	service := tm.getEnabledInboundServiceDeviceIdChecked(*data.D.RemoteServiceName)
@@ -110,7 +110,7 @@ func (tm *TunnelManagerDeviceConnectionHandler) handleRemoteDeviceOpenCommand(da
 	var TunnelDestinationAddress string
 	if service.json.LocalDialAddress == "any" {
 		if data.D.TunnelDestinationAddress == nil {
-			tl.Warnf("No tunnel destination specified")
+			tl.Debugf("No tunnel destination specified")
 			return
 		}
 		TunnelDestinationAddress = *data.D.TunnelDestinationAddress
@@ -122,18 +122,18 @@ func (tm *TunnelManagerDeviceConnectionHandler) handleRemoteDeviceOpenCommand(da
 	if isUdp {
 		addr, err := net.ResolveUDPAddr("udp", TunnelDestinationAddress)
 		if err != nil {
-			tl.Warnf("Failed to resolve UDP tunnel destination: %v", err)
+			tl.Debugf("Failed to resolve UDP tunnel destination: %v", err)
 			return
 		}
 		conn, err = net.DialUDP("udp", nil, addr)
 		if err != nil {
-			tl.Warnf("Failed to dial UDP tunnel destination: %v", err)
+			tl.Debugf("Failed to dial UDP tunnel destination: %v", err)
 			return
 		}
 	} else {
 		addr, err := net.ResolveTCPAddr("tcp", TunnelDestinationAddress)
 		if err != nil {
-			tl.Warnf("Failed to resolve TCP tunnel destination: %v", err)
+			tl.Debugf("Failed to resolve TCP tunnel destination: %v", err)
 			return
 		}
 		conn, err = net.DialTCP("tcp", nil, addr)

@@ -98,7 +98,7 @@ func (tm *LocalListenerManager) ServeListenerUDP(
 	destinationServiceName string,
 	destinationAddress *string,
 ) error {
-	tl.Infoln("ServeListenerUDP started for address:", listenAddress, "destination device:", destinationDevice, "destination address:", destinationAddress)
+	tl.Debugln("ServeListenerUDP started for address:", listenAddress, "destination device:", destinationDevice, "destination address:", destinationAddress)
 	conn, err := net.ListenPacket("udp", listenAddress)
 	if err != nil {
 		return fmt.Errorf("failed to listen on %s: %w", listenAddress, err)
@@ -123,13 +123,13 @@ func (tm *LocalListenerManager) ServeListenerUDP(
 			}
 			return fmt.Errorf("failed to read from UDP connection: %w", err)
 		}
-		tl.Infoln("TunnelManager: Accepted UDP packet from:", senderAddr, "len:", n)
+		tl.Debugln("TunnelManager: Accepted UDP packet from:", senderAddr, "len:", n)
 
 		// remember source address string for this addr
 		tunnelID, exists := sourceAddr2TunnelId[senderAddr.String()]
 		if !exists {
 			tunnelID = tm.generateTunnelID()
-			tl.Infoln("Accepted UDP connection, tunnel ID:", tunnelID)
+			tl.Debugln("Accepted UDP connection, tunnel ID:", tunnelID)
 
 			err := tm.sharedDeviceConnections.TrySendTunnelDataWithRetries(ctx, destinationDevice,
 				&protocol.TunnelData{
@@ -143,7 +143,7 @@ func (tm *LocalListenerManager) ServeListenerUDP(
 				}, 5 /* retries */)
 
 			if err != nil {
-				tl.Warnln("Failure to send open command - forget this UDP endpoint")
+				tl.Debugln("Failure to send open command - forget this UDP endpoint")
 				continue
 			}
 
@@ -289,7 +289,7 @@ func (tm *LocalListenerManager) serveOutboundTunnel(tunnel *tunnelOutConfig) {
 			if isUdp {
 				proto = "UDP"
 			}
-			tl.Warnf("Failed to serve listener %s for tunnel %s: %v", proto, tunnel.descriptor, err)
+			tl.Debugf("Failed to serve listener %s for tunnel %s: %v", proto, tunnel.descriptor, err)
 		} else {
 			tl.Debugln("Listener for tunnel", tunnel.descriptor, "stopped")
 		}
