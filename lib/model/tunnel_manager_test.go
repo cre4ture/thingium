@@ -34,8 +34,8 @@ func TestTunnelManager_ServeLocalListener(t *testing.T) {
 
 	// Mock device ID and addresses
 	serverDeviceID := repeatedDeviceID(0x11)
-	listenAddress := fmt.Sprintf("127.0.0.1:%d", GetRandomFreePort())
-	destinationAddress := fmt.Sprintf("127.0.0.1:%d", GetRandomFreePort())
+	listenAddress := fmt.Sprintf("127.0.0.1:%d", GetRandomFreePortTCP())
+	destinationAddress := fmt.Sprintf("127.0.0.1:%d", GetRandomFreePortTCP())
 
 	// Create a new TunnelManager
 	proxyServiceName := "proxy"
@@ -151,7 +151,7 @@ func TestTunnelManager_HandleOpenRemoteCommand(t *testing.T) {
 	)
 
 	// Mock device ID and addresses
-	destinationAddress := fmt.Sprintf("127.0.0.1:%d", GetRandomFreePort())
+	destinationAddress := fmt.Sprintf("127.0.0.1:%d", GetRandomFreePortTCP())
 
 	// Create a channel to capture the TunnelData sent to the device
 	tunnelDataChanIn := make(chan *protocol.TunnelData, 1)
@@ -242,7 +242,7 @@ func TestTunnelManager_HandleOpenRemoteCommand_NamedService(t *testing.T) {
 
 	clientDeviceID := repeatedDeviceID(0x33)
 	// Mock device ID and addresses
-	localDestinationAddress := fmt.Sprintf("127.0.0.1:%d", GetRandomFreePort())
+	localDestinationAddress := fmt.Sprintf("127.0.0.1:%d", GetRandomFreePortTCP())
 	localServiceName := "http"
 
 	// Create a new TunnelManager
@@ -348,7 +348,7 @@ func TestTunnelManager_HandleOpenRemoteCommand_DisallowedClient(t *testing.T) {
 	clientDeviceID := repeatedDeviceID(0x33)
 	disallowedClientDeviceID := repeatedDeviceID(0x44)
 	// Mock device ID and addresses
-	localDestinationAddress := fmt.Sprintf("127.0.0.1:%d", GetRandomFreePort())
+	localDestinationAddress := fmt.Sprintf("127.0.0.1:%d", GetRandomFreePortTCP())
 	localServiceName := "http"
 
 	// Create a new TunnelManager
@@ -408,7 +408,7 @@ func TestTunnelManagerConfigUpdate_addAllowedDevice_removeAllowedDevice(t *testi
 	clientDeviceID1 := repeatedDeviceID(0x33)
 	clientDeviceID2 := repeatedDeviceID(0x44)
 	// Mock device ID and addresses
-	localDestinationAddress := fmt.Sprintf("127.0.0.1:%d", GetRandomFreePort())
+	localDestinationAddress := fmt.Sprintf("127.0.0.1:%d", GetRandomFreePortTCP())
 	localServiceName := "http"
 
 	// reserve a temporary file:
