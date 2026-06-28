@@ -62,7 +62,7 @@ func main() {
 		Level: slog.LevelInfo,
 	})))
 
-	slog.Info(build.LongVersionFor("stupgrades"))
+	slog.Info("Version", "version", build.LongVersionFor("stupgrades"))
 
 	if err := server(&params); err != nil {
 		fmt.Printf("Error: %v\n", err)

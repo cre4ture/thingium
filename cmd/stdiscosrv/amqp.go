@@ -173,7 +173,7 @@ func (s *amqpReceiver) Serve(ctx context.Context) error {
 				id, err = protocol.DeviceIDFromString(string(rec.Key))
 			}
 			if err != nil {
-				slog.Warn("Failed to parse replication device ID", "error", err)
+				slog.WarnContext(ctx, "Failed to parse replication device ID", "error", err)
 				replicationRecvsTotal.WithLabelValues("error").Inc()
 				continue
 			}

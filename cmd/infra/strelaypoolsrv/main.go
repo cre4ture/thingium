@@ -428,7 +428,7 @@ func handleRegister(w http.ResponseWriter, r *http.Request) {
 		newRelay.URL = uri.String()
 	} else if host != rhost && relayCert == nil {
 		if debug {
-			log.Println("IP address advertised does not match client IP address", rhost, uri)
+			log.Println("IP address advertised does not match client IP address")
 		}
 		http.Error(w, fmt.Sprintf("IP advertised %s does not match client IP %s", host, rhost), http.StatusUnauthorized)
 		return
@@ -452,13 +452,13 @@ func handleRegister(w http.ResponseWriter, r *http.Request) {
 	case requests <- request{&newRelay, reschan, prometheus.NewTimer(relayTestActionsSeconds.WithLabelValues("queue"))}:
 		result := <-reschan
 		if result.err != nil {
-			log.Println("Join from", rhost, "failed:", result.err)
+			log.Println("Relay join failed")
 			globalBlocklist.AddError(rhost)
 			relayTestsTotal.WithLabelValues("failed").Inc()
 			http.Error(w, result.err.Error(), http.StatusBadRequest)
 			return
 		}
-		log.Println("Join from", rhost, "succeeded")
+		log.Println("Relay join succeeded")
 		globalBlocklist.ClearErrors(rhost)
 		relayTestsTotal.WithLabelValues("success").Inc()
 		w.Header().Set("Content-Type", "application/json; charset=utf-8")

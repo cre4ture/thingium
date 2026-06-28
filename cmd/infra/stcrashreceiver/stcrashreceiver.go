@@ -7,7 +7,6 @@
 package main
 
 import (
-	"bytes"
 	"io"
 	"log"
 	"net/http"
@@ -87,12 +86,10 @@ func (r *crashReceiver) servePut(reportID string, w http.ResponseWriter, req *ht
 		return
 	}
 
-	first := string(bytes.TrimSpace(bytes.Split(bs, []byte("\n"))[0]))
-
 	if pat, ok := r.ignore.match(bs); ok {
 		metricIgnoreMatchesTotal.WithLabelValues(pat).Inc()
 		result = "ignored"
-		log.Printf("Ignored report %s, matched: %s (%s)", reportID[:8], pat, first)
+		log.Printf("Ignored report, matched: %s (%d bytes)", pat, len(bs))
 		return
 	}
 
@@ -100,15 +97,15 @@ func (r *crashReceiver) servePut(reportID string, w http.ResponseWriter, req *ht
 
 	// Store the report
 	if !r.store.Put(reportID, bs) {
-		log.Println("Failed to store report (queue full):", reportID[:8])
+		log.Println("Failed to store report (queue full)")
 		result = "queue_failure"
 	}
 
 	// Send the report to Sentry
 	if !r.sentry.Send(reportID, userIDFor(req), bs) {
-		log.Println("Failed to send report to sentry (queue full):", reportID[:8])
+		log.Println("Failed to send report to sentry (queue full)")
 		result = "sentry_failure"
 	}
 
-	log.Printf("Received report %s (%s)", reportID[:8], first)
+	log.Printf("Received report (%d bytes)", len(bs))
 }

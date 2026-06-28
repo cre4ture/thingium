@@ -97,7 +97,7 @@ func main() {
 		fmt.Println(build.LongVersionFor("stdiscosrv"))
 		return
 	}
-	slog.Info(build.LongVersionFor("stdiscosrv"))
+	slog.Info("Version", "version", build.LongVersionFor("stdiscosrv"))
 
 	var cert tls.Certificate
 	if !cli.HTTP {
@@ -157,7 +157,15 @@ func main() {
 		go func() {
 			mux := http.NewServeMux()
 			mux.Handle("/metrics", promhttp.Handler())
-			err := http.ListenAndServe(cli.MetricsListen, mux)
+			srv := &http.Server{
+				Addr:              cli.MetricsListen,
+				Handler:           mux,
+				ReadHeaderTimeout: 10 * time.Second,
+				ReadTimeout:       30 * time.Second,
+				WriteTimeout:      30 * time.Second,
+				IdleTimeout:       2 * time.Minute,
+			}
+			err := srv.ListenAndServe()
 			slog.Error("Failed to serve", "error", err)
 			os.Exit(1)
 		}()

@@ -25,7 +25,7 @@ func main() {
 		Level: slog.LevelInfo,
 	})))
 
-	slog.Info(build.LongVersionFor("ursrv"))
+	slog.Info("Version", "version", build.LongVersionFor("ursrv"))
 
 	var cli CLI
 	ctx := kong.Parse(&cli)

@@ -19,7 +19,7 @@ import (
 	io "io"
 	"log"
 	"log/slog"
-	"math/rand"
+	"math"
 	"net"
 	"net/http"
 	"net/url"
@@ -31,6 +31,7 @@ import (
 
 	"github.com/syncthing/syncthing/internal/gen/discosrv"
 	"github.com/syncthing/syncthing/lib/protocol"
+	"github.com/syncthing/syncthing/lib/rand"
 	"github.com/syncthing/syncthing/lib/stringutil"
 )
 
@@ -173,7 +174,7 @@ func (s *apiSrv) handler(w http.ResponseWriter, req *http.Request) {
 		var err error
 		remoteAddr, err = net.ResolveTCPAddr("tcp", req.RemoteAddr)
 		if err != nil {
-			slog.Warn("Failed to resolve remote address", "address", req.RemoteAddr, "error", err)
+			slog.WarnContext(req.Context(), "Failed to resolve remote address", "address", req.RemoteAddr, "error", err)
 			lw.Header().Set("Retry-After", errorRetryAfterString())
 			http.Error(lw, "Internal Server Error", http.StatusInternalServerError)
 			apiRequestsTotal.WithLabelValues("no_remote_addr").Inc()
@@ -570,7 +571,7 @@ func (t *retryAfterTracker) retryAfterS() int {
 
 	// Skewed normal distribution with the mean at currentDelay and the
 	// limits (50% and 150%) at 3 standard deviations
-	nf := rand.NormFloat64()
+	nf := normalFloat64()
 	minD := max(notFoundRetryUnknownMinSeconds, t.currentDelay/2)
 	maxD := min(notFoundRetryUnknownMaxSeconds, t.currentDelay*3/2)
 	intv := float64(maxD - t.currentDelay)
@@ -580,4 +581,13 @@ func (t *retryAfterTracker) retryAfterS() int {
 	nf = min(max(nf*intv/3+float64(t.currentDelay), notFoundRetryUnknownMinSeconds), notFoundRetryUnknownMaxSeconds)
 
 	return int(nf)
+}
+
+func normalFloat64() float64 {
+	u1 := float64(rand.Uint64()>>11) * (1.0 / (1 << 53))
+	if u1 == 0 {
+		u1 = math.SmallestNonzeroFloat64
+	}
+	u2 := float64(rand.Uint64()>>11) * (1.0 / (1 << 53))
+	return math.Sqrt(-2*math.Log(u1)) * math.Cos(2*math.Pi*u2)
 }
