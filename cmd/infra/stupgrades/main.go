@@ -25,7 +25,7 @@ import (
 	"github.com/alecthomas/kong"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/syncthing/syncthing/internal/slogutil"
-	_ "github.com/syncthing/syncthing/lib/automaxprocs"
+	"github.com/syncthing/syncthing/lib/build"
 	"github.com/syncthing/syncthing/lib/httpcache"
 	"github.com/syncthing/syncthing/lib/upgrade"
 )
@@ -61,6 +61,8 @@ func main() {
 	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{
 		Level: slog.LevelInfo,
 	})))
+
+	slog.Info("Version", "version", build.LongVersionFor("stupgrades"))
 
 	if err := server(&params); err != nil {
 		fmt.Printf("Error: %v\n", err)
