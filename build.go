@@ -933,15 +933,18 @@ func getReleaseVersion() (string, error) {
 }
 
 func getGitVersion() (string, error) {
+	describeArgs := []string{"describe", "--tags", "--match", "v[0-9]*", "--always"}
+
 	// The current version as Git sees it
-	bs, err := runError("git", "describe", "--always", "--dirty", "--abbrev=8")
+	bs, err := runError("git", append(describeArgs, "--dirty", "--abbrev=8")...)
 	if err != nil {
 		return "", err
 	}
 	vcur := string(bs)
 
-	// The closest current tag name
-	bs, err = runError("git", "describe", "--always", "--abbrev=0")
+	// The closest version tag name. We include lightweight tags here because
+	// GitHub's release UI creates them when making a new tag from the web.
+	bs, err = runError("git", append(describeArgs, "--abbrev=0")...)
 	if err != nil {
 		return "", err
 	}
