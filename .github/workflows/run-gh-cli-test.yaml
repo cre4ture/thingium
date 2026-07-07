@@ -1,0 +1,42 @@
+name: test-gh-cli
+on:
+  workflow_dispatch: { }
+  issue_comment:
+    types: [created]
+  push:
+    branches:
+      - "feature/test_gh_cli_in_actions"
+  pull_request:
+    branches:
+      - "main"
+    paths:
+      - ".github/workflows/run-gh-cli-test.yaml"
+  
+jobs:
+  do-commit:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - run: | 
+          gh auth setup-git
+          echo "hello `date`" >> README.md
+          git add README.md
+          git commit -m "Update README.md"
+          git push
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPOSITORY: ${{ github.repository }}
+          BRANCH_NAME: ${{ github.ref_name }}
+      - name: Setup upterm session
+        # if: always()
+        if: never()
+        uses: lhotari/action-upterm@v1
+        with:
+          ## limits ssh access and adds the ssh public key for the user which triggered the workflow
+          limit-access-to-actor: true
+        env:
+          GITHUB_TOKEN_TMP: ${{ secrets.GITHUB_TOKEN }}
+          REPOSITORY: ${{ github.repository }}
+          BRANCH_NAME: ${{ github.ref_name }}
